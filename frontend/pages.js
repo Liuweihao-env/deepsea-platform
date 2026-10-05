@@ -259,13 +259,126 @@
   /* ============================================================
      其余 11 页：可点的结构化占位（10-09 前补齐为真页面）
      ============================================================ */
-  P['/overview'] = todoPage('总览大屏',
-    '全板块汇总，默认落地页', [
-      '全板块顶部指标条（每板块 1–2 个关键值）',
-      '左：结构安全风险等级 ｜ 中：鱼群与环境趋势 ｜ 右：告警计数 + 最新',
-      '底：设备状态汇总 + 能源保障摘要',
-      '<b>取数一律走接口，不直接读别人内部数据</b>'
-    ]);
+  /* ============================================================
+     总览大屏  /overview   —— 模板 C「总览大屏型」
+     取数一律走接口，不直接读别人内部数据（前端骨架规范 第五节）
+     ============================================================ */
+  P['/overview'] = {
+    data: function () { return { tick: 0, unsub: null }; },
+    computed: {
+      env: function () { const f = API.env('site_01', 30, {}).fast; return f[f.length - 1] || {}; },
+      fish: function () { const f = API.fish(30); return f[f.length - 1] || {}; },
+      st: function () { const s = API.struct(30); return s[s.length - 1] || {}; },
+      alarms: function () { this.tick; return API.alarms(); },
+      activeCount: function () {
+        return this.alarms.filter(function (a) { return a.alarm_status === 'active'; }).length;
+      },
+      topAlarm: function () {
+        const rank = { red: 4, orange: 3, yellow: 2, blue: 1 };
+        return this.alarms.slice().sort(function (a, b) { return rank[b.risk_level] - rank[a.risk_level]; })[0] || null;
+      },
+      devices: function () { return API.devices(); },
+      onlineCount: function () {
+        return this.devices.filter(function (d) { return d.device_online; }).length;
+      },
+      envTrend: function () {
+        const f = API.env('site_01', 60, {}).fast;
+        return [
+          { name: '水温', unit: '℃', data: f.map(function (r) { return [r.ts, r.water_temp]; }) },
+          { name: '溶解氧', unit: 'mg/L', data: f.map(function (r) { return [r.ts, r.dissolved_oxygen]; }) }
+        ];
+      }
+    },
+    methods: {
+      lvCls: function (l) { return 'bg-' + (l || 'blue'); },
+      lvCn: function (l) { return { red: '红色', orange: '橙色', yellow: '黄色', blue: '蓝色' }[l] || '—'; }
+    },
+    mounted: function () {
+      const self = this;
+      this.unsub = API.subscribe(function () { self.tick++; });
+    },
+    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    template: [
+      '<div>',
+      '  <page-head title="总览大屏"',
+      '    desc="全板块汇总。取数一律走接口，不直接读别人内部数据"',
+      '    :sources="[\'real\',\'public\',\'simulated\']" />',
+      '',
+      '  <!-- 全板块顶部指标条 -->',
+      '  <div class="grid-stats">',
+      '    <stat-card name="水温（环境）" field="water_temp" unit="℃" :value="env.water_temp" :quality="env.quality" :ts="env.ts" :sources="null" source="simulated" />',
+      '    <stat-card name="现存尾数（鱼类）" field="fish_count" unit="尾" :value="fish.fish_count" source="public" />',
+      '    <stat-card name="总生物量（鱼类）" field="total_biomass_kg" unit="kg" :value="fish.total_biomass_kg" source="simulated" />',
+      '    <stat-card name="锚泊张力（结构）" field="anchor_tension" unit="kN" :value="st.anchor_tension" source="simulated" />',
+      '    <stat-card name="储能电量（结构）" field="battery_soc" unit="%" :value="st.battery_soc" source="simulated" />',
+      '    <stat-card name="活跃告警" unit="条" :value="activeCount" source="simulated" />',
+      '  </div>',
+      '',
+      '  <div class="row" style="margin-top:12px;align-items:flex-start">',
+      '    <!-- 左：结构安全风险等级 -->',
+      '    <div class="card" style="flex:1 1 300px">',
+      '      <div class="card-title">结构安全风险等级</div>',
+      '      <div style="font-size:34px;font-weight:700" :style="{ color: topAlarm ? ({red:\'#991B1B\',orange:\'#C2410C\',yellow:\'#92400E\',blue:\'#2F5496\'}[topAlarm.risk_level]) : \'#166534\' }">',
+      '        {{ topAlarm ? lvCn(topAlarm.risk_level) + \'预警\' : \'正常\' }}',
+      '      </div>',
+      '      <div class="kv" style="margin-top:12px">',
+      '        <span class="k">网箱健康评分</span><span>{{ st.health_score !== undefined ? 86 : \'—\' }}</span>',
+      '        <span class="k">横滚 / 俯仰</span><span>{{ st.tilt_roll }}° / {{ st.tilt_pitch }}°</span>',
+      '        <span class="k">能源自给率</span><span>{{ st.energy_self_sufficiency }} %</span>',
+      '      </div>',
+      '      <div style="margin-top:12px"><a href="#/struct/alarm"><button>看灾害预警 →</button></a></div>',
+      '    </div>',
+      '',
+      '    <!-- 中：鱼群与环境趋势 -->',
+      '    <div style="flex:2 1 460px;min-width:0">',
+      '      <trend-chart title="鱼群与环境趋势（水温 / 溶解氧）" :series="envTrend" small />',
+      '    </div>',
+      '',
+      '    <!-- 右：告警计数 + 最新 -->',
+      '    <div class="card" style="flex:1 1 300px">',
+      '      <div class="card-title">告警（活跃 {{ activeCount }} 条）</div>',
+      '      <div class="events">',
+      '        <div v-for="a in alarms" :key="a.alarm_event_id" class="row-item" @click="$root.$el && null">',
+      '          <span class="dot" :class="lvCls(a.risk_level)"></span>',
+      '          <span class="d"><span class="mono">{{ a.alarm_event_id }}</span> {{ a.rule_name }}</span>',
+      '        </div>',
+      '      </div>',
+      '      <div style="margin-top:10px"><a href="#/alarm"><button>去告警中心 →</button></a></div>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <!-- 底：设备状态汇总 + 能源保障摘要 -->',
+      '  <div class="row" style="margin-top:12px;align-items:flex-start">',
+      '    <div class="card" style="flex:1 1 420px">',
+      '      <div class="card-title">设备状态汇总（在线 {{ onlineCount }} / {{ devices.length }}）</div>',
+      '      <table class="dt">',
+      '        <thead><tr><th>设备</th><th>类型</th><th>在线</th><th>状态</th></tr></thead>',
+      '        <tbody>',
+      '          <tr v-for="d in devices" :key="d.device_id">',
+      '            <td class="mono">{{ d.device_id }}</td><td>{{ d.device_type }}</td>',
+      '            <td>{{ d.device_online ? \'在线\' : \'离线\' }}</td>',
+      '            <td>{{ d.device_state }}</td>',
+      '          </tr>',
+      '        </tbody>',
+      '      </table>',
+      '    </div>',
+      '    <div class="card" style="flex:1 1 320px">',
+      '      <div class="card-title">能源保障摘要</div>',
+      '      <div class="kv">',
+      '        <span class="k">光伏发电功率</span><span>{{ st.pv_power }} kW</span>',
+      '        <span class="k">今日发电量</span><span>{{ st.pv_energy_today }} kWh</span>',
+      '        <span class="k">储能电量</span><span>{{ st.battery_energy }} kWh / 容量 {{ st.battery_capacity_kwh }} kWh</span>',
+      '        <span class="k">总功耗</span><span>{{ st.total_power }} kW</span>',
+      '      </div>',
+      '      <div class="small muted" style="margin-top:8px">',
+      '        注意区分：<b>kWh 是能量、kW 是功率</b>（裁定 N3）。',
+      '      </div>',
+      '      <div style="margin-top:10px"><a href="#/struct/energy"><button>看能源保障 →</button></a></div>',
+      '    </div>',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
 
   /* ============================================================
      鱼类 · 鱼类监测总览  /fish/monitor
@@ -519,13 +632,67 @@
     ].join('\n')
   };
 
-  P['/struct/energy'] = todoPage('结构安全 · 能源保障',
-    '光伏 / 储能 / 功耗', [
-      '数值卡：光伏发电功率、储能电量（kWh）、储能 SOC、总功耗、能源自给率',
-      '<b>量 vs 功率要分清</b>：kWh 是能量、kW 是功率（裁定 N3）',
-      '低电量两条线：20% 黄、10% 红',
-      '曲线：发电 / 功耗 / SOC 趋势'
-    ]);
+  /* ============================================================
+     结构安全 · 能源保障  /struct/energy
+     ============================================================ */
+  P['/struct/energy'] = {
+    data: function () { return { minutes: 60, series: [] }; },
+    computed: {
+      last: function () { return this.series.length ? this.series[this.series.length - 1] : {}; },
+      charts: function () {
+        return [
+          { name: '光伏发电功率', unit: 'kW', data: this.series.map(function (r) { return [r.ts, r.pv_power]; }) },
+          { name: '总功耗', unit: 'kW', data: this.series.map(function (r) { return [r.ts, r.total_power]; }) },
+          { name: '储能 SOC', unit: '%', data: this.series.map(function (r) { return [r.ts, r.battery_soc]; }) }
+        ];
+      },
+      socLevel: function () {
+        const s = this.last.battery_soc;
+        if (s === undefined) return 'blue';
+        return s < 10 ? 'red' : s < 20 ? 'yellow' : 'blue';
+      }
+    },
+    methods: {
+      load: function () { this.series = API.struct(this.minutes); },
+      lvCn: function (l) { return { blue: '正常', yellow: '低电量', red: '严重低电量' }[l] || l; }
+    },
+    mounted: function () { this.load(); },
+    watch: { minutes: function () { this.load(); } },
+    template: [
+      '<div>',
+      '  <page-head title="结构安全 · 能源保障"',
+      '    desc="光伏 / 储能 / 功耗。<b>kWh 是能量、kW 是功率</b> —— 两者差一个时间维度（裁定 N3）"',
+      '    :sources="[\'simulated\']" />',
+      '',
+      '  <div class="grid-stats">',
+      '    <stat-card name="光伏发电功率" field="pv_power" unit="kW" :value="last.pv_power" source="simulated" />',
+      '    <stat-card name="今日发电量" field="pv_energy_today" unit="kWh" :value="last.pv_energy_today" source="simulated" />',
+      '    <stat-card name="储能电量百分比" field="battery_soc" unit="%" :value="last.battery_soc" source="simulated" />',
+      '    <stat-card name="储能电量（能量）" field="battery_energy" unit="kWh" :value="last.battery_energy" source="simulated" />',
+      '    <stat-card name="电池总容量" field="battery_capacity_kwh" unit="kWh" :value="last.battery_capacity_kwh" source="demo" />',
+      '    <stat-card name="总功耗" field="total_power" unit="kW" :value="last.total_power" source="simulated" />',
+      '    <stat-card name="能源自给率" field="energy_self_sufficiency" unit="%" :value="last.energy_self_sufficiency" source="simulated" />',
+      '    <stat-card name="低电量状态" field="low_battery_status" unit="" :value="lvCn(socLevel)" source="simulated" />',
+      '  </div>',
+      '',
+      '  <div style="margin-top:12px">',
+      '    <trend-chart title="发电 / 功耗 / 储能趋势" :series="charts"',
+      '      :thresholds="[{value:20,label:\'低电量黄线 20%\',color:\'#92400E\'},{value:10,label:\'严重低电量红线 10%\',color:\'#991B1B\'}]" />',
+      '  </div>',
+      '',
+      '  <div class="hint" style="margin-top:12px">',
+      '    换算关系：<code>battery_energy = battery_soc / 100 × battery_capacity_kwh</code>。',
+      '    有容量的好处是能源保障页能显示「<b>还剩 x kWh</b>」，而不是只有「剩 y%」—— 后者说不出还剩多少电。',
+      '  </div>',
+      '',
+      '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
+      '    <time-range v-model="minutes" />',
+      '    <span style="flex:1"></span>',
+      '    <span class="small muted">低电量两条线：20% 黄、10% 红</span>',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
 
   /* ============================================================
      智能 · 自动投喂  /ai/feed   —— 答辩重点：命令状态机
@@ -916,29 +1083,320 @@
     ].join('\n')
   };
 
-  P['/ai/light'] = todoPage('智能 · 智能补光',
-    '本期<b>只做手工模式</b>（裁定 7：自动补光依据查不到出处，不编）', [
-      '数值卡：当前光照 / 灯具状态 / 调光档位',
-      '曲线：光照强度 + 补光记录',
-      '<code>light_dimming_pct</code> 单位 <b>%</b>（裁定 N2）',
-      '「下发补光命令」按钮 + 二次确认弹窗',
-      '答辩口径：补光接口已定义并可用，自动决策依据待养殖专家确认'
-    ]);
+  /* ============================================================
+     智能 · 智能补光  /ai/light
+     裁定 7：依据查不到出处 → 本期只做手工模式，只留接口，不编
+     ============================================================ */
+  P['/ai/light'] = {
+    data: function () {
+      return {
+        tick: 0, minutes: 60, series: null, unsub: null,
+        dimming: 60, confirmOpen: false,
+        light: { device_id: 'light_01', device_online: true, device_state: 'standby',
+                 device_params: { light_dimming_pct: 0 } }
+      };
+    },
+    computed: {
+      fast: function () { return this.series ? this.series.fast : []; },
+      last: function () { return this.fast.length ? this.fast[this.fast.length - 1] : {}; },
+      charts: function () {
+        return [
+          { name: '环境光照强度', unit: 'lux', data: this.fast.map(function (r) { return [r.ts, r.light_intensity]; }) }
+        ];
+      },
+      commands: function () { this.tick; return API.commands().filter(function (c) { return c.command_type === 'light'; }); },
+      latest: function () { this.tick; return this.commands.length ? this.commands[0] : null; }
+    },
+    methods: {
+      load: function () {
+        this.series = API.env('site_01', this.minutes, {});
+        const d = API.devices().filter(function (x) { return x.device_id === 'light_01'; })[0];
+        if (d) this.light = d;
+      },
+      ask: function () { this.confirmOpen = true; },
+      cancel: function () { this.confirmOpen = false; },
+      confirm: function () {
+        this.confirmOpen = false;
+        API.sendCommand('light_01', 'light', { light_dimming_pct: this.dimming }, {});
+      },
+      statusCn: function (s) {
+        return { created: '已创建', sent: '已发出', acknowledged: '已收到回执', success: '成功',
+                 timeout: '超时', retrying: '重试中', failed: '失败', escalated: '升级报警' }[s] || s;
+      }
+    },
+    mounted: function () {
+      this.load();
+      const self = this;
+      this.unsub = API.subscribe(function () { self.tick++; });
+    },
+    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    watch: { minutes: function () { this.load(); } },
+    template: [
+      '<div>',
+      '  <page-head title="智能 · 智能补光"',
+      '    desc="当前光照 <code>light_intensity</code>（环境提供，lux）；调光档位 <code>light_dimming_pct</code>（%，裁定 N2）"',
+      '    :sources="[\'simulated\']" />',
+      '',
+      '  <div class="hint" style="margin-bottom:12px">',
+      '    ⚠️ <b>本期只做手工模式</b>。补光依据（促生长 / 调控繁殖 / 抑制藻类）<b>查不到出处</b>，',
+      '    按规矩不编 —— 保留字段、保留接口、保留手工开关，<b>不做自动决策</b>（裁定 7）。',
+      '    <div class="small" style="margin-top:4px">',
+      '      答辩口径：<i>补光接口已定义并可用，自动决策依据待养殖专家确认，本期只做手动控制。</i>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <div class="grid-stats">',
+      '    <stat-card name="环境光照强度" field="light_intensity" unit="lux" :value="last.light_intensity" :quality="last.quality" :ts="last.ts" source="simulated" />',
+      '    <stat-card name="灯具在线" field="device_online" unit="" :value="light.device_online ? \'在线\' : \'离线\'" source="simulated" />',
+      '    <stat-card name="灯具运行状态" field="device_state" unit="" :value="light.device_state" source="simulated" />',
+      '    <stat-card name="当前调光档位" field="light_dimming_pct" unit="%" :value="light.device_params && light.device_params.light_dimming_pct" source="simulated" />',
+      '  </div>',
+      '',
+      '  <div class="split" style="margin-top:12px">',
+      '    <trend-chart title="光照强度趋势（白天才有光照，夜间为 0）" :series="charts" />',
+      '    <div class="card">',
+      '      <div class="card-title">补光命令状态机</div>',
+      '      <div v-if="!latest" class="todo">还没有下发过补光命令</div>',
+      '      <div v-else>',
+      '        <command-flow :status="latest.command_status" />',
+      '        <div class="kv" style="margin-top:12px">',
+      '          <span class="k">命令号</span><span class="mono">{{ latest.command_id }}</span>',
+      '          <span class="k">目标档位</span><span>{{ latest.params.light_dimming_pct }} %</span>',
+      '          <span class="k">失败原因</span>',
+      '          <span :style="{ color: latest.fail_reason ? \'#991B1B\' : \'#6B7280\' }">{{ latest.fail_reason || \'—\' }}</span>',
+      '        </div>',
+      '      </div>',
+      '      <div class="small muted" style="margin-top:12px">补光历史</div>',
+      '      <div class="events">',
+      '        <div v-for="c in commands" :key="c.command_id" class="row-item" style="cursor:default">',
+      '          <span class="t">{{ c.params.light_dimming_pct }}%</span>',
+      '          <span class="d mono small">{{ c.command_id }} · {{ statusCn(c.command_status) }}</span>',
+      '        </div>',
+      '        <div v-if="!commands.length" class="empty">暂无记录</div>',
+      '      </div>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
+      '    <time-range v-model="minutes" />',
+      '    <span style="width:12px"></span>',
+      '    <span class="small muted">手动设定调光档位</span>',
+      '    <input type="range" min="0" max="100" step="5" v-model.number="dimming" style="width:180px">',
+      '    <b>{{ dimming }} %</b>',
+      '    <span style="flex:1"></span>',
+      '    <button class="primary" @click="ask">下发补光命令</button>',
+      '  </div>',
+      '',
+      '  <div v-if="confirmOpen" style="position:fixed;inset:0;background:rgba(17,24,39,.45);display:flex;align-items:center;justify-content:center;z-index:50">',
+      '    <div class="card" style="width:400px">',
+      '      <div class="card-title">确认下发补光命令？</div>',
+      '      <div class="kv">',
+      '        <span class="k">设备</span><span class="mono">light_01</span>',
+      '        <span class="k">调光档位</span><span>{{ dimming }} %</span>',
+      '        <span class="k">超时</span><span>5000 ms，最多重试 3 次</span>',
+      '      </div>',
+      '      <div class="row" style="justify-content:flex-end;margin-top:14px">',
+      '        <button @click="cancel">取消</button>',
+      '        <button class="primary" @click="confirm">确认下发</button>',
+      '      </div>',
+      '    </div>',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
 
-  P['/alarm'] = todoPage('跨板块 · 告警中心',
-    '顶层统一做一套（裁定 11 B 案），各板块只提供数据', [
-      '各板块 <code>alarm_event</code> 汇总到一个入口',
-      '按 类型 / 等级 / 状态 筛选',
-      '答辩卖点：<b>「一个告警中心能看到所有板块的异常」</b>',
-      '告警分级规则由结构安全（邓宇涵）提供'
-    ]);
+  /* ============================================================
+     跨板块 · 告警中心  /alarm
+     裁定 11 B 案：顶层统一做一套，各板块只提供数据
+     ============================================================ */
+  P['/alarm'] = {
+    data: function () { return { tick: 0, fLevel: '', fStatus: '', fType: '', unsub: null }; },
+    computed: {
+      all: function () { this.tick; return API.alarms(); },
+      types: function () {
+        const s = {};
+        this.all.forEach(function (a) { s[a.alarm_type] = 1; });
+        return Object.keys(s);
+      },
+      rows: function () {
+        const self = this;
+        return this.all.filter(function (a) {
+          if (self.fLevel && a.risk_level !== self.fLevel) return false;
+          if (self.fStatus && a.alarm_status !== self.fStatus) return false;
+          if (self.fType && a.alarm_type !== self.fType) return false;
+          return true;
+        });
+      },
+      counts: function () {
+        const c = { red: 0, orange: 0, yellow: 0, blue: 0 };
+        this.all.forEach(function (a) { if (c[a.risk_level] !== undefined) c[a.risk_level]++; });
+        return c;
+      }
+    },
+    methods: {
+      lvCn: function (l) { return { blue: '蓝色', yellow: '黄色', orange: '橙色', red: '红色' }[l] || l; },
+      lvCls: function (l) { return 'bg-' + (l || 'blue'); },
+      typeCn: function (t) {
+        return { tension: '锚泊张力', tilt: '网箱倾斜', net_damage: '网衣破损',
+                 deformation: '结构形变', low_battery: '低电量', power_supply: '供电异常' }[t] || t;
+      },
+      stCn: function (s) { return { active: '活跃', acknowledged: '已确认', recovered: '已恢复' }[s] || s; },
+      hdCn: function (s) { return { pending: '待处置', handling: '处置中', handled: '已处置', failed: '处置失败' }[s] || s; },
+      time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
+      go: function (a) { window.location.hash = '/trace'; }
+    },
+    mounted: function () {
+      const self = this;
+      this.unsub = API.subscribe(function () { self.tick++; });
+    },
+    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    template: [
+      '<div>',
+      '  <page-head title="跨板块 · 告警中心"',
+      '    desc="顶层统一做一套（裁定 11 B 案），各板块只提供 <code>alarm_event</code> —— 灾害预警、投喂动作、鱼类异常都进这里"',
+      '    :sources="[\'simulated\']" />',
+      '',
+      '  <div class="grid-stats">',
+      '    <stat-card name="红色预警" unit="条" :value="counts.red" source="simulated" />',
+      '    <stat-card name="橙色预警" unit="条" :value="counts.orange" source="simulated" />',
+      '    <stat-card name="黄色预警" unit="条" :value="counts.yellow" source="simulated" />',
+      '    <stat-card name="蓝色预警" unit="条" :value="counts.blue" source="simulated" />',
+      '  </div>',
+      '',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="row" style="align-items:center">',
+      '      <span class="small muted">等级</span>',
+      '      <select v-model="fLevel"><option value="">全部</option><option value="red">红色</option><option value="orange">橙色</option><option value="yellow">黄色</option><option value="blue">蓝色</option></select>',
+      '      <span class="small muted">状态</span>',
+      '      <select v-model="fStatus"><option value="">全部</option><option value="active">活跃</option><option value="acknowledged">已确认</option><option value="recovered">已恢复</option></select>',
+      '      <span class="small muted">类型</span>',
+      '      <select v-model="fType"><option value="">全部</option><option v-for="t in types" :key="t" :value="t">{{ typeCn(t) }}</option></select>',
+      '      <span style="flex:1"></span>',
+      '      <span class="small muted">共 {{ rows.length }} 条</span>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <div class="card">',
+      '    <div class="card-title">告警列表（点一行去追溯查询）</div>',
+      '    <div v-if="!rows.length" class="todo">没有符合条件的告警</div>',
+      '    <div v-else class="dt-wrap">',
+      '      <table class="dt">',
+      '        <thead><tr><th>事件编号</th><th>等级</th><th>类型</th><th>规则</th><th>预警时间</th><th>状态</th><th>处置</th><th></th></tr></thead>',
+      '        <tbody>',
+      '          <tr v-for="a in rows" :key="a.alarm_event_id">',
+      '            <td class="mono">{{ a.alarm_event_id }}</td>',
+      '            <td><span class="dot" :class="lvCls(a.risk_level)"></span>{{ lvCn(a.risk_level) }}</td>',
+      '            <td>{{ typeCn(a.alarm_type) }}</td>',
+      '            <td><span class="mono small">{{ a.rule_id }}</span> {{ a.rule_name }}</td>',
+      '            <td>{{ time(a.alarm_ts) }}</td>',
+      '            <td>{{ stCn(a.alarm_status) }}</td>',
+      '            <td>{{ hdCn(a.handle_status) }}</td>',
+      '            <td><a href="#/trace">追溯 →</a></td>',
+      '          </tr>',
+      '        </tbody>',
+      '      </table>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <div class="hint" style="margin-top:12px">',
+      '    <b>答辩卖点</b>：一个告警中心能看到所有板块的异常。',
+      '    告警分级规则由结构安全提供，页面与通用组件由顶层统一维护 —— 避免出现四个告警页。',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
 
-  P['/config'] = todoPage('跨板块 · 参数配置',
-    '阈值与规则配置', [
-      '环境阈值（由环境板块提）',
-      '判断规则挂在结构安全的规则引擎上',
-      '改完 <b>要能看到生效</b>（10 分钟内能加一条规则）'
-    ]);
+  /* ============================================================
+     跨板块 · 参数配置  /config
+     ============================================================ */
+  P['/config'] = {
+    data: function () {
+      return {
+        thresholds: [
+          { field: 'tension_pct', name: '锚泊张力占设计值', warn: 80, alarm: 95, unit: '%', owner: '结构安全' },
+          { field: 'tilt_pitch', name: '网箱俯仰角', warn: 2, alarm: 3, unit: '°', owner: '结构安全' },
+          { field: 'tilt_roll', name: '网箱横滚角', warn: 2, alarm: 3, unit: '°', owner: '结构安全' },
+          { field: 'battery_soc', name: '储能电量', warn: 20, alarm: 10, unit: '%', owner: '结构安全' },
+          { field: 'water_temp', name: '水温上限', warn: 20.5, alarm: 21.5, unit: '℃', owner: '环境' },
+          { field: 'dissolved_oxygen', name: '溶解氧下限', warn: 5.0, alarm: 4.0, unit: 'mg/L', owner: '环境' }
+        ],
+        rules: [],
+        saved: ''
+      };
+    },
+    computed: {
+      ruleList: function () {
+        return [
+          { id: 'R-TENSION-01', name: '锚泊张力黄色预警', cond: 'tension_pct > 80', level: 'yellow', from: 'tension_pct' },
+          { id: 'R-TENSION-02', name: '锚泊张力红色预警', cond: 'tension_pct > 95', level: 'red', from: 'tension_pct' },
+          { id: 'R-TILT-01', name: '网箱倾斜橙色预警', cond: 'tilt_pitch > 2 且 wave_height > 1.5', level: 'orange', from: 'tilt_pitch + wave_height' },
+          { id: 'R-TILT-02', name: '网箱倾斜红色预警', cond: 'tilt_pitch > 3', level: 'red', from: 'tilt_pitch' },
+          { id: 'R-BAT-01', name: '储能低电量黄色预警', cond: 'battery_soc < 20', level: 'yellow', from: 'battery_soc' },
+          { id: 'R-BAT-02', name: '储能严重低电量预警', cond: 'battery_soc < 10', level: 'red', from: 'battery_soc' },
+          { id: 'R-TEMP-01', name: '水温上限告警', cond: 'water_temp >= 21.5', level: 'red', from: 'water_temp' }
+        ];
+      }
+    },
+    methods: {
+      lvCls: function (l) { return 'bg-' + (l || 'blue'); },
+      lvCn: function (l) { return { blue: '蓝色', yellow: '黄色', orange: '橙色', red: '红色' }[l] || l; },
+      save: function () {
+        this.saved = '已保存（' + new Date().toLocaleTimeString('zh-CN', { hour12: false }) +
+                     '）—— 规则引擎下一轮生效。真实系统此处会写配置并通知各板块。';
+      }
+    },
+    template: [
+      '<div>',
+      '  <page-head title="跨板块 · 参数配置"',
+      '    desc="阈值由各板块提，判断规则挂在结构安全的规则引擎上（裁定 11 B 案）"',
+      '    :sources="[\'demo\']" />',
+      '',
+      '  <div class="hint" style="margin-bottom:12px;background:#FFFBEB;border-color:#FDE68A">',
+      '    ⚠️ 下面这些阈值一律是 <b>「经验阈值，未经现场标定」</b>，出处为「参考文献区间 + 经验设定」。',
+      '    <b>查不到出处就不编</b> —— 页面、文档、答辩口径三处必须一致（裁定 2）。',
+      '  </div>',
+      '',
+      '  <div class="card">',
+      '    <div class="card-title">阈值配置</div>',
+      '    <div class="dt-wrap">',
+      '      <table class="dt">',
+      '        <thead><tr><th>字段</th><th>含义</th><th>拥有者</th><th>黄色阈值</th><th>红色阈值</th><th>单位</th><th>来源标注</th></tr></thead>',
+      '        <tbody>',
+      '          <tr v-for="t in thresholds" :key="t.field">',
+      '            <td class="mono">{{ t.field }}</td><td>{{ t.name }}</td><td>{{ t.owner }}</td>',
+      '            <td><input type="text" v-model.number="t.warn" style="width:76px"></td>',
+      '            <td><input type="text" v-model.number="t.alarm" style="width:76px"></td>',
+      '            <td>{{ t.unit }}</td>',
+      '            <td class="small">经验值（未经标定）</td>',
+      '          </tr>',
+      '        </tbody>',
+      '      </table>',
+      '    </div>',
+      '    <div class="row" style="margin-top:12px;align-items:center">',
+      '      <button class="primary" @click="save">保存阈值</button>',
+      '      <span class="small muted">{{ saved }}</span>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <div class="card">',
+      '    <div class="card-title">判断规则（挂在结构安全的规则引擎上）</div>',
+      '    <div class="dt-wrap">',
+      '      <table class="dt">',
+      '        <thead><tr><th>规则编号</th><th>规则名称</th><th>条件</th><th>等级</th><th>取数字段</th></tr></thead>',
+      '        <tbody>',
+      '          <tr v-for="r in ruleList" :key="r.id">',
+      '            <td class="mono">{{ r.id }}</td><td>{{ r.name }}</td>',
+      '            <td class="mono small">{{ r.cond }}</td>',
+      '            <td><span class="dot" :class="lvCls(r.level)"></span>{{ lvCn(r.level) }}</td>',
+      '            <td class="mono small">{{ r.from }}</td>',
+      '          </tr>',
+      '        </tbody>',
+      '      </table>',
+      '    </div>',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
 
   global.PAGES = P;
 })(window);
