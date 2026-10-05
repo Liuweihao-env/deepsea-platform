@@ -72,6 +72,15 @@ SITES = [
 STEP_FAST = 5 * 1000        # 快变量 5 秒
 STEP_SLOW = 30 * 1000       # 慢变量 30 秒（盐度 / pH，裁定 3）
 
+# 造故障「水温骤升」的目标温度。
+# ⚠️ 必须是**绝对值**，不能是「在基线上加几度」：
+#    水温基线带昼夜项 18.6 + sin((h-6)/24·2π)×1.8，
+#    夜里 22 点时 diurnal≈-0.87，基线只有 17.0℃ —— 加 4.2 也只到 21.4℃，
+#    刚好差 0.1 够不到 21.5 的告警阈值。
+#    结果就是「白天点造故障会报警、晚上点没反应」。
+#    现场答辩要是排在下午或晚上，这条竖线演示当场失败。
+HEAT_TARGET_C = 23.5
+
 
 # ======================================================================
 # 仿真数据生成（与前端 mock.js 同口径）
@@ -97,12 +106,17 @@ def env_series(site_id, minutes=60, storm=False, heat=False, offline_from=None, 
         h = datetime.fromtimestamp(ts / 1000).hour + datetime.fromtimestamp(ts / 1000).minute / 60.0
         diurnal = math.sin((h - 6) / 24 * 2 * math.pi)
         offline = offline_from is not None and i >= offline_from
-        ramp = max(0.0, (i / n - 0.55) / 0.45) * 4.2 if heat else 0.0
 
         wave = r.gauss(3.2, .5) if storm else r.gauss(1.4, .25)
         wind = r.gauss(17, 2.5) if storm else r.gauss(8.3, 1.2)
-        water = 18.6 + diurnal * 1.8 + r.gauss(0, .15) + ramp
-        air = 22.4 + diurnal * 3.2 + r.gauss(0, .4) + ramp * .6
+        base_water = 18.6 + diurnal * 1.8
+        if heat:
+            # 朝 HEAT_TARGET_C 爬：无论几点，最后一定能越过 21.5
+            prog = max(0.0, (i / n - 0.55) / 0.45)
+            water = base_water + (HEAT_TARGET_C - base_water) * prog + r.gauss(0, .12)
+        else:
+            water = base_water + r.gauss(0, .15)
+        air = 22.4 + diurnal * 3.2 + r.gauss(0, .4) + (water - base_water) * .6
         light = max(0.0, (4000 if storm else 12000) * max(0.0, math.sin((h - 6) / 12 * math.pi)) + r.gauss(0, 400))
 
         fast.append({

@@ -53,10 +53,15 @@
 
       const wave  = storm ? rndn(3.2, .5) : rndn(1.4, .25);
       const wind  = storm ? rndn(17, 2.5) : rndn(8.3, 1.2);
-      // 水温骤升：后 40% 的时段整体抬到阈值以上，用来演示「越限 → 出告警 → 追溯」
-      const ramp = heat ? Math.max(0, (i / n - 0.55) / 0.45) * 4.2 : 0;
-      const water = 18.6 + diurnal * 1.8 + rndn(0, .15) + ramp;
-      const air   = 22.4 + diurnal * 3.2 + rndn(0, .4) + ramp * .6;
+      /* 造故障「水温骤升」：朝一个**绝对目标温度**爬，不是「在基线上加几度」。
+         ⚠️ 为什么必须这样：水温基线带昼夜项 18.6 + sin((h-6)/24·2π)×1.8，
+            夜里 22 点时 diurnal≈-0.87、基线只有 17.0℃ —— 加 4.2 也只到 21.4℃，
+            刚好差 0.1 够不到 21.5 的告警阈值。
+            结果就是「白天点造故障会报警、晚上点没反应」，现场答辩排在晚上就当场失败。 */
+      const baseWater = 18.6 + diurnal * 1.8;
+      const prog = heat ? Math.max(0, (i / n - 0.55) / 0.45) : 0;
+      const water = baseWater + (heat ? (23.5 - baseWater) * prog : 0) + rndn(0, .15);
+      const air   = 22.4 + diurnal * 3.2 + rndn(0, .4) + (water - baseWater) * .6;
       const light = Math.max(0, (storm ? 4000 : 12000) * Math.max(0, Math.sin((h - 6) / 12 * Math.PI)) + rndn(0, 400));
 
       fast.push({
