@@ -22,6 +22,7 @@
 import argparse
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -301,9 +302,25 @@ def check_extra(base):
 
 
 # ======================================================================
+def free_port():
+    """让系统给一个当前空闲的端口。
+
+    ⚠️ 不能写死一个端口了事：后端现在有「端口被占就自动换一个」的逻辑，
+       若我们写死 8099 而它被别的程序占着，服务会悄悄跑到 8100，
+       而本脚本还在探 8099 —— 结果误报「服务起不来」。
+    """
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+    finally:
+        s.close()
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=8099)
+    ap.add_argument("--port", type=int, default=0,
+                    help="0 = 自动挑一个空闲端口（默认）")
     ap.add_argument("--host", default="127.0.0.1")
     args = ap.parse_args()
 
@@ -312,7 +329,8 @@ def main():
     except Exception:                               # noqa: BLE001
         pass
 
-    base = "http://%s:%d" % (args.host, args.port)
+    port = args.port or free_port()
+    base = "http://%s:%d" % (args.host, port)
 
     print("=" * 68)
     print("  一键验收检查 —— 10-09「基本可用初版」四条标准")
@@ -322,10 +340,10 @@ def main():
     # 起临时服务
     proc = subprocess.Popen(
         [sys.executable, os.path.join(ROOT, "backend", "server.py"),
-         "--port", str(args.port), "--no-browser"],
+         "--port", str(port), "--no-browser"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        for _ in range(40):
+        for _ in range(60):
             try:
                 get(base, "/api/health", timeout=2)
                 break
@@ -333,6 +351,7 @@ def main():
                 time.sleep(0.25)
         else:
             print("  [FAIL] 服务起不来，检查不了。")
+            print("         试试双击 启动平台.bat，看它报什么错。")
             return 2
 
         print("  临时服务已起：%s" % base)

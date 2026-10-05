@@ -1,47 +1,48 @@
 @echo off
-chcp 65001 >nul
+REM ============================================================
+REM  Deep-sea Aquaculture Platform  --  one-click launcher
+REM
+REM  IMPORTANT: this .bat is intentionally ASCII-ONLY.
+REM  cmd.exe reads .bat files using the console code page (GBK on
+REM  Chinese Windows). UTF-8 Chinese text leaves dangling lead
+REM  bytes at line ends, which swallow the newline and make the
+REM  NEXT line get executed as a command. That bug was hit once.
+REM  All Chinese messages are printed by Python instead, which
+REM  writes wide chars straight to the console and is always right.
+REM
+REM  Created: 2026-10-05
+REM ============================================================
+
 setlocal
-
-REM ============================================================
-REM  深远海养殖与海洋牧场智能管控平台 —— 一键启动
-REM
-REM  双击本文件即可。会做三件事：
-REM    1. 找到 Python
-REM    2. 启动后端（同时托管前端页面）
-REM    3. 自动打开浏览器
-REM
-REM  零依赖：不需要 pip install，不需要联网。
-REM  建立：2026-10-05
-REM ============================================================
-
 cd /d "%~dp0"
 
 echo ============================================================
-echo   深远海养殖与海洋牧场智能管控平台
+echo   Deep-sea Aquaculture Intelligent Management Platform
 echo ============================================================
 echo.
 
-REM ---- 找 Python ----
 set PY=
 where py >nul 2>nul && set PY=py
-if "%PY%"=="" ( where python >nul 2>nul && set PY=python )
+if "%PY%"=="" (
+  where python >nul 2>nul && set PY=python
+)
 
 if "%PY%"=="" (
-  echo   [错误] 没有找到 Python。
+  echo   [ERROR] Python not found.
   echo.
-  echo   请先安装 Python 3 ^(https://www.python.org/downloads/^)，
-  echo   安装时务必勾选 "Add Python to PATH"。
+  echo   Please install Python 3 first:
+  echo     https://www.python.org/downloads/
+  echo   During install, tick "Add Python to PATH".
   echo.
   pause
   exit /b 1
 )
 
-echo   使用 Python: %PY%
-echo   正在启动服务...
+echo   Starting...  ^(Python: %PY%^)
 echo.
 
 %PY% "backend\server.py" --port 8080
 
 echo.
-echo   服务已停止。
+echo   Stopped.
 pause

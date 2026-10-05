@@ -31,6 +31,13 @@
 #    中文立刻变乱码、脚本直接语法报错。这个坑已经踩过一次。
 *.ps1     text
 
+# 批处理：必须 CRLF，而且内容必须纯 ASCII。
+#   · LF-only 的 .bat 在 cmd.exe 里可能解析出错
+#   · 非 ASCII（中文）会让 cmd 按控制台代码页误读，产生悬空字节吞掉行尾，
+#     把下一条 REM 当成命令执行 —— 这个坑已经踩过一次
+*.bat     text eol=crlf
+*.cmd     text eol=crlf
+
 # 二进制：不要碰
 *.png     binary
 *.jpg     binary
