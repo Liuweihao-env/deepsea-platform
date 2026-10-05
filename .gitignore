@@ -1,0 +1,90 @@
+# ============================================================
+# 深远海养殖与海洋牧场智能管控平台 · Git 忽略规则
+# 建立：2026-10-05，刘桐麟
+# ============================================================
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+venv/
+ENV/
+env/
+.venv/
+
+# 测试与缓存
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# ---------- Node / 前端 ----------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+dist/
+dist-ssr/
+build/
+.vite/
+*.local
+
+# ---------- 编辑器 / IDE ----------
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# ---------- 操作系统 ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Office 临时锁文件 ----------
+# Word/Excel 打开文档时会生成，不要进仓库
+~$*.docx
+~$*.xlsx
+~$*.pptx
+.~lock.*#
+
+# ---------- 本项目特有 ----------
+# 长跑日志：10-16 起会产生大量数据，不进仓库
+data/*.log
+data/longrun/
+logs/
+*.log
+
+# 本地配置（含密钥/路径），不要推上去
+.env
+.env.local
+*.local.json
+
+# 公开数据集原始文件：体积大，用脚本拉取，不进仓库
+data/public_raw/
+data/*.csv.gz
