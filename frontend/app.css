@@ -1,0 +1,207 @@
+/* ============================================================
+   深远海养殖与海洋牧场智能管控平台 · 全局样式
+   依据：前端骨架规范.md 第 2.3 节「尺寸与间距（照抄，别自己定）」
+        + 项目通用规范.md 第六节「颜色语义」
+   建立：2026-10-05
+   ============================================================ */
+
+:root {
+  /* 颜色语义：同一个颜色在全项目只表达一个意思（通用规范 第六节） */
+  --c-normal:  #166534;   /* 正常 / 良好 */
+  --c-warn:    #92400E;   /* 注意 / 可疑 */
+  --c-danger:  #991B1B;   /* 风险 / 故障 */
+  --c-info:    #2F5496;   /* 信息 / 蓝色级 —— 也是主色 */
+  --c-orange:  #C2410C;   /* 橙色级 */
+  --c-muted:   #6B7280;   /* 无数据 / 禁用 / 离线 */
+
+  --bg-page:   #FFFFFF;
+  --bg-card:   #FFFFFF;
+  --bg-head:   #DCE6F1;   /* 表头底色 */
+  --bg-side:   #F5F7FA;   /* 侧栏 / 操作条 */
+  --bg-side2:  #F1F5F9;
+  --c-code:    #C0392B;   /* 文档中的字段名 */
+
+  /* 尺寸：照抄规范，不许自定 */
+  --h-topbar:  56px;
+  --w-sidenav: 200px;
+  --pad:       16px;
+  --gap:       12px;
+  --radius:    8px;
+  --h-stat:    86px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  font-family: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  font-size: 14px;                      /* 正文 14px */
+  color: #1F2937;
+  background: var(--bg-page);
+}
+
+#app { height: 100%; }
+
+/* ---------- 四区域结构（骨架规范 2.1） ---------- */
+.shell { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+/* ① 顶部横条 56px，固定不滚动 */
+.topbar {
+  height: var(--h-topbar); flex: 0 0 var(--h-topbar);
+  display: flex; align-items: center; gap: var(--pad);
+  padding: 0 var(--pad);
+  background: var(--c-info); color: #fff;
+}
+.topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: .5px; white-space: nowrap; }
+.topbar .tabs { display: flex; gap: 4px; margin-left: 8px; }
+.topbar .tab {
+  padding: 6px 14px; border-radius: 6px; cursor: pointer;
+  color: #DCE6F1; white-space: nowrap; user-select: none;
+}
+.topbar .tab:hover { background: rgba(255,255,255,.12); color: #fff; }
+.topbar .tab.active { background: #fff; color: var(--c-info); font-weight: 700; }
+.topbar .spacer { flex: 1; }
+
+/* ② 左侧菜单 200px，固定不滚动 */
+.body { flex: 1; display: flex; min-height: 0; }
+.sidenav {
+  width: var(--w-sidenav); flex: 0 0 var(--w-sidenav);
+  background: var(--bg-side); border-right: 1px solid #E5E7EB;
+  padding: 8px 0; overflow-y: auto;
+}
+.sidenav .group { padding: 10px 16px 4px; font-size: 12px; color: var(--c-muted); }
+.sidenav .item {
+  padding: 9px 16px; cursor: pointer; color: #374151;
+  border-left: 3px solid transparent; white-space: nowrap;
+}
+.sidenav .item:hover { background: var(--bg-side2); }
+.sidenav .item.active {
+  background: #fff; border-left-color: var(--c-info);
+  color: var(--c-info); font-weight: 700;
+}
+
+/* ③④ 主内容区 + 操作条 */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg-page); }
+.content { flex: 1; overflow: auto; padding: var(--pad); }
+.opbar {
+  flex: 0 0 auto; padding: 10px var(--pad);
+  background: var(--bg-side2); border-top: 1px solid #E5E7EB;
+  display: flex; align-items: center; gap: var(--gap); flex-wrap: wrap;
+}
+
+/* ---------- 卡片 ---------- */
+.card {
+  background: var(--bg-card); border: 1px solid #E5E7EB;
+  border-radius: var(--radius); padding: 12px 14px;
+}
+.card + .card { margin-top: var(--gap); }
+.card-title { font-size: 14px; font-weight: 700; margin-bottom: 10px; color: #111827; }
+
+.row { display: flex; gap: var(--gap); flex-wrap: wrap; }
+.grid-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--gap); }
+.split { display: grid; grid-template-columns: 62fr 38fr; gap: var(--gap); }
+@media (max-width: 1100px) { .split { grid-template-columns: 1fr; } }
+
+/* ---------- 数值卡 StatCard（骨架规范 3.1） ---------- */
+.stat {
+  height: var(--h-stat); border: 1px solid #E5E7EB; border-radius: var(--radius);
+  padding: 8px 12px; display: flex; flex-direction: column; justify-content: space-between;
+  background: #fff;
+}
+.stat .name { font-size: 12px; color: var(--c-muted); display: flex; justify-content: space-between; gap: 6px; }
+.stat .val { font-size: 21px; font-weight: 700; line-height: 1.1; display: flex; align-items: baseline; gap: 4px; }
+.stat .unit { font-size: 12px; font-weight: 400; color: var(--c-muted); }
+.stat .foot { font-size: 12px; color: var(--c-muted); }
+/* 状态：可疑=黄、过期=灰、缺失=灰 */
+.stat.is-suspect .val { color: var(--c-warn); }
+.stat.is-stale .val   { color: var(--c-muted); }
+.stat.is-missing .val { color: var(--c-muted); }
+
+/* ---------- 数据来源标签 SourceTag（骨架规范 3.5 / 通用规范 5.2） ---------- */
+.tag {
+  display: inline-block; padding: 1px 6px; border-radius: 4px;
+  font-size: 12px; line-height: 16px; border: 1px solid currentColor;
+}
+.tag-real      { color: var(--c-normal); }
+.tag-public    { color: var(--c-info); }
+.tag-simulated { color: var(--c-orange); }
+.tag-demo      { color: var(--c-muted); }
+.tagline { display: inline-flex; gap: 6px; align-items: center; }
+
+/* ---------- 图表 ---------- */
+.chart { width: 100%; height: 300px; }
+.chart-sm { height: 220px; }
+
+/* ---------- 事件列表 EventList（骨架规范 3.3） ---------- */
+.events { display: flex; flex-direction: column; }
+.events .row-item {
+  display: flex; gap: 8px; align-items: baseline;
+  padding: 7px 2px; border-bottom: 1px dashed #E5E7EB; cursor: pointer;
+}
+.events .row-item:hover { background: var(--bg-side2); }
+.events .row-item:last-child { border-bottom: none; }
+.events .t { font-size: 12px; color: var(--c-muted); white-space: nowrap; }
+.events .d { flex: 1; }
+.events .empty { color: var(--c-muted); padding: 12px 2px; }
+
+/* 等级色标 / 状态灯 */
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.lv-blue   { color: var(--c-info); }
+.lv-yellow { color: var(--c-warn); }
+.lv-orange { color: var(--c-orange); }
+.lv-red    { color: var(--c-danger); }
+.bg-blue   { background: var(--c-info); }
+.bg-yellow { background: var(--c-warn); }
+.bg-orange { background: var(--c-orange); }
+.bg-red    { background: var(--c-danger); }
+.bg-normal { background: var(--c-normal); }
+.bg-muted  { background: var(--c-muted); }
+
+/* ---------- 表格 DataTable ---------- */
+table.dt { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.dt th {
+  background: var(--bg-head); text-align: left; padding: 7px 8px;
+  border: 1px solid #D1D5DB; font-weight: 700; white-space: nowrap;
+}
+table.dt td { padding: 6px 8px; border: 1px solid #E5E7EB; white-space: nowrap; }
+table.dt tr:nth-child(even) td { background: #FAFBFC; }
+.dt-wrap { overflow: auto; max-height: 460px; }
+
+/* ---------- 按钮 ---------- */
+button {
+  font-family: inherit; font-size: 13px; padding: 7px 14px;
+  border: 1px solid #D1D5DB; border-radius: 6px; background: #fff;
+  cursor: pointer; color: #374151;
+}
+button:hover { border-color: var(--c-info); color: var(--c-info); }
+button.primary { background: var(--c-info); border-color: var(--c-info); color: #fff; }
+button.primary:hover { opacity: .9; color: #fff; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+
+select, input[type=text], input[type=datetime-local] {
+  font-family: inherit; font-size: 13px; padding: 6px 8px;
+  border: 1px solid #D1D5DB; border-radius: 6px; background: #fff;
+}
+
+/* ---------- 指令状态机进度条 CommandFlow（答辩重点） ---------- */
+.flow { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.flow .step {
+  padding: 4px 10px; border-radius: 999px; font-size: 12px;
+  border: 1px solid #D1D5DB; color: var(--c-muted); background: #fff;
+}
+.flow .step.done { border-color: var(--c-normal); color: #fff; background: var(--c-normal); }
+.flow .step.now  { border-color: var(--c-info); color: #fff; background: var(--c-info); }
+.flow .step.bad  { border-color: var(--c-danger); color: #fff; background: var(--c-danger); }
+.flow .arrow { color: #9CA3AF; font-size: 12px; }
+
+/* ---------- 杂项 ---------- */
+.muted { color: var(--c-muted); }
+.small { font-size: 12px; }
+.mono { font-family: Consolas, "Courier New", monospace; }
+.hint { background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 6px; padding: 8px 10px; font-size: 12px; }
+.todo {
+  border: 1px dashed #D1D5DB; border-radius: var(--radius);
+  padding: 24px; text-align: center; color: var(--c-muted); background: #FCFCFD;
+}
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 13px; }
+.kv .k { color: var(--c-muted); }
