@@ -542,42 +542,47 @@
       charts: function () {
         return [
           { name: '锚泊张力占设计值', unit: '%', data: this.series.map(function (r) { return [r.ts, r.tension_pct]; }) },
-          { name: '俯仰角', unit: '°', data: this.series.map(function (r) { return [r.ts, r.tilt_pitch]; }) }
+          /* axis: 1 → 走右轴。俯仰角是 0–3° 量级，跟 0–100% 的张力共用左轴会被压成一条贴底的直线。 */
+          { name: '俯仰角', unit: '°', axis: 1, data: this.series.map(function (r) { return [r.ts, r.tilt_pitch]; }) }
         ];
       },
-      /* 规则判定：与规则引擎同口径（阈值来自文档，标为经验值） */
+      /* 规则判定：**边沿触发**，不是电平触发。
+         ⚠️ 原来写的是「每个采样点只要越限就报一条」——5 秒一个点，一小时报了 1130 条，
+            界面上看着像系统坏了；真实告警系统也绝不会这么干。
+            现在只在「状态发生变化」时出一条：黄→红 出一条，恢复正常后再越限才再出。 */
       hits: function () {
         const out = [];
+        const prev = {};
         this.series.forEach(function (r) {
-          if (r.tension_pct >= 95) {
-            out.push({ ts: r.ts, level: 'red', type: 'tension', field: 'tension_pct',
-                       value: r.tension_pct, threshold: 95, rule_id: 'R-TENSION-02',
-                       rule_name: '锚泊张力红色预警', row: r });
-          } else if (r.tension_pct >= 80) {
-            out.push({ ts: r.ts, level: 'yellow', type: 'tension', field: 'tension_pct',
-                       value: r.tension_pct, threshold: 80, rule_id: 'R-TENSION-01',
-                       rule_name: '锚泊张力黄色预警', row: r });
-          }
-          if (Math.abs(r.tilt_pitch) >= 3) {
-            out.push({ ts: r.ts, level: 'red', type: 'tilt', field: 'tilt_pitch',
-                       value: r.tilt_pitch, threshold: 3, rule_id: 'R-TILT-02',
-                       rule_name: '网箱倾斜红色预警', row: r });
-          } else if (Math.abs(r.tilt_pitch) >= 2) {
-            out.push({ ts: r.ts, level: 'orange', type: 'tilt', field: 'tilt_pitch',
-                       value: r.tilt_pitch, threshold: 2, rule_id: 'R-TILT-01',
-                       rule_name: '网箱倾斜橙色预警', row: r });
-          }
-          if (r.battery_soc < 10) {
-            out.push({ ts: r.ts, level: 'red', type: 'low_battery', field: 'battery_soc',
-                       value: r.battery_soc, threshold: 10, rule_id: 'R-BAT-02',
-                       rule_name: '储能严重低电量预警', row: r });
-          } else if (r.battery_soc < 20) {
-            out.push({ ts: r.ts, level: 'yellow', type: 'low_battery', field: 'battery_soc',
-                       value: r.battery_soc, threshold: 20, rule_id: 'R-BAT-01',
-                       rule_name: '储能低电量黄色预警', row: r });
-          }
+          const fams = [
+            { fam: 'tension', type: 'tension', field: 'tension_pct', value: r.tension_pct,
+              lv: r.tension_pct >= 95 ? 'red' : (r.tension_pct >= 80 ? 'yellow' : null),
+              th: r.tension_pct >= 95 ? 95 : 80,
+              rule: r.tension_pct >= 95
+                ? ['R-TENSION-02', '锚泊张力红色预警', '张力超过设计值 95%']
+                : ['R-TENSION-01', '锚泊张力黄色预警', '张力超过设计值 80%'] },
+            { fam: 'tilt', type: 'tilt', field: 'tilt_pitch', value: r.tilt_pitch,
+              lv: Math.abs(r.tilt_pitch) >= 3 ? 'red' : (Math.abs(r.tilt_pitch) >= 2 ? 'orange' : null),
+              th: Math.abs(r.tilt_pitch) >= 3 ? 3 : 2,
+              rule: Math.abs(r.tilt_pitch) >= 3
+                ? ['R-TILT-02', '网箱倾斜红色预警', '俯仰角超过 3°']
+                : ['R-TILT-01', '网箱倾斜橙色预警', '俯仰角超过 2°'] },
+            { fam: 'battery', type: 'low_battery', field: 'battery_soc', value: r.battery_soc,
+              lv: r.battery_soc < 10 ? 'red' : (r.battery_soc < 20 ? 'yellow' : null),
+              th: r.battery_soc < 10 ? 10 : 20,
+              rule: r.battery_soc < 10
+                ? ['R-BAT-02', '储能严重低电量预警', '储能电量低于 10%']
+                : ['R-BAT-01', '储能低电量黄色预警', '储能电量低于 20%'] }
+          ];
+          fams.forEach(function (d) {
+            if (d.lv && prev[d.fam] !== d.lv) {
+              out.push({ ts: r.ts, level: d.lv, type: d.type, field: d.field,
+                         value: d.value, threshold: d.th,
+                         rule_id: d.rule[0], rule_name: d.rule[1], why: d.rule[2], row: r });
+            }
+            prev[d.fam] = d.lv;
+          });
         });
-        /* 按等级排序：红 > 橙 > 黄 */
         const rank = { red: 3, orange: 2, yellow: 1, blue: 0 };
         return out.sort(function (a, b) { return rank[b.level] - rank[a.level]; });
       },
@@ -615,7 +620,7 @@
       '',
       '  <div class="grid-stats">',
       '    <stat-card name="当前最高预警等级" unit="" :value="worst.text" source="simulated" />',
-      '    <stat-card name="本时段命中规则次数" unit="次" :value="hits.length" :digits="0" source="simulated" />',
+      '    <stat-card name="本时段告警条数" unit="条" :value="hits.length" :digits="0" source="simulated" />',
       '    <stat-card name="锚泊张力占设计值" field="tension_pct" unit="%" :value="last.tension_pct" source="simulated" />',
       '    <stat-card name="储能电量" field="battery_soc" unit="%" :value="last.battery_soc" source="simulated" />',
       '    <stat-card name="网箱横滚角" field="tilt_roll" unit="°" :value="last.tilt_roll" source="simulated" />',
@@ -626,8 +631,10 @@
       '    <trend-chart title="张力与姿态趋势" :series="charts"',
       '      :thresholds="[{value:80,label:\'张力黄线 80%\',color:\'#92400E\'},{value:95,label:\'张力红线 95%\',color:\'#991B1B\'}]" />',
       '    <div class="card">',
-      '      <div class="card-title">分级预警列表</div>',
-      '      <event-list :items="events" empty-text="本时段无预警" @pick="pick" />',
+      '      <div class="card-title">分级预警列表（近 {{ events.length }} 条）</div>',
+      '      <div style="max-height:430px;overflow:auto">',
+      '        <event-list :items="events" empty-text="本时段无预警" @pick="pick" />',
+      '      </div>',
       '      <div v-if="picked" class="hint" style="margin-top:10px">',
       '        <b>{{ picked.rule_name }}</b>',
       '        <span class="tag tag-simulated" style="margin-left:8px">{{ picked.rule_id }}</span>',
@@ -645,6 +652,10 @@
       '    ⚠️ <b>阈值来源</b>：张力 80% / 95%、倾角 2° / 3°、电量 20% / 10% 一律标注为',
       '    <b>「经验阈值，未经现场标定」</b>，出处写「参考文献区间 + 经验设定」。',
       '    文档、页面、答辩口径三处必须一致 —— <b>查不到出处就不编</b>（裁定 2）。',
+      '    <div style="margin-top:6px">',
+      '      <b>告警是边沿触发的</b>：只在状态发生变化时出一条（黄→红 出一条，恢复正常后再越限才再出），',
+      '      不是每个采样点都报 —— 否则一小时能刷出上千条，看着像系统坏了。',
+      '    </div>',
       '  </div>',
       '',
       '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',

@@ -10,6 +10,41 @@
   'use strict';
   const C = {};
 
+  /* ---------- 让 ECharts 跟着容器尺寸走 ----------
+     ⚠️ 没有这个，图表会冻在「首次渲染那一刻」的宽度上。
+        实测：视口 1920 时卡片宽 1688px，而图还是 1018px ——
+        在答辩用的大屏上右边会空出一大片，很难看。
+        ECharts 不会自己监听尺寸变化，必须显式 resize。
+
+     用 ResizeObserver 监听容器（窗口变化、侧栏伸缩都能覆盖），
+     再挂一个 window.resize 兜底（老浏览器没有 ResizeObserver）。 */
+  function attachAutoResize(vm) {
+    const el = vm.$refs.canvas;
+    if (!el) return null;
+
+    let raf = 0;
+    const doResize = function () {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(function () {
+        raf = 0;
+        if (vm.alive && vm.chart && !vm.chart.isDisposed()) vm.chart.resize();
+      });
+    };
+
+    let ro = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(doResize);
+      ro.observe(el);
+    }
+    window.addEventListener('resize', doResize);
+
+    return function () {
+      if (raf) cancelAnimationFrame(raf);
+      if (ro) { ro.disconnect(); ro = null; }
+      window.removeEventListener('resize', doResize);
+    };
+  }
+
   /* ---------- 3.5 数据来源标签 SourceTag ---------- */
   C.SourceTag = {
     props: { source: { type: String, default: 'simulated' }, multi: { type: Array, default: null } },
@@ -83,7 +118,11 @@
     },
     data: function () { return { chart: null, alive: true }; },
     computed: { empty: function () { return !this.series.length || !this.series[0].data.length; } },
-    mounted: function () { this.alive = true; this.render(); },
+    mounted: function () {
+      this.alive = true;
+      this.render();
+      this._detach = attachAutoResize(this);
+    },
     beforeUnmount: function () {
       /* 卸载时把图表彻底收干净。
          曾经的做法是用 v-show 控制画布显隐 —— 容器在 display:none 下宽高为 0，
@@ -91,6 +130,7 @@
          "Cannot read properties of undefined (reading 'type')"。
          现在画布始终渲染（不显隐），空数据用 graphic 文字表达。 */
       this.alive = false;
+      if (this._detach) { this._detach(); this._detach = null; }
       if (this.chart) { this.chart.dispose(); this.chart = null; }
     },
     watch: {
@@ -120,11 +160,17 @@
         }
 
         const palette = ['#2F5496', '#C2410C', '#166534', '#92400E', '#6B7280', '#991B1B'];
+        /* 双 Y 轴：序列上标 axis: 1 就走右轴。
+           为什么必须支持：把「锚泊张力（0–100%）」和「俯仰角（0–3°）」画在同一个 Y 轴上，
+           俯仰角会被压成贴底的一条直线，等于没画。骨架规范模板 A 也写明可用双 Y 轴。 */
+        const needAxis2 = this.series.some(function (s) { return s.axis === 1; });
+
         const series = this.series.map(function (s, i) {
           const color = palette[i % palette.length];
           return {
             name: s.name + (s.unit ? '（' + s.unit + '）' : ''),
             type: 'line',
+            yAxisIndex: (needAxis2 && s.axis === 1) ? 1 : 0,
             showSymbol: false,
             smooth: true,
             sampling: 'lttb',
@@ -165,12 +211,15 @@
             },
             splitLine: { show: false }
           },
-          yAxis: {
-            type: 'value',
-            scale: true,
-            axisLabel: { fontSize: 11 },
-            splitLine: { lineStyle: { color: '#EEF2F6' } }
-          },
+          yAxis: needAxis2
+            ? [
+                { type: 'value', scale: true, axisLabel: { fontSize: 11 },
+                  splitLine: { lineStyle: { color: '#EEF2F6' } } },
+                { type: 'value', scale: true, position: 'right', axisLabel: { fontSize: 11 },
+                  splitLine: { show: false } }
+              ]
+            : { type: 'value', scale: true, axisLabel: { fontSize: 11 },
+                splitLine: { lineStyle: { color: '#EEF2F6' } } },
           series: series
         }, true);
 
@@ -259,9 +308,14 @@
       height: { type: Number, default: 420 }
     },
     data: function () { return { chart: null, alive: true }; },
-    mounted: function () { this.alive = true; this.render(); },
+    mounted: function () {
+      this.alive = true;
+      this.render();
+      this._detach = attachAutoResize(this);
+    },
     beforeUnmount: function () {
       this.alive = false;
+      if (this._detach) { this._detach(); this._detach = null; }
       if (this.chart) { this.chart.dispose(); this.chart = null; }
     },
     watch: { grid: { handler: function () { this.render(); }, deep: true, flush: 'post' } },

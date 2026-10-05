@@ -187,9 +187,24 @@ def struct_series(minutes=60):
         ts = t0 + i * STEP_FAST
         h = datetime.fromtimestamp(ts / 1000).hour
         day = max(0.0, math.sin((h - 6) / 12 * math.pi))
-        tension = r.gauss(42.5, 1.6)
+
+        # 姿态与张力：平时平稳，每 10 分钟来一次持续约 70 秒的「涌浪 / 阵风」事件。
+        # 为什么要这样建模：原来俯仰角是 gauss(2.4, .4) —— 长期骑在 2°/3° 阈值上，
+        # 噪声反复穿越阈值，一小时刷出上千条告警，界面上看着像系统坏了。
+        # 真实养殖场平时就是平稳的，异常是「事件」，不是常态。
+        per = 120                       # 120 个点 = 10 分钟
+        phase = i % per
+        if phase < 14:
+            mag = 2.2 if (i // per) % 2 == 0 else 1.3
+            excursion = mag * math.sin(phase / 14 * math.pi)
+        else:
+            excursion = 0.0
+
+        roll = 1.1 + excursion * 0.5 + r.gauss(0, .18)
+        pitch = 1.2 + excursion + r.gauss(0, .22)
+        # 海况差 → 张力跟着涨（物理上说得通）
+        tension = 42.5 + excursion * 4.5 + r.gauss(0, 1.2)
         soc = min(100.0, max(8.0, soc + (0.18 if day > .2 else -0.22) + r.gauss(0, .12)))
-        roll, pitch = r.gauss(1.8, .35), r.gauss(2.4, .4)
         out.append({
             "ts": ts,
             "site_id": "site_01",

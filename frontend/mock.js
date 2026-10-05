@@ -144,11 +144,26 @@
     const designTension = 60;     // kN，手工配置（design_tension）
     let soc = 68;
     for (let i = 0; i < n; i++) {
-      const h = new Date(t0 + i * STEP_FAST).getHours();
+      const ts = t0 + i * STEP_FAST;
+      const h = new Date(ts).getHours();
       const day = Math.max(0, Math.sin((h - 6) / 12 * Math.PI));
-      const tension = rndn(42.5, 1.6);
+
+      /* 姿态与张力：平时平稳，每 10 分钟来一次持续约 70 秒的「涌浪 / 阵风」事件。
+         为什么要这样建模：原来俯仰角是 gauss(2.4, .4) —— 长期骑在 2°/3° 阈值上，
+         噪声反复穿越阈值，一小时刷出上千条告警，界面上看着像系统坏了。
+         真实养殖场平时就是平稳的，异常是「事件」，不是常态。 */
+      const per = 120;                      // 120 个点 = 10 分钟
+      const phase = i % per;
+      let excursion = 0;
+      if (phase < 14) {
+        const mag = (Math.floor(i / per) % 2 === 0) ? 2.2 : 1.3;
+        excursion = mag * Math.sin(phase / 14 * Math.PI);
+      }
+
+      const roll = 1.1 + excursion * 0.5 + rndn(0, .18);
+      const pitch = 1.2 + excursion + rndn(0, .22);
+      const tension = 42.5 + excursion * 4.5 + rndn(0, 1.2);   // 海况差 → 张力跟着涨
       soc = Math.min(100, Math.max(8, soc + (day > .2 ? .18 : -.22) + rndn(0, .12)));
-      const roll = rndn(1.8, .35), pitch = rndn(2.4, .4);
       out.push({
         ts: t0 + i * STEP_FAST,
         site_id: 'site_01',
