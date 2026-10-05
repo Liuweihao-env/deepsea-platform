@@ -83,10 +83,17 @@ html, body {
 /* ③④ 主内容区 + 操作条 */
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg-page); }
 .content { flex: 1; overflow: auto; padding: var(--pad); }
+/* ④ 操作条
+   ⚠️ 必须 sticky 吸底。实测：1366×768 的笔记本上，「下发投喂命令」按钮在 top=1067 处，
+      而视口只有 768 —— 按钮在折叠线以下。用户滚下去点完，反馈（状态机 / 告警横幅）
+      还在屏幕上方外面，于是「看着没反应」。功能是好的，是反馈看不见。
+      吸底之后操作条永远可见，反馈也永远在视线里。 */
 .opbar {
+  position: sticky; bottom: 0; z-index: 5;
   flex: 0 0 auto; padding: 10px var(--pad);
   background: var(--bg-side2); border-top: 1px solid #E5E7EB;
   display: flex; align-items: center; gap: var(--gap); flex-wrap: wrap;
+  box-shadow: 0 -2px 8px rgba(17, 24, 39, .06);
 }
 
 /* ---------- 卡片 ---------- */
