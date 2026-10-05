@@ -26,14 +26,18 @@
   };
 
   /* ---------- 3.1 数值卡 StatCard ----------
-     状态：① 正常 ② 缺失（— + 设备离线）③ 可疑（黄）④ 过期（灰 + 最后更新） */
+     状态：① 正常 ② 缺失（— + 设备离线）③ 可疑（黄）④ 过期（灰 + 最后更新）
+     digits：小数位。默认 1 位 —— 通用规范 第十节规定
+             温度/溶氧/盐度/pH/浪高/风速/张力/倾角/重量 都是 1 位小数。
+             计数类（尾数、条数）传 :digits="0"；字符串值不受影响。 */
   C.StatCard = {
     props: {
       name: String, value: [Number, String], unit: { type: String, default: '' },
       source: { type: String, default: 'simulated' },
       quality: { type: String, default: 'good' },   // good | stale | suspect
       ts: { type: Number, default: 0 },
-      field: { type: String, default: '' }          // 完整字段名，悬停显示
+      field: { type: String, default: '' },         // 完整字段名，悬停显示
+      digits: { type: Number, default: 1 }          // null = 原样显示
     },
     computed: {
       missing: function () { return this.value === null || this.value === undefined || this.value === ''; },
@@ -43,7 +47,11 @@
         if (this.quality === 'suspect') return 'is-suspect';
         return '';
       },
-      shown: function () { return this.missing ? '—' : this.value; },
+      shown: function () {
+        if (this.missing) return '—';
+        if (typeof this.value !== 'number' || this.digits === null || this.digits === undefined) return this.value;
+        return this.value.toFixed(this.digits);
+      },
       tip: function () {
         const t = this.ts ? new Date(this.ts).toLocaleTimeString('zh-CN', { hour12: false }) : '—';
         return '字段：' + (this.field || '（未标注）') + '\n更新时间：' + t +

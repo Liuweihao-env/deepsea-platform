@@ -76,14 +76,18 @@
     }
 
     // 慢变量（盐度 / pH）：30 秒一条，单独一条序列
+    // 离线要同样置空 —— 慢变量也是设备测出来的，设备断了它就没有读数
+    const offTs = (offlineFrom != null) ? t0 + offlineFrom * STEP_FAST : null;
     const slow = [];
     for (let i = 0; i < slowN; i++) {
       const ts = t0 + i * STEP_SLOW;
+      const off = offTs !== null && ts >= offTs;
       slow.push({
         ts: ts,
         site_id: siteId,
-        salinity: +rndn(32.1, .15).toFixed(1),   // 单位 ‰（裁定 10）
-        ph: +rndn(8.1, .06).toFixed(1)           // 1 位小数（精度表）
+        quality: off ? 'stale' : 'good',
+        salinity: off ? null : +rndn(32.1, .15).toFixed(1),   // 单位 ‰（裁定 10）
+        ph: off ? null : +rndn(8.1, .06).toFixed(1)           // 1 位小数（精度表）
       });
     }
 

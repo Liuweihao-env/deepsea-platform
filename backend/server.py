@@ -119,13 +119,19 @@ def env_series(site_id, minutes=60, storm=False, heat=False, offline_from=None, 
             "light_intensity": None if offline else round(light),
         })
 
+    # 慢变量（盐度 / pH）：30 秒一条，单独一条序列
+    # 离线要同样置空 —— 慢变量也是设备测出来的，设备断了它就没有读数
+    off_ts = (t0 + offline_from * STEP_FAST) if offline_from is not None else None
     slow = []
     for i in range(n_slow):
+        ts = t0 + i * STEP_SLOW
+        off = off_ts is not None and ts >= off_ts
         slow.append({
-            "ts": t0 + i * STEP_SLOW,
+            "ts": ts,
             "site_id": site_id,
-            "salinity": round(r.gauss(32.1, .15), 1),   # ‰（裁定 10）
-            "ph": round(r.gauss(8.1, .06), 1),          # 1 位小数
+            "quality": "stale" if off else "good",
+            "salinity": None if off else round(r.gauss(32.1, .15), 1),   # ‰（裁定 10）
+            "ph": None if off else round(r.gauss(8.1, .06), 1),          # 1 位小数
         })
 
     return {"fast": fast, "slow": slow}
