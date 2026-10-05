@@ -242,6 +242,81 @@
       '</div>'
   };
 
+  /* ---------- 网格热力图 HeatGrid（鱼群密度 / 网衣拉力分布） ---------- */
+  C.HeatGrid = {
+    props: {
+      title: { type: String, default: '' },
+      grid: { type: Array, default: function () { return []; } },   // [[v,...],...] 行优先
+      unit: { type: String, default: '' },
+      height: { type: Number, default: 420 }
+    },
+    data: function () { return { chart: null, alive: true }; },
+    mounted: function () { this.alive = true; this.render(); },
+    beforeUnmount: function () {
+      this.alive = false;
+      if (this.chart) { this.chart.dispose(); this.chart = null; }
+    },
+    watch: { grid: { handler: function () { this.render(); }, deep: true, flush: 'post' } },
+    methods: {
+      render: function () {
+        const el = this.$refs.canvas;
+        if (!el || !this.alive || !this.grid.length) return;
+        let inst = echarts.getInstanceByDom(el);
+        if (!inst) inst = echarts.init(el);
+        this.chart = inst;
+
+        const n = this.grid[0].length, m = this.grid.length, unit = this.unit;
+        const data = [];
+        let max = 0;
+        for (let y = 0; y < m; y++) {
+          for (let x = 0; x < n; x++) {
+            const v = this.grid[y][x];
+            data.push([x, y, v]);
+            if (v > max) max = v;
+          }
+        }
+        const cat = function (p, i) { return p + (i + 1); };
+        const xs = [], ys = [];
+        for (let i = 0; i < n; i++) xs.push(cat('X', i));
+        for (let i = 0; i < m; i++) ys.push(cat('Y', i));
+
+        inst.setOption({
+          tooltip: {
+            formatter: function (p) {
+              return '网格 ' + xs[p.value[0]] + ' / ' + ys[p.value[1]] +
+                     '<br>密度 <b>' + p.value[2] + '</b> ' + unit;
+            }
+          },
+          grid: { left: 46, right: 20, top: 16, bottom: 62 },
+          xAxis: { type: 'category', data: xs, splitArea: { show: true }, axisLabel: { fontSize: 11 } },
+          yAxis: { type: 'category', data: ys, splitArea: { show: true }, axisLabel: { fontSize: 11 } },
+          visualMap: {
+            min: 0, max: max, calculable: true, orient: 'horizontal',
+            left: 'center', bottom: 6, itemWidth: 12, itemHeight: 100,
+            text: ['密', '疏'], textStyle: { fontSize: 11 },
+            /* 配色沿用状态色阶语义，不用彩虹色（项目通用规范 第六节） */
+            inRange: { color: ['#EFF6FF', '#BFDBFE', '#60A5FA', '#2F5496', '#C2410C'] }
+          },
+          series: [{
+            type: 'heatmap', data: data,
+            label: { show: false },
+            emphasis: { itemStyle: { borderColor: '#111827', borderWidth: 1 } }
+          }]
+        }, true);
+
+        const self = this;
+        this.$nextTick(function () {
+          if (self.alive && self.chart && !self.chart.isDisposed()) self.chart.resize();
+        });
+      }
+    },
+    template:
+      '<div class="card">' +
+      '  <div class="card-title" v-if="title">{{ title }}</div>' +
+      '  <div ref="canvas" class="chart" :style="{ height: height + \'px\' }"></div>' +
+      '</div>'
+  };
+
   /* ---------- 页头：标题 + 来源标签（纪律 4：每页都要有） ---------- */
   C.PageHead = {
     props: { title: String, desc: { type: String, default: '' }, sources: { type: Array, default: null }, source: { type: String, default: 'simulated' } },

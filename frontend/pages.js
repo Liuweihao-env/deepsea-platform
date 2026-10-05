@@ -267,29 +267,257 @@
       '<b>取数一律走接口，不直接读别人内部数据</b>'
     ]);
 
-  P['/fish/monitor'] = todoPage('鱼类 · 鱼类监测总览',
-    '行为识别 + 生物量统计（覆盖项目记录 1.1 的鱼类 4 项功能里的 2 项）', [
-      '数值卡：现存尾数 / 平均体重 / 预估总生物量 / 摄食强度',
-      '曲线：生物量趋势 + 摄食强度',
-      '侧栏：鱼类异常事件',
-      '指标口径：<code>fish_count</code> <code>avg_weight_g</code> <code>total_biomass_kg</code> <code>feeding_intensity</code>',
-      '<b>投喂量不算</b>（裁定 1：归智能）'
-    ]);
+  /* ============================================================
+     鱼类 · 鱼类监测总览  /fish/monitor
+     覆盖项目记录 1.1 的鱼类功能：行为识别 + 生物量统计
+     ============================================================ */
+  P['/fish/monitor'] = {
+    data: function () { return { minutes: 60, series: [] }; },
+    computed: {
+      last: function () { return this.series.length ? this.series[this.series.length - 1] : {}; },
+      charts: function () {
+        return [
+          { name: '现存尾数', unit: '尾', data: this.series.map(function (r) { return [r.ts, r.fish_count]; }) },
+          { name: '平均体重', unit: 'g', data: this.series.map(function (r) { return [r.ts, r.avg_weight_g]; }) },
+          { name: '预估总生物量', unit: 'kg', data: this.series.map(function (r) { return [r.ts, r.total_biomass_kg]; }) }
+        ];
+      },
+      /* 摄食强度变化即"事件"——由数据实时判定，不造假事件 */
+      events: function () {
+        const out = [];
+        let prev = null;
+        this.series.forEach(function (r) {
+          if (prev !== null && r.feeding_intensity !== prev) {
+            out.push({ id: 'f' + r.ts, ts: r.ts,
+                       level: r.feeding_intensity === 'strong' ? 'blue'
+                            : r.feeding_intensity === 'none' ? 'yellow' : 'orange',
+                       text: '摄食强度由「' + this.cn(prev) + '」变为「' + this.cn(r.feeding_intensity) + '」',
+                       row: r });
+          }
+          prev = r.feeding_intensity;
+        }, this);
+        return out.slice(-15).reverse();
+      }
+    },
+    methods: {
+      load: function () { this.series = API.fish(this.minutes); },
+      cn: function (v) { return { none: '无', weak: '弱', mid: '中', strong: '强' }[v] || v; },
+      time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); }
+    },
+    mounted: function () { this.load(); },
+    watch: { minutes: function () { this.load(); } },
+    template: [
+      '<div>',
+      '  <page-head title="鱼类 · 鱼类监测总览"',
+      '    desc="行为识别 + 生物量统计。数据来源：公开数据集（TFBID / DeepFish）+ 仿真"',
+      '    :sources="[\'public\',\'simulated\']" />',
+      '',
+      '  <div class="grid-stats">',
+      '    <stat-card name="现存总尾数" field="fish_count" unit="尾" :value="last.fish_count" source="public" />',
+      '    <stat-card name="平均体重" field="avg_weight_g" unit="g" :value="last.avg_weight_g" source="simulated" />',
+      '    <stat-card name="平均体长" field="avg_length_cm" unit="cm" :value="last.avg_length_cm" source="simulated" />',
+      '    <stat-card name="预估总生物量" field="total_biomass_kg" unit="kg" :value="last.total_biomass_kg" source="simulated" />',
+      '    <stat-card name="鱼群摄食强度" field="feeding_intensity" unit="" :value="cn(last.feeding_intensity)" source="public" />',
+      '    <stat-card name="活动鱼群密度" field="fish_density" unit="尾/m³" :value="last.fish_density" source="simulated" />',
+      '  </div>',
+      '',
+      '  <div class="split" style="margin-top:12px">',
+      '    <trend-chart title="数量与生长趋势" :series="charts" />',
+      '    <div class="card">',
+      '      <div class="card-title">摄食行为变化（行为识别输出）</div>',
+      '      <event-list :items="events" empty-text="本时段摄食强度无变化" />',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <div class="hint" style="margin-top:12px">',
+      '    <b>口径说明</b>：投喂量<b>不在这里算</b> —— 按裁定 1，投喂决策归智能板块，',
+      '    鱼类只出观测类指标。鱼类不再提供 <code>suggest_feed_kg_h</code>。',
+      '    生长参数用 <code>W = lw_a · L^lw_b</code>，公式参数 <code>lw_a</code> / <code>lw_b</code> 来源须标注公开文献。',
+      '  </div>',
+      '',
+      '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
+      '    <time-range v-model="minutes" />',
+      '    <span style="flex:1"></span>',
+      '    <span class="small muted">本期不做：FCR / 活跃度 / 体长离散度 / 死亡个体数（裁定 5）</span>',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
 
-  P['/fish/heatmap'] = todoPage('鱼类 · 鱼群分布热力图',
-    '答辩视觉亮点', [
-      '10×10 网格热力图（拍板问题单 问题 5）',
-      '接口字段 <code>grid[][]</code>',
-      '配色沿用状态色阶，不用彩虹色'
-    ]);
+  /* ============================================================
+     鱼类 · 鱼群分布热力图  /fish/heatmap
+     ============================================================ */
+  P['/fish/heatmap'] = {
+    data: function () { return { grid: [], picked: null }; },
+    computed: {
+      peak: function () {
+        let best = { x: 0, y: 0, v: -1 }, sum = 0, n = 0;
+        this.grid.forEach(function (row, y) {
+          row.forEach(function (v, x) {
+            if (v > best.v) best = { x: x, y: y, v: v };
+            sum += v; n++;
+          });
+        });
+        return { best: best, avg: n ? +(sum / n).toFixed(1) : 0 };
+      }
+    },
+    methods: {
+      load: function () { this.grid = API.heatGrid(); }
+    },
+    mounted: function () { this.load(); },
+    template: [
+      '<div>',
+      '  <page-head title="鱼类 · 鱼群分布热力图"',
+      '    desc="10 × 10 网格累加密度（拍板问题单 问题 5 建议 A）。接口字段 <code>grid[][]</code>"',
+      '    :sources="[\'simulated\']" />',
+      '',
+      '  <div class="grid-stats">',
+      '    <stat-card name="最高密度网格" unit="尾/m³" :value="peak.best.v" source="simulated" />',
+      '    <stat-card name="最高密度位置" unit="" :value="\'X\' + (peak.best.x + 1) + \' / Y\' + (peak.best.y + 1)" source="simulated" />',
+      '    <stat-card name="网格平均密度" unit="尾/m³" :value="peak.avg" source="simulated" />',
+      '    <stat-card name="网格分辨率" unit="" value="10 × 10" source="simulated" />',
+      '  </div>',
+      '',
+      '  <div style="margin-top:12px">',
+      '    <heat-grid title="鱼群密度分布（颜色越红越密）" :grid="grid" unit="尾/m³" :height="430" />',
+      '  </div>',
+      '',
+      '  <div class="hint" style="margin-top:12px">',
+      '    <b>为什么是 10 × 10</b>：热力图是给值班人<b>一眼看趋势</b>用的，不是科研分析。',
+      '    10×10 已经能清楚显示鱼群集中在哪个区域；20×20 单格在网页上小于可读尺寸，收益不明显。',
+      '  </div>',
+      '',
+      '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
+      '    <button @click="load">重新采样</button>',
+      '    <span style="flex:1"></span>',
+      '    <span class="small muted">配色沿用状态色阶语义，未使用彩虹色</span>',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
 
-  P['/struct/alarm'] = todoPage('结构安全 · 灾害分级预警',
-    '答辩必答题：每条预警能点开看到「哪条数据触发的、命中了哪条规则」', [
-      '数值卡：当前最高预警等级 / 活跃预警数 / 网箱健康评分',
-      '分级预警列表（蓝/黄/橙/红 色阶）',
-      '「查看触发依据」按钮 → 跳 <code>/trace</code>',
-      '阈值一律标「<b>经验阈值，未经现场标定</b>」（裁定 2）'
-    ]);
+  /* ============================================================
+     结构安全 · 灾害分级预警  /struct/alarm
+     答辩必答题：每条预警能点开看到「哪条数据触发的、命中了哪条规则」
+     ============================================================ */
+  P['/struct/alarm'] = {
+    data: function () { return { minutes: 60, series: [], picked: null }; },
+    computed: {
+      last: function () { return this.series.length ? this.series[this.series.length - 1] : {}; },
+      charts: function () {
+        return [
+          { name: '锚泊张力占设计值', unit: '%', data: this.series.map(function (r) { return [r.ts, r.tension_pct]; }) },
+          { name: '俯仰角', unit: '°', data: this.series.map(function (r) { return [r.ts, r.tilt_pitch]; }) }
+        ];
+      },
+      /* 规则判定：与规则引擎同口径（阈值来自文档，标为经验值） */
+      hits: function () {
+        const out = [];
+        this.series.forEach(function (r) {
+          if (r.tension_pct >= 95) {
+            out.push({ ts: r.ts, level: 'red', type: 'tension', field: 'tension_pct',
+                       value: r.tension_pct, threshold: 95, rule_id: 'R-TENSION-02',
+                       rule_name: '锚泊张力红色预警', row: r });
+          } else if (r.tension_pct >= 80) {
+            out.push({ ts: r.ts, level: 'yellow', type: 'tension', field: 'tension_pct',
+                       value: r.tension_pct, threshold: 80, rule_id: 'R-TENSION-01',
+                       rule_name: '锚泊张力黄色预警', row: r });
+          }
+          if (Math.abs(r.tilt_pitch) >= 3) {
+            out.push({ ts: r.ts, level: 'red', type: 'tilt', field: 'tilt_pitch',
+                       value: r.tilt_pitch, threshold: 3, rule_id: 'R-TILT-02',
+                       rule_name: '网箱倾斜红色预警', row: r });
+          } else if (Math.abs(r.tilt_pitch) >= 2) {
+            out.push({ ts: r.ts, level: 'orange', type: 'tilt', field: 'tilt_pitch',
+                       value: r.tilt_pitch, threshold: 2, rule_id: 'R-TILT-01',
+                       rule_name: '网箱倾斜橙色预警', row: r });
+          }
+          if (r.battery_soc < 10) {
+            out.push({ ts: r.ts, level: 'red', type: 'low_battery', field: 'battery_soc',
+                       value: r.battery_soc, threshold: 10, rule_id: 'R-BAT-02',
+                       rule_name: '储能严重低电量预警', row: r });
+          } else if (r.battery_soc < 20) {
+            out.push({ ts: r.ts, level: 'yellow', type: 'low_battery', field: 'battery_soc',
+                       value: r.battery_soc, threshold: 20, rule_id: 'R-BAT-01',
+                       rule_name: '储能低电量黄色预警', row: r });
+          }
+        });
+        /* 按等级排序：红 > 橙 > 黄 */
+        const rank = { red: 3, orange: 2, yellow: 1, blue: 0 };
+        return out.sort(function (a, b) { return rank[b.level] - rank[a.level]; });
+      },
+      worst: function () {
+        if (!this.hits.length) return { level: 'blue', text: '无预警' };
+        const rank = { red: 4, orange: 3, yellow: 2, blue: 1 };
+        const top = this.hits.slice().sort(function (a, b) { return rank[b.level] - rank[a.level]; })[0];
+        return { level: top.level, text: { red: '红色', orange: '橙色', yellow: '黄色', blue: '蓝色' }[top.level] + '预警' };
+      },
+      events: function () {
+        const self = this;
+        return this.hits.slice(0, 18).map(function (h) {
+          return { id: h.rule_id + h.ts, ts: h.ts, level: h.level,
+                   text: h.rule_name + '（' + h.field + ' = ' + h.value + '，阈值 ' + h.threshold + '）', hit: h };
+        });
+      }
+    },
+    methods: {
+      load: function () { this.series = API.struct(this.minutes); },
+      time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
+      lvCn: function (l) { return { blue: '蓝色', yellow: '黄色', orange: '橙色', red: '红色' }[l] || l; },
+      lvCls: function (l) { return 'bg-' + (l || 'blue'); },
+      pick: function (e) { this.picked = e.hit || e; }
+    },
+    mounted: function () { this.load(); },
+    watch: { minutes: function () { this.load(); } },
+    template: [
+      '<div>',
+      '  <page-head title="结构安全 · 灾害分级预警"',
+      '    desc="每条预警都能点开看到「哪条数据触发的、命中了哪条规则」—— 答辩必答题"',
+      '    :sources="[\'simulated\']" />',
+      '',
+      '  <div class="grid-stats">',
+      '    <stat-card name="当前最高预警等级" unit="" :value="worst.text" source="simulated" />',
+      '    <stat-card name="本时段命中规则次数" unit="次" :value="hits.length" source="simulated" />',
+      '    <stat-card name="锚泊张力占设计值" field="tension_pct" unit="%" :value="last.tension_pct" source="simulated" />',
+      '    <stat-card name="储能电量" field="battery_soc" unit="%" :value="last.battery_soc" source="simulated" />',
+      '    <stat-card name="网箱横滚角" field="tilt_roll" unit="°" :value="last.tilt_roll" source="simulated" />',
+      '    <stat-card name="网箱俯仰角" field="tilt_pitch" unit="°" :value="last.tilt_pitch" source="simulated" />',
+      '  </div>',
+      '',
+      '  <div class="split" style="margin-top:12px">',
+      '    <trend-chart title="张力与姿态趋势" :series="charts"',
+      '      :thresholds="[{value:80,label:\'张力黄线 80%\',color:\'#92400E\'},{value:95,label:\'张力红线 95%\',color:\'#991B1B\'}]" />',
+      '    <div class="card">',
+      '      <div class="card-title">分级预警列表</div>',
+      '      <event-list :items="events" empty-text="本时段无预警" @pick="pick" />',
+      '      <div v-if="picked" class="hint" style="margin-top:10px">',
+      '        <b>{{ picked.rule_name }}</b>',
+      '        <span class="tag tag-simulated" style="margin-left:8px">{{ picked.rule_id }}</span>',
+      '        <div class="small" style="margin-top:6px">',
+      '          {{ picked.field }} = <b>{{ picked.value }}</b>（阈值 {{ picked.threshold }}）<br>',
+      '          时间 {{ time(picked.ts) }}<br>',
+      '          快照：<span class="mono">{{ JSON.stringify({anchor_tension: picked.row.anchor_tension, tilt_pitch: picked.row.tilt_pitch, battery_soc: picked.row.battery_soc}) }}</span>',
+      '        </div>',
+      '        <div style="margin-top:8px"><a href="#/trace"><button>查看触发依据（追溯） →</button></a></div>',
+      '      </div>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <div class="hint" style="margin-top:12px;background:#FFFBEB;border-color:#FDE68A">',
+      '    ⚠️ <b>阈值来源</b>：张力 80% / 95%、倾角 2° / 3°、电量 20% / 10% 一律标注为',
+      '    <b>「经验阈值，未经现场标定」</b>，出处写「参考文献区间 + 经验设定」。',
+      '    文档、页面、答辩口径三处必须一致 —— <b>查不到出处就不编</b>（裁定 2）。',
+      '  </div>',
+      '',
+      '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
+      '    <time-range v-model="minutes" />',
+      '    <span style="flex:1"></span>',
+      '    <a href="#/trace"><button>去追溯查询</button></a>',
+      '    <a href="#/alarm"><button>去告警中心</button></a>',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
 
   P['/struct/energy'] = todoPage('结构安全 · 能源保障',
     '光伏 / 储能 / 功耗', [

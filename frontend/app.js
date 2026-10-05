@@ -180,6 +180,7 @@
   app.component('source-tag', C.SourceTag);
   app.component('stat-card', C.StatCard);
   app.component('trend-chart', C.TrendChart);
+  app.component('heat-grid', C.HeatGrid);
   app.component('event-list', C.EventList);
   app.component('time-range', C.TimeRangePicker);
   app.component('command-flow', C.CommandFlow);
