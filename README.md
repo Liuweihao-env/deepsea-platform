@@ -20,30 +20,68 @@
 | 方案冻结 | ✅ **10-05 完成**，见 `docs/功能冻结清单-10-05.md` |
 | 接口定稿 | ✅ **10-05 完成**，见 `docs/统一数据接口文档-v1.0.md` |
 | 仓库建好 | ✅ **10-05 完成**（本仓库） |
-| 代码 | 🔴 **尚未开始** —— 目录骨架已就位，10-16 出可运行初版 |
+| **13 页基本可用初版** | ✅ **10-05 完成** —— 比 10-09 的原定时间**提前 4 天** |
+| 24 页终版 | ⏳ 剩 11 页，排在 10-23 |
+
+**13 页已全部实现并通过验收**（见 `docs/功能冻结清单-10-05.md` 5.1 节）：
+
+- ✅ 13 个页面全部能打开，不白屏
+- ✅ **一条竖线打通**：水温（仿真）→ 接口 → 曲线 → 越限 → 告警 → 点开看到「哪条数据触发的、命中哪条规则」
+- ✅ **一条投喂命令走完** `created → sent → acknowledged → success`；注入故障时走 `超时 → 重试中 → 失败 → 升级报警`，且**失败自动进告警中心**
+- ✅ 每页有数据来源标签；**离线显示 `—` 而不是上一个值**
 
 ---
 
 ## 一键启动说明
 
-> ⚠️ **本节目前是占位。代码尚未开始，没有任何东西可以启动。**
-> **10-16 出可运行初版时，本节必须补齐**，判断标准是：**别人照着这一节能把平台跑起来。**
+**双击 `启动平台.bat`** 就行。它会找 Python、起服务、自动打开浏览器。
 
-约定（10-16 前补齐，不要各自发明）：
+或者手动：
 
 ```bash
-# 后端
-cd backend
-pip install -r requirements.txt
-python -m api            # 起接口服务
-
-# 前端
-cd frontend
-npm install
-npm run dev              # 起网页
+python backend/server.py                # 默认 http://127.0.0.1:8080
+python backend/server.py --port 9000
+python backend/server.py --no-browser
 ```
 
-**硬要求**：主分支随时能跑起来。
+### 硬要求：**零依赖、零构建、可离线**
+
+| 层 | 做法 | 为什么 |
+|---|---|---|
+| 前端 | Vue 3 + ECharts，**库已内置**在 `frontend/vendor/` | 不需要 Node.js、不需要 `npm install`、不需要 `npm run build` |
+| 后端 | Python **标准库**（`http.server`） | 不需要 `pip install`、不需要联网 |
+| 部署 | **一个进程、一个网址** | 后端同时托管前端页面，只启一个东西就够 |
+
+> **有 Python 3 就能跑。** 这是针对"现场没人会改代码"（见 `docs/项目记录.md` 1.5 节 R1）专门做的取舍：
+> **少一层就少一个翻车点。**
+
+### 前端连不连后端，是自动判断的
+
+`index.html` 会先请求 `/api/boot.js`：
+
+- **由本服务托管** → 文件存在 → 前端走**真实后端接口**
+- **由普通静态服务器托管**（比如只起个 `http.server`） → 该文件 404 → 前端**自动退回本地 mock**
+
+两种情况页面都能跑，代码一行不用改。界面上可通过 `API.remote` 判断当前是哪种模式。
+
+### 接口一览
+
+| 接口 | 说明 |
+|---|---|
+| `GET /api/health` | 健康检查 |
+| `GET /api/sites` | 站点列表 |
+| `GET /api/env?site_id=&minutes=&storm=&heat=&offline=` | 环境时序（`storm`/`heat`/`offline` 为造故障开关） |
+| `GET /api/fish?minutes=` | 鱼类时序 |
+| `GET /api/heatmap` | 鱼群分布 10×10 网格 |
+| `GET /api/struct?minutes=` | 结构安全时序 |
+| `GET /api/feed/decision` | 投喂决策（含决策依据） |
+| `GET /api/devices` | 设备列表 |
+| `POST /api/commands` | **下发指令**（`inject` 可选 `timeout` / `offline`） |
+| `GET /api/commands/{id}` | 查指令执行结果（状态机） |
+| `GET /api/alarms` / `GET /api/alarms/{id}` | 告警与追溯 |
+| `POST /api/alarms/{id}/confirm`、`/handle` | 确认 / 处置 |
+
+出错统一返回 `{ "code": 503, "msg": "设备离线" }`（通用规范 7.2）。
 
 ---
 
