@@ -79,10 +79,13 @@ def _rng(seed=20261005):
     return random.Random(seed)
 
 
-def env_series(site_id, minutes=60, storm=False, heat=False, offline_from=None):
+def env_series(site_id, minutes=60, storm=False, heat=False, offline_from=None, offline=False):
     """环境时序（接口文档 4.1 / 4.2 / 4.3）"""
     n = max(2, int(minutes * 60 * 1000 / STEP_FAST))
     n_slow = max(2, int(minutes * 60 * 1000 / STEP_SLOW))
+    if offline:
+        # 设备离线：从时段 60% 起所有值给 null（验收第 4 条）
+        offline_from = int(n * 0.6)
     now = int(time.time() * 1000) // 1000 * 1000
     t0 = now - minutes * 60 * 1000
     r = _rng()
@@ -445,6 +448,15 @@ class Handler(BaseHTTPRequestHandler):
         """统一出错格式（通用规范 7.2）"""
         self._json({"code": code, "msg": msg}, status=200 if code < 400 else code)
 
+    def _js(self, code):
+        body = code.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/javascript; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _file(self, path):
         if not os.path.isfile(path):
             self.send_error(404, "Not Found")
@@ -472,6 +484,12 @@ class Handler(BaseHTTPRequestHandler):
         p, q = u.path, parse_qs(u.query)
 
         try:
+            # 前端靠这个文件判断"有没有后端"：
+            #   由本服务托管 → 文件存在 → 前端走真实接口
+            #   由普通静态服务器托管 → 404 → 前端自动退回本地 mock
+            if p == "/api/boot.js":
+                return self._js('window.__API_BASE__ = "";\n')
+
             if p.startswith("/api/"):
                 return self._api_get(p, q)
             # 静态资源
@@ -497,8 +515,10 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/env":
             storm = one("storm", "0") in ("1", "true")
             heat = one("heat", "0") in ("1", "true")
-            off = one("offline_from", "")
-            return self._json(env_series(site, minutes, storm, heat, int(off) if off else None))
+            off = one("offline", "0") in ("1", "true")
+            off_from = one("offline_from", "")
+            return self._json(env_series(site, minutes, storm, heat,
+                                         int(off_from) if off_from else None, off))
 
         if p == "/api/fish":
             return self._json(fish_series(minutes))

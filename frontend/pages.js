@@ -72,7 +72,9 @@
     },
     methods: {
       load: function () {
-        this.series = API.env(this.site, this.minutes, { storm: this.storm });
+        const self = this;
+        API.resolve(API.env(this.site, this.minutes, { storm: this.storm }),
+                    function (d) { self.series = d; });
       },
       siteName: function () {
         const sid = this.site;
@@ -142,7 +144,7 @@
      ============================================================ */
   P['/env/water'] = {
     data: function () {
-      return { minutes: 60, site: 'site_01', heat: false, picked: null, series: null,
+      return { minutes: 60, site: 'site_01', heat: false, offline: false, picked: null, series: null,
                show: { water_temp: true, dissolved_oxygen: true, light_intensity: false } };
     },
     computed: {
@@ -178,14 +180,19 @@
       topAlarm: function () { return this.alarms.length ? this.alarms[this.alarms.length - 1] : null; }
     },
     methods: {
-      load: function () { this.series = API.env(this.site, this.minutes, { heat: this.heat }); },
+      load: function () {
+        const self = this;
+        API.resolve(API.env(this.site, this.minutes, { heat: this.heat, offline: this.offline }),
+                    function (d) { self.series = d; });
+      },
       time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); }
     },
     mounted: function () { this.load(); },
     watch: {
       minutes: function () { this.load(); },
       site: function () { this.load(); },
-      heat: function () { this.load(); }
+      heat: function () { this.load(); },
+      offline: function () { this.load(); }
     },
     template: [
       '<div>',
@@ -249,6 +256,10 @@
       '    <button :class="{ primary: heat }" @click="heat = !heat">',
       '      {{ heat ? \'恢复正常水温\' : \'触发水温骤升（造故障）\' }}',
       '    </button>',
+      '    <button :class="{ primary: offline }" @click="offline = !offline">',
+      '      {{ offline ? \'恢复设备在线\' : \'模拟设备离线（造故障）\' }}',
+      '    </button>',
+      '    <span v-if="offline" class="small" style="color:#991B1B">离线段数值应显示「—」，不给上一个值</span>',
       '    <span style="width:12px"></span>',
       '    <span class="small muted">口径：{{ API.disclaimer }}</span>',
       '  </div>',
@@ -264,11 +275,10 @@
      取数一律走接口，不直接读别人内部数据（前端骨架规范 第五节）
      ============================================================ */
   P['/overview'] = {
-    data: function () { return { tick: 0, unsub: null }; },
+    data: function () {
+      return { tick: 0, env: {}, fish: {}, st: {}, envTrend: [], unsub: null };
+    },
     computed: {
-      env: function () { const f = API.env('site_01', 30, {}).fast; return f[f.length - 1] || {}; },
-      fish: function () { const f = API.fish(30); return f[f.length - 1] || {}; },
-      st: function () { const s = API.struct(30); return s[s.length - 1] || {}; },
       alarms: function () { this.tick; return API.alarms(); },
       activeCount: function () {
         return this.alarms.filter(function (a) { return a.alarm_status === 'active'; }).length;
@@ -280,20 +290,26 @@
       devices: function () { return API.devices(); },
       onlineCount: function () {
         return this.devices.filter(function (d) { return d.device_online; }).length;
-      },
-      envTrend: function () {
-        const f = API.env('site_01', 60, {}).fast;
-        return [
-          { name: '水温', unit: '℃', data: f.map(function (r) { return [r.ts, r.water_temp]; }) },
-          { name: '溶解氧', unit: 'mg/L', data: f.map(function (r) { return [r.ts, r.dissolved_oxygen]; }) }
-        ];
       }
     },
     methods: {
+      load: function () {
+        const self = this;
+        API.resolve(API.env('site_01', 60, {}), function (d) {
+          self.envTrend = [
+            { name: '水温', unit: '℃', data: d.fast.map(function (r) { return [r.ts, r.water_temp]; }) },
+            { name: '溶解氧', unit: 'mg/L', data: d.fast.map(function (r) { return [r.ts, r.dissolved_oxygen]; }) }
+          ];
+          self.env = d.fast.length ? d.fast[d.fast.length - 1] : {};
+        });
+        API.resolve(API.fish(30), function (f) { self.fish = f.length ? f[f.length - 1] : {}; });
+        API.resolve(API.struct(30), function (s) { self.st = s.length ? s[s.length - 1] : {}; });
+      },
       lvCls: function (l) { return 'bg-' + (l || 'blue'); },
       lvCn: function (l) { return { red: '红色', orange: '橙色', yellow: '黄色', blue: '蓝色' }[l] || '—'; }
     },
     mounted: function () {
+      this.load();
       const self = this;
       this.unsub = API.subscribe(function () { self.tick++; });
     },
@@ -413,7 +429,10 @@
       }
     },
     methods: {
-      load: function () { this.series = API.fish(this.minutes); },
+      load: function () {
+        const self = this;
+        API.resolve(API.fish(this.minutes), function (d) { self.series = d; });
+      },
       cn: function (v) { return { none: '无', weak: '弱', mid: '中', strong: '强' }[v] || v; },
       time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); }
     },
@@ -475,7 +494,10 @@
       }
     },
     methods: {
-      load: function () { this.grid = API.heatGrid(); }
+      load: function () {
+        const self = this;
+        API.resolve(API.heatGrid(), function (g) { self.grid = g; });
+      }
     },
     mounted: function () { this.load(); },
     template: [
@@ -574,7 +596,10 @@
       }
     },
     methods: {
-      load: function () { this.series = API.struct(this.minutes); },
+      load: function () {
+        const self = this;
+        API.resolve(API.struct(this.minutes), function (d) { self.series = d; });
+      },
       time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
       lvCn: function (l) { return { blue: '蓝色', yellow: '黄色', orange: '橙色', red: '红色' }[l] || l; },
       lvCls: function (l) { return 'bg-' + (l || 'blue'); },
@@ -653,7 +678,10 @@
       }
     },
     methods: {
-      load: function () { this.series = API.struct(this.minutes); },
+      load: function () {
+        const self = this;
+        API.resolve(API.struct(this.minutes), function (d) { self.series = d; });
+      },
       lvCn: function (l) { return { blue: '正常', yellow: '低电量', red: '严重低电量' }[l] || l; }
     },
     mounted: function () { this.load(); },
@@ -735,7 +763,11 @@
       }
     },
     methods: {
-      load: function () { this.dec = API.feedDecision(); this.records = API.feedRecords(); },
+      load: function () {
+        const self = this;
+        API.resolve(API.feedDecision(), function (d) { self.dec = d; });
+        API.resolve(API.feedRecords(), function (r) { self.records = r; });
+      },
       statusCn: function (s) {
         return { created: '已创建', sent: '已发出', acknowledged: '已收到回执', success: '成功',
                  timeout: '超时', retrying: '重试中', failed: '失败', escalated: '升级报警' }[s] || s;
@@ -1109,7 +1141,8 @@
     },
     methods: {
       load: function () {
-        this.series = API.env('site_01', this.minutes, {});
+        const self = this;
+        API.resolve(API.env('site_01', this.minutes, {}), function (d) { self.series = d; });
         const d = API.devices().filter(function (x) { return x.device_id === 'light_01'; })[0];
         if (d) this.light = d;
       },

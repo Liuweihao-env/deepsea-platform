@@ -39,7 +39,9 @@
     const t0 = NOW - minutes * 60 * 1000;
     const storm = !!opts.storm;              // 造故障：大风大浪（sim_mode = storm）
     const heat = !!opts.heat;                // 造故障：水温骤升（演示「一条竖线」用）
-    const offlineFrom = opts.offlineFrom;    // 造故障：设备离线（给 null，不给上一个值）
+    /* 造故障：设备离线 —— 从时段 60% 起所有值给 null。
+       验收第 4 条：离线必须显示「—」，不给上一个值（通用规范 4.2 硬纪律）。 */
+    const offlineFrom = opts.offline ? Math.floor(n * 0.6) : opts.offlineFrom;
     resetSeed();
 
     const fast = [];
@@ -322,6 +324,11 @@
 
   /* ---------- API 门面（页面只用这个） ---------- */
   const API = {
+    remote: false,
+    /* 同步/异步兼容：本地 mock 立刻回调；有后端时 api-remote.js 会把它换成等 Promise 的版本。
+       页面统一写 API.resolve(API.xxx(...), function (d) { ... })，两种模式共用一份代码。 */
+    resolve: function (v, cb) { cb(v); },
+
     sites: function () { return SITES.slice(); },
     now: function () { return Date.now(); },
 

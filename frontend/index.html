@@ -14,7 +14,12 @@
 <body>
 <div id="app"></div>
 
+<!-- 有没有后端？由后端托管时这个文件存在，静态托管时 404。
+     404 不影响页面 —— 前端会自动退回本地 mock。 -->
+<script src="/api/boot.js"></script>
+
 <script src="mock.js"></script>
+<script src="api-remote.js"></script>
 <script src="components.js"></script>
 <script src="pages.js"></script>
 <script src="app.js"></script>
