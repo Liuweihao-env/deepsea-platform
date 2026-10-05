@@ -371,9 +371,9 @@
       '        <thead><tr><th>设备</th><th>类型</th><th>在线</th><th>状态</th></tr></thead>',
       '        <tbody>',
       '          <tr v-for="d in devices" :key="d.device_id">',
-      '            <td class="mono">{{ d.device_id }}</td><td>{{ d.device_type }}</td>',
+      '            <td class="mono">{{ d.device_id }}</td><td>{{ CN.deviceType(d.device_type) }}</td>',
       '            <td>{{ d.device_online ? \'在线\' : \'离线\' }}</td>',
-      '            <td>{{ d.device_state }}</td>',
+      '            <td>{{ CN.deviceState(d.device_state) }}</td>',
       '          </tr>',
       '        </tbody>',
       '      </table>',
@@ -812,7 +812,7 @@
       '    <stat-card name="当前生物量" field="total_biomass_kg" unit="kg" :value="dec.biomass_kg" source="public" />',
       '    <stat-card name="鱼群摄食强度" field="feeding_intensity" unit="" :value="dec.feeding_intensity_cn" source="public" />',
       '    <stat-card name="建议投喂量" field="suggest_kg_h" unit="kg/h" :value="dec.suggest_kg_h" source="simulated" />',
-      '    <stat-card name="投饵机状态" field="device_state" unit="" :value="feeder.device_state" source="simulated" />',
+      '    <stat-card name="投饵机状态" field="device_state" unit="" :value="CN.deviceState(feeder.device_state)" source="simulated" />',
       '    <stat-card name="饵料剩余" field="feed_remain_pct" unit="%" :value="feeder.device_params && feeder.device_params.feed_remain_pct" source="simulated" />',
       '  </div>',
       '',
@@ -926,12 +926,36 @@
     data: function () { return { id: '', picked: null }; },
     computed: {
       alarms: function () { return API.alarms(); },
-      list: function () { return this.alarms; }
+      list: function () { return this.alarms; },
+      /* 快照不要直接甩原始 JSON —— 里面的 ts 是毫秒数，
+         通用规范第三节要求「界面显示 2026-10-02 12:00:00，精确到秒」。
+         拆成键值行，时间字段一律格式化。 */
+      snapRows: function () {
+        const s = this.picked && this.picked.trigger_snapshot;
+        if (!s) return [];
+        const self = this;
+        return Object.keys(s).map(function (k) {
+          let v = s[k];
+          if (typeof v === 'number' && (k === 'ts' || /_ts$/.test(k))) {
+            v = new Date(v).toLocaleString('zh-CN', { hour12: false });
+          }
+          return { k: k, v: v };
+        });
+      }
     },
     methods: {
       time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
       lvCn: function (lv) { return { blue: '蓝色', yellow: '黄色', orange: '橙色', red: '红色' }[lv] || lv; },
       lvCls: function (lv) { return 'bg-' + (lv || 'blue'); },
+      /* 枚举一律显示中文（通用规范 第五节给了每个枚举的中文标签）——
+         不许把 tension / active / pending 这种原始值漏到界面上。 */
+      typeCn: function (t) {
+        return { tension: '锚泊张力', tilt: '网箱倾斜', net_damage: '网衣破损',
+                 deformation: '结构形变', low_battery: '低电量', power_supply: '供电异常' }[t] || t;
+      },
+      stCn: function (s) { return { active: '活跃', acknowledged: '已确认', recovered: '已恢复' }[s] || s; },
+      hdCn: function (s) { return { pending: '待处置', handling: '处置中', handled: '已处置', failed: '处置失败' }[s] || s; },
+      cfCn: function (s) { return { unconfirmed: '未确认', confirmed: '已确认' }[s] || s; },
       pick: function (a) { this.picked = a; this.id = a.alarm_event_id; },
       find: function () {
         const a = API.alarm(this.id.trim());
@@ -979,10 +1003,10 @@
       '            <span class="k">规则编号</span><span class="mono">{{ picked.rule_id }}</span>',
       '            <span class="k">规则条件</span><span class="mono">{{ picked.rule_condition }}</span>',
       '            <span class="k">组合条件</span><span class="mono">{{ picked.combine_condition || \'—\' }}</span>',
-      '            <span class="k">预警类型</span><span>{{ picked.alarm_type }}</span>',
+      '            <span class="k">预警类型</span><span>{{ typeCn(picked.alarm_type) }}</span>',
       '            <span class="k">预警等级</span><span>{{ lvCn(picked.risk_level) }}预警</span>',
       '            <span class="k">预警时间</span><span>{{ time(picked.alarm_ts) }}</span>',
-      '            <span class="k">预警状态</span><span>{{ picked.alarm_status }}</span>',
+      '            <span class="k">预警状态</span><span>{{ stCn(picked.alarm_status) }}</span>',
       '          </div>',
       '        </div>',
       '',
@@ -997,15 +1021,22 @@
       '',
       '        <div class="card">',
       '          <div class="card-title">② 触发数据快照（trigger_snapshot）</div>',
-      '          <pre class="mono small" style="margin:0;background:#F9FAFB;border:1px solid #E5E7EB;border-radius:6px;padding:10px;overflow:auto">{{ JSON.stringify(picked.trigger_snapshot, null, 2) }}</pre>',
+      '          <div class="kv">',
+      '            <template v-for="r in snapRows" :key="r.k">',
+      '              <span class="k mono">{{ r.k }}</span><span>{{ r.v }}</span>',
+      '            </template>',
+      '          </div>',
+      '          <div class="small muted" style="margin-top:8px">',
+      '            时间字段已按通用规范第三节格式化显示（原值为毫秒数）。',
+      '          </div>',
       '        </div>',
       '',
       '        <div class="card">',
       '          <div class="card-title">③ 结果如何</div>',
       '          <div class="kv">',
       '            <span class="k">处置建议</span><span>{{ picked.handling_advice }}</span>',
-      '            <span class="k">处置状态</span><span>{{ picked.handle_status }}</span>',
-      '            <span class="k">确认状态</span><span>{{ picked.confirm_status }}</span>',
+      '            <span class="k">处置状态</span><span>{{ hdCn(picked.handle_status) }}</span>',
+      '            <span class="k">确认状态</span><span>{{ cfCn(picked.confirm_status) }}</span>',
       '            <span class="k">恢复时间</span><span>{{ picked.recover_ts ? time(picked.recover_ts) : \'尚未恢复\' }}</span>',
       '          </div>',
       '          <div class="row" style="margin-top:12px">',
@@ -1111,7 +1142,7 @@
       '              <thead><tr><th>命令号</th><th>类型</th><th>状态</th><th>重试</th><th>失败原因</th></tr></thead>',
       '              <tbody>',
       '                <tr v-for="c in commands" :key="c.command_id">',
-      '                  <td class="mono">{{ c.command_id }}</td><td>{{ c.command_type }}</td>',
+      '                  <td class="mono">{{ c.command_id }}</td><td>{{ CN.commandType(c.command_type) }}</td>',
       '                  <td>{{ statusCn(c.command_status) }}</td><td>{{ c.retry_count }}</td>',
       '                  <td :style="{ color: c.fail_reason ? \'#991B1B\' : \'#6B7280\' }">{{ c.fail_reason || \'—\' }}</td>',
       '                </tr>',
@@ -1192,7 +1223,7 @@
       '  <div class="grid-stats">',
       '    <stat-card name="环境光照强度" field="light_intensity" unit="lux" :value="last.light_intensity" :quality="last.quality" :ts="last.ts" source="simulated" />',
       '    <stat-card name="灯具在线" field="device_online" unit="" :value="light.device_online ? \'在线\' : \'离线\'" source="simulated" />',
-      '    <stat-card name="灯具运行状态" field="device_state" unit="" :value="light.device_state" source="simulated" />',
+      '    <stat-card name="灯具运行状态" field="device_state" unit="" :value="CN.deviceState(light.device_state)" source="simulated" />',
       '    <stat-card name="当前调光档位" field="light_dimming_pct" unit="%" :value="light.device_params && light.device_params.light_dimming_pct" source="simulated" />',
       '  </div>',
       '',

@@ -10,6 +10,56 @@
   'use strict';
   const C = {};
 
+  /* ============================================================
+     枚举中文标签（通用规范 第五节）
+     ============================================================
+     为什么集中放一处：枚举的中文说法在规范里定死了，界面**必须**显示中文。
+     每页各写一份映射，迟早有人写歪（实测就漏了 5 处：设备状态、设备类型、
+     预警类型、预警状态、处置状态直接把 tension / standby / pending 甩到界面上，
+     而旁边的「预警等级」却显示中文 —— 自相矛盾）。
+
+     用法：模板里写 {{ CN.deviceState(d.device_state) }}
+     （已在 app.js 挂到 globalProperties，模板才够得着）
+     ============================================================ */
+  global.CN = {
+    deviceState: function (v) {
+      return { online: '在线', offline: '离线', running: '运行中', standby: '待机', fault: '故障' }[v] || v;
+    },
+    deviceType: function (v) {
+      return { feeder: '投喂设备', light: '补光灯具', sensor: '传感器' }[v] || v;
+    },
+    commandType: function (v) { return { feed: '投喂', light: '补光' }[v] || v; },
+    commandStatus: function (v) {
+      return { created: '已创建', sent: '已发出', acknowledged: '已收到回执', success: '成功',
+               timeout: '超时', retrying: '重试中', failed: '失败', escalated: '升级报警' }[v] || v;
+    },
+    taskStatus: function (v) {
+      return { pending: '待执行', running: '正在执行', done: '已完成',
+               paused: '已暂停', cancelled: '已取消', failed: '任务失败' }[v] || v;
+    },
+    riskLevel: function (v) {
+      return { blue: '蓝色', yellow: '黄色', orange: '橙色', red: '红色' }[v] || v;
+    },
+    alarmType: function (v) {
+      return { tension: '锚泊张力', tilt: '网箱倾斜', net_damage: '网衣破损',
+               deformation: '结构形变', low_battery: '低电量', power_supply: '供电异常' }[v] || v;
+    },
+    alarmStatus: function (v) {
+      return { active: '活跃', acknowledged: '已确认', recovered: '已恢复' }[v] || v;
+    },
+    handleStatus: function (v) {
+      return { pending: '待处置', handling: '处置中', handled: '已处置', failed: '处置失败' }[v] || v;
+    },
+    confirmStatus: function (v) { return { unconfirmed: '未确认', confirmed: '已确认' }[v] || v; },
+    quality: function (v) {
+      return { good: '良好', stale: '超时未更新', suspect: '疑似异常' }[v] || v;
+    },
+    triggerBy: function (v) { return { auto: '自动', manual: '手动' }[v] || v; },
+    feedingIntensity: function (v) {
+      return { none: '无', weak: '弱', mid: '中', strong: '强' }[v] || v;
+    }
+  };
+
   /* ---------- 让 ECharts 跟着容器尺寸走 ----------
      ⚠️ 没有这个，图表会冻在「首次渲染那一刻」的宽度上。
         实测：视口 1920 时卡片宽 1688px，而图还是 1018px ——

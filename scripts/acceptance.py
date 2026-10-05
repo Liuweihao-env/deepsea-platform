@@ -22,6 +22,7 @@
 import argparse
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -302,6 +303,79 @@ def check_extra(base):
 
 
 # ======================================================================
+# 附加 2：界面不许出现裸英文枚举（静态检查）
+#   通用规范 第五节点名要求「界面必须显示中文标签」。
+#   实测漏过 5 处：设备状态、设备类型、预警类型、预警状态、处置状态
+#   直接把 tension / standby / pending 甩到界面上，而旁边的「预警等级」
+#   却显示中文 —— 自相矛盾。这道检查就是防它再犯。
+# ======================================================================
+ENUM_FIELDS = ["device_state", "device_type", "alarm_status", "handle_status",
+               "confirm_status", "command_type", "command_status", "task_status",
+               "risk_level", "alarm_type", "quality", "trigger_by",
+               "feeding_intensity"]
+
+# 允许的写法：CN.xxx(...) / 页面自写的 xxCn(...) / 三元表达式直接给中文
+WRAPPED = re.compile(r"(CN\.\w+\(|\w*[Cc]n\(|\?)")
+
+
+def _enum_guard_selftest():
+    """先测这道检查自己还灵不灵 —— 检查器失灵比没检查更危险（会给人虚假的安全感）。"""
+    samples = [
+        ("{{ d.device_state }}", True),
+        ("{{ picked.alarm_type }}", True),
+        ("{{ c.command_type }}", True),
+        ("{{ picked.risk_level }}", True),
+        ("{{ CN.deviceState(d.device_state) }}", False),
+        ("{{ dsCn(d.device_state) }}", False),
+        ("{{ d.device_online ? '在线' : '离线' }}", False),
+        ("{{ last.water_temp }}", False),
+    ]
+    for expr, should_flag in samples:
+        flagged = False
+        for m in re.finditer(r"\{\{(.*?)\}\}", expr, re.S):
+            e = m.group(1)
+            for f in ENUM_FIELDS:
+                if ("." + f) in e and not WRAPPED.search(e):
+                    flagged = True
+                    break
+        if flagged != should_flag:
+            return False, expr
+    return True, None
+
+
+def check_enum_labels(base):
+    ok, bad = _enum_guard_selftest()
+    if not ok:
+        return rec(6, "界面不出现裸英文枚举", FAIL,
+                   "检查器自测未通过（样例 %s）—— 这道检查本身失效了，结果不可信" % bad)
+
+    _, js = raw(base, "/pages.js")
+    _, comp = raw(base, "/components.js")
+
+    problems = []
+    for m in re.finditer(r"\{\{(.*?)\}\}", js, re.S):
+        expr = m.group(1)
+        for f in ENUM_FIELDS:
+            if ("." + f) in expr and not WRAPPED.search(expr):
+                problems.append("{{%s}}" % expr.strip()[:60])
+                break
+
+    cn_ok = ("global.CN" in comp) and ("deviceState" in comp) and ("alarmType" in comp)
+
+    if not problems and cn_ok:
+        rec(6, "界面不出现裸英文枚举", PASS,
+            "检查器自测 8/8 通过；模板里 %d 类枚举字段全部经中文映射；"
+            "CN 表集中定义在 components.js，避免每页各写一份写歪" % len(ENUM_FIELDS))
+    else:
+        why = []
+        if problems:
+            why.append("发现裸枚举：%s" % "；".join(problems[:5]))
+        if not cn_ok:
+            why.append("components.js 里没有 CN 中文映射表")
+        rec(6, "界面不出现裸英文枚举", FAIL, "；".join(why))
+
+
+# ======================================================================
 def free_port():
     """让系统给一个当前空闲的端口。
 
@@ -362,6 +436,7 @@ def main():
         check_3(base)
         check_4(base)
         check_extra(base)
+        check_enum_labels(base)
 
     finally:
         proc.terminate()

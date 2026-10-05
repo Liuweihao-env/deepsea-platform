@@ -176,6 +176,8 @@
   /* 模板里要用 API.sites() 之类 —— Vue 模板只能访问组件实例上的东西，
      访问不到 window 全局，所以必须挂到 globalProperties 上。 */
   app.config.globalProperties.API = window.API;
+  /* 枚举中文标签（通用规范 第五节）—— 模板里写 {{ CN.deviceState(x) }} */
+  app.config.globalProperties.CN = window.CN;
   /* 注册通用组件（骨架规范 第三节） */
   app.component('source-tag', C.SourceTag);
   app.component('stat-card', C.StatCard);
