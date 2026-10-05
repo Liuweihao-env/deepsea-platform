@@ -134,7 +134,11 @@ deepsea-platform/
 | 项目走到哪了 | 上级目录的 `当前进度.md` |
 
 > `docs/` 里的是**快照**，正本在上级目录（队长维护）。
-> 同步命令：`pwsh scripts/sync_docs.ps1`
+> 同步命令（本机执行策略默认拦截脚本，所以要带 `-ExecutionPolicy Bypass`）：
+>
+> ```powershell
+> powershell -ExecutionPolicy Bypass -File scripts\sync_docs.ps1
+> ```
 
 ---
 

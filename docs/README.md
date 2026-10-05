@@ -15,8 +15,15 @@
 ## 怎么同步
 
 ```powershell
-pwsh scripts/sync_docs.ps1
+powershell -ExecutionPolicy Bypass -File scripts\sync_docs.ps1
 ```
+
+> **为什么要带 `-ExecutionPolicy Bypass`**：Windows 默认执行策略会拦截本地 `.ps1` 脚本
+> （报错 `AuthorizationManager 检查失败`）。`-ExecutionPolicy Bypass` 只对这一次运行生效，
+> 不改你机器上的任何设置。
+>
+> **`.ps1` 必须存成 UTF-8 带 BOM** —— Windows PowerShell 5.1 会把不带 BOM 的脚本按 ANSI 读，
+> 中文立刻变乱码、脚本直接语法报错。**这个坑本项目已经踩过一次。**
 
 脚本会把正本复制到本目录，并打印每个文件的同步时间。
 
