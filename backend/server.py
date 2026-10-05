@@ -42,6 +42,7 @@ import re
 import sys
 import threading
 import time
+import urllib.request
 import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -614,6 +615,58 @@ class Handler(BaseHTTPRequestHandler):
 
 _CURSOR = "backend/server.py @ 2026-10-05"
 
+MAX_PORT_TRIES = 12
+
+
+class PlatformServer(ThreadingHTTPServer):
+    """⚠️ 必须关掉 SO_REUSEADDR，否则会出现"两个后端同时跑"。
+
+    Python 的 HTTPServer 默认 allow_reuse_address = 1（即 SO_REUSEADDR）。
+    在 Linux 上它只影响 TIME_WAIT 复用，但在 **Windows 上它允许两个进程绑定同一个端口**。
+    实测过：两个后端同时监听 127.0.0.1:8080，请求随机落到其中一个，
+    于是命令与告警状态被切成两半 —— 界面上表现为「我刚下的命令怎么没了」，
+    而且完全看不出原因。现场演示遇到这个，基本没救。
+
+    关掉它，第二次绑定会明确失败，我们才能给出人话提示。
+    """
+    allow_reuse_address = False
+    daemon_threads = True
+
+
+def probe_existing(host, port, timeout=1.5):
+    """这个端口上是不是已经有一个「我们的」平台在跑？"""
+    try:
+        with urllib.request.urlopen("http://%s:%d/api/health" % (host, port), timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8")).get("code") == 200
+    except Exception:                                  # noqa: BLE001
+        return False
+
+
+def bind_server(host, want_port):
+    """绑定端口。返回 (server, port) 或 (None, None)。
+
+    三种情况：
+      1. 端口空着            → 直接绑上
+      2. 端口被占，但是我们的平台 → 告诉用户「已经开着了」，别再开第二个
+      3. 端口被别的程序占着   → 换下一个端口
+    """
+    for i in range(MAX_PORT_TRIES):
+        p = want_port + i
+        try:
+            return PlatformServer((host, p), Handler), p
+        except OSError as e:
+            winerr = getattr(e, "winerror", None)
+            busy = (winerr == 10048) or (e.errno in (48, 98, 10048, 13))
+            if not busy:
+                raise
+            if probe_existing(host, p):
+                return "ALREADY", p
+            if i == 0:
+                print("  提示：%d 端口被别的程序占用了，换一个…" % p)
+            else:
+                print("          %d 也被占了，再换一个…" % p)
+    return None, None
+
 
 def main():
     ap = argparse.ArgumentParser(description="深远海养殖与海洋牧场智能管控平台 —— 后端 + 前端托管")
@@ -626,8 +679,32 @@ def main():
         print("!! 找不到前端目录：%s" % FRONTEND)
         return 2
 
-    httpd = ThreadingHTTPServer((args.host, args.port), Handler)
-    url = "http://%s:%d/" % (args.host, args.port)
+    srv, port = bind_server(args.host, args.port)
+    url = "http://%s:%d/" % (args.host, port)
+
+    if srv == "ALREADY":
+        print("=" * 62)
+        print("  平台已经在运行了 —— 不用再开第二个")
+        print("=" * 62)
+        print()
+        print("  直接打开：%s" % url)
+        print()
+        print("  （开两个会各跑各的数据，命令和告警会对不上。")
+        print("    想重启的话，先把原来那个窗口关掉。）")
+        print()
+        if not args.no_browser:
+            webbrowser.open(url)
+        return 0
+
+    if srv is None:
+        print("=" * 62)
+        print("  [错误] 连续 %d 个端口都被占用了" % MAX_PORT_TRIES)
+        print("=" * 62)
+        print()
+        print("  请关掉一些程序，再双击一次 启动平台.bat。")
+        print()
+        return 1
+
     print("=" * 62)
     print("  深远海养殖与海洋牧场智能管控平台")
     print("=" * 62)
@@ -636,14 +713,20 @@ def main():
     print("  接口前缀：/api/        （健康检查 /api/health）")
     print("  零依赖：只用 Python 标准库，无需 pip install、无需联网")
     print()
-    print("  按 Ctrl+C 停止")
+    print("  按 Ctrl+C 停止     （演示期间别关这个窗口）")
     print("=" * 62)
+    # 显式 flush：输出被重定向时 Python 会缓冲，横幅（含网址）就迟迟不显示。
+    # 对非技术队员来说"网址是哪一行"必须一眼看到。
+    try:
+        sys.stdout.flush()
+    except Exception:                                  # noqa: BLE001
+        pass
 
     if not args.no_browser:
         threading.Thread(target=lambda: (time.sleep(1.0), webbrowser.open(url)), daemon=True).start()
 
     try:
-        httpd.serve_forever()
+        srv.serve_forever()
     except KeyboardInterrupt:
         print("\n已停止。")
     return 0
