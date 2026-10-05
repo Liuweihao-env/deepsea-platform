@@ -1,0 +1,45 @@
+# ============================================================
+#  换行符与文本属性
+#  建立：2026-10-05，刘桐麟
+#
+#  为什么需要：不写这个，同一份文件在 Windows 和 Mac 上
+#  会被 git 判成"整个文件都改了"，diff 全是噪音，看不到真正改了什么。
+# ============================================================
+
+# 默认：由 git 自动判断文本文件并统一成 LF 存进仓库
+* text=auto
+
+# 明确按文本处理
+*.md      text
+*.py      text
+*.js      text
+*.ts      text
+*.tsx     text
+*.jsx     text
+*.vue     text
+*.json    text
+*.yml     text
+*.yaml    text
+*.css     text
+*.html    text
+*.ps1     text
+*.txt     text
+
+# PowerShell 脚本：保持文本处理即可。
+# ⚠️ 注意：本项目的 .ps1 一律存成「UTF-8 带 BOM」——
+#    Windows PowerShell 5.1 会把不带 BOM 的脚本按 ANSI 读，
+#    中文立刻变乱码、脚本直接语法报错。这个坑已经踩过一次。
+*.ps1     text
+
+# 二进制：不要碰
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.pdf     binary
+*.xlsx    binary
+*.docx    binary
+*.pptx    binary
+
+# 数据文件
+*.csv     text
