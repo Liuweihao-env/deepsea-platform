@@ -1,0 +1,627 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+深远海养殖与海洋牧场智能管控平台 —— 后端服务
+================================================
+
+一个进程同时干两件事（前端骨架规范 / 项目总体计划 的要求）：
+  1. 提供 /api/*  数据与指令接口（口径见《统一数据接口文档 v1.2》）
+  2. 托管 ../frontend/ 的静态页面
+
+★ 为什么不用 FastAPI ★
+--------------------------------------------------------------
+原计划写的是 "Python FastAPI"。实测环境里 FastAPI / uvicorn / pydantic
+都没有安装，而捆绑运行时是只读资源，装不进去。
+
+本项目的硬约束是两条（项目记录 1.5 节）：
+  · R1 —— 11-14 现场**没人会改代码**，崩了没有第二次机会
+  · 部署必须"一键启动、离线自包含"
+
+所以这里改用**纯标准库**（http.server + json + threading）：
+  · 零依赖 —— 有 Python 3 就能跑，不需要 pip install、不需要联网
+  · 少一层就少一个翻车点 —— 与前端"免构建"同一个理由
+
+**接口形状与 FastAPI 版本完全一致**。若日后要换回 FastAPI，
+只需把 route 表换成 FastAPI 的装饰器，数据层与状态机可直接搬。
+
+启动：
+    python backend/server.py                # 默认 http://127.0.0.1:8080
+    python backend/server.py --port 9000
+    python backend/server.py --no-browser
+
+建立：2026-10-05
+"""
+
+import argparse
+import json
+import math
+import mimetypes
+import os
+import random
+import re
+import sys
+import threading
+import time
+import webbrowser
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse, parse_qs
+
+# ----------------------------------------------------------------------
+# 路径
+# ----------------------------------------------------------------------
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+FRONTEND = os.path.join(ROOT, "frontend")
+
+# ----------------------------------------------------------------------
+# 站点（接口文档 8.1）
+# ----------------------------------------------------------------------
+SITES = [
+    {"site_id": "site_01", "site_name": "模拟养殖站点", "kind": "farm",
+     "latitude": 26.10, "longitude": 119.90, "farming_depth_m": 20},
+    {"site_id": "site_02", "site_name": "NDBC 观测站点 41001", "kind": "obs",
+     "latitude": 34.72, "longitude": -72.27, "farming_depth_m": 0},
+    {"site_id": "site_03", "site_name": "NDBC 观测站点 46001", "kind": "obs",
+     "latitude": 56.30, "longitude": -148.02, "farming_depth_m": 0},
+    {"site_id": "site_04", "site_name": "NDBC 观测站点 51001", "kind": "obs",
+     "latitude": 24.45, "longitude": -162.00, "farming_depth_m": 0},
+]
+
+STEP_FAST = 5 * 1000        # 快变量 5 秒
+STEP_SLOW = 30 * 1000       # 慢变量 30 秒（盐度 / pH，裁定 3）
+
+
+# ======================================================================
+# 仿真数据生成（与前端 mock.js 同口径）
+# ======================================================================
+def _rng(seed=20261005):
+    return random.Random(seed)
+
+
+def env_series(site_id, minutes=60, storm=False, heat=False, offline_from=None):
+    """环境时序（接口文档 4.1 / 4.2 / 4.3）"""
+    n = max(2, int(minutes * 60 * 1000 / STEP_FAST))
+    n_slow = max(2, int(minutes * 60 * 1000 / STEP_SLOW))
+    now = int(time.time() * 1000) // 1000 * 1000
+    t0 = now - minutes * 60 * 1000
+    r = _rng()
+
+    fast = []
+    for i in range(n):
+        ts = t0 + i * STEP_FAST
+        h = datetime.fromtimestamp(ts / 1000).hour + datetime.fromtimestamp(ts / 1000).minute / 60.0
+        diurnal = math.sin((h - 6) / 24 * 2 * math.pi)
+        offline = offline_from is not None and i >= offline_from
+        ramp = max(0.0, (i / n - 0.55) / 0.45) * 4.2 if heat else 0.0
+
+        wave = r.gauss(3.2, .5) if storm else r.gauss(1.4, .25)
+        wind = r.gauss(17, 2.5) if storm else r.gauss(8.3, 1.2)
+        water = 18.6 + diurnal * 1.8 + r.gauss(0, .15) + ramp
+        air = 22.4 + diurnal * 3.2 + r.gauss(0, .4) + ramp * .6
+        light = max(0.0, (4000 if storm else 12000) * max(0.0, math.sin((h - 6) / 12 * math.pi)) + r.gauss(0, 400))
+
+        fast.append({
+            "ts": ts,
+            "site_id": site_id,
+            "source": "simulated",
+            "quality": "stale" if offline else "good",
+            # 离线给 null，不给上一个值（通用规范 4.2 硬纪律）
+            "wave_height": None if offline else round(wave, 1),
+            "wind_speed": None if offline else round(wind, 1),
+            "current_speed": None if offline else round(r.gauss(1.4 if storm else .6, .12), 1),
+            "air_temp": None if offline else round(air, 1),
+            "water_temp": None if offline else round(water, 1),
+            "dissolved_oxygen": None if offline else round(9.2 - (water - 18.6) * .45 + r.gauss(0, .12), 1),
+            "light_intensity": None if offline else round(light),
+        })
+
+    slow = []
+    for i in range(n_slow):
+        slow.append({
+            "ts": t0 + i * STEP_SLOW,
+            "site_id": site_id,
+            "salinity": round(r.gauss(32.1, .15), 1),   # ‰（裁定 10）
+            "ph": round(r.gauss(8.1, .06), 1),          # 1 位小数
+        })
+
+    return {"fast": fast, "slow": slow}
+
+
+def fish_series(minutes=60):
+    """鱼类（接口文档 第三节；4 项指标本期不做）"""
+    n = max(2, int(minutes * 60 * 1000 / STEP_FAST))
+    now = int(time.time() * 1000) // 1000 * 1000
+    t0 = now - minutes * 60 * 1000
+    r = _rng()
+    out, count = [], 1200
+    for i in range(n):
+        count += round(r.gauss(0, .6))
+        avg_w = 420 + i / n * 6 + r.gauss(0, 3)
+        out.append({
+            "ts": t0 + i * STEP_FAST,
+            "site_id": "site_01",
+            "source": "public",
+            "quality": "good",
+            "fish_count": count,
+            "fish_density": round(count / 285, 1),
+            "avg_length_cm": round((avg_w / 0.0218) ** (1 / 3.02), 1),
+            "avg_weight_g": round(avg_w, 1),
+            "total_biomass_kg": round(count * avg_w / 1000, 1),
+            "feeding_intensity": r.choice(["none", "weak", "mid", "strong"]),
+        })
+    return out
+
+
+def heat_grid():
+    """10×10 网格（拍板问题单 问题 5 建议 A）"""
+    r = _rng()
+    g = []
+    for y in range(10):
+        row = []
+        for x in range(10):
+            d = math.hypot(x - 4.5, y - 5.2)
+            row.append(round(max(0.0, 12 - d * 2.2 + r.gauss(0, 1.4)), 1))
+        g.append(row)
+    return g
+
+
+def struct_series(minutes=60):
+    """结构安全（接口文档 第五节）"""
+    n = max(2, int(minutes * 60 * 1000 / STEP_FAST))
+    now = int(time.time() * 1000) // 1000 * 1000
+    t0 = now - minutes * 60 * 1000
+    r = _rng()
+    out, soc, design = [], 68.0, 60.0
+    for i in range(n):
+        ts = t0 + i * STEP_FAST
+        h = datetime.fromtimestamp(ts / 1000).hour
+        day = max(0.0, math.sin((h - 6) / 12 * math.pi))
+        tension = r.gauss(42.5, 1.6)
+        soc = min(100.0, max(8.0, soc + (0.18 if day > .2 else -0.22) + r.gauss(0, .12)))
+        roll, pitch = r.gauss(1.8, .35), r.gauss(2.4, .4)
+        out.append({
+            "ts": ts,
+            "site_id": "site_01",
+            "anchor_tension": round(tension, 1),
+            "design_tension": design,
+            "tension_pct": round(tension / design * 100, 1),
+            "net_tension": round(r.gauss(18.3, .8), 1),
+            "tilt_roll": round(roll, 1),
+            "tilt_pitch": round(pitch, 1),
+            "tilt_angle": round(max(abs(roll), abs(pitch)), 1),
+            "accel_x": round(r.gauss(0.12, .05), 2),
+            "accel_y": round(r.gauss(-0.08, .05), 2),
+            "accel_z": round(r.gauss(9.79, .06), 2),
+            "pv_power": round(day * 4.6, 2),
+            "pv_energy_today": round(day * 14, 1),
+            "battery_soc": round(soc, 1),
+            "battery_capacity_kwh": 30,
+            "battery_energy": round(soc / 100 * 30, 1),
+            "total_power": round(r.gauss(2.1, .2), 2),
+            "energy_self_sufficiency": round(day * 130),
+        })
+    return out
+
+
+def feed_decision():
+    """投喂决策（裁定 1：投喂量归智能算）"""
+    fish = fish_series(5)
+    last = fish[-1]
+    water = env_series("site_01", 5)["fast"][-1]["water_temp"]
+    h = datetime.now().hour
+    intensity = "strong" if (5 <= h <= 9 or 16 <= h <= 19) else ("mid" if 10 <= h <= 15 else "weak")
+    w = {"none": 0, "weak": 0.45, "mid": 0.75, "strong": 1}[intensity]
+    cn = {"none": "无", "weak": "弱", "mid": "中", "strong": "强"}[intensity]
+    per_day = last["total_biomass_kg"] * 0.012
+    times = 4
+    return {
+        "ts": last["ts"],
+        "biomass_kg": last["total_biomass_kg"],
+        "feeding_intensity": intensity,
+        "feeding_intensity_cn": cn,
+        "water_temp": water,
+        "suggest_kg_h": round(max(0.1, per_day / times * w), 1),
+        "day_total_kg": round(per_day * w, 1),
+        "times_per_day": times,
+        "basis": [
+            "依据 1：生物量 %s kg × 日投饲率 1.2%% = %.1f kg/日" % (last["total_biomass_kg"], per_day),
+            "依据 2：当前时段（%d 时）摄食强度「%s」→ 折算系数 %s" % (h, cn, w),
+            "依据 3：水温 %s ℃ 处于适宜摄食区间（15–25 ℃）" % water,
+            "分 %d 次投喂，单次上限 %.1f kg" % (times, per_day / times),
+        ],
+        "mode": "manual",
+    }
+
+
+# ======================================================================
+# 设备 / 指令状态机（接口文档 6.3 / 6.4 / 7.6）
+# ======================================================================
+class Platform(object):
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.devices = [
+            {"device_id": "feeder_01", "device_type": "feeder", "device_online": True,
+             "device_state": "standby", "device_params": {"feed_remain_kg": 62.5, "feed_remain_pct": 62.5},
+             "site_id": "site_01"},
+            {"device_id": "light_01", "device_type": "light", "device_online": True,
+             "device_state": "standby", "device_params": {"light_dimming_pct": 0},
+             "site_id": "site_01"},
+            {"device_id": "tension_01", "device_type": "sensor", "device_online": True,
+             "device_state": "running", "device_params": {}, "site_id": "site_01"},
+            {"device_id": "pv_01", "device_type": "sensor", "device_online": True,
+             "device_state": "running", "device_params": {}, "site_id": "site_01"},
+        ]
+        self.commands = []
+        self._seq = 0
+        self.alarms = self._seed_alarms()
+
+    def _seed_alarms(self):
+        now = int(time.time() * 1000)
+        return [
+            {"alarm_event_id": "ALM-0001", "alarm_type": "tension", "risk_level": "yellow",
+             "alarm_status": "active", "alarm_ts": now - 8 * 60 * 1000,
+             "trigger_field": "tension_pct", "trigger_value": 83.2, "trigger_threshold": 80,
+             "rule_id": "R-TENSION-01", "rule_name": "锚泊张力黄色预警",
+             "rule_condition": "tension_pct > 80", "combine_condition": None,
+             "trigger_snapshot": {"anchor_tension": 49.9, "design_tension": 60, "tension_pct": 83.2, "ts": now - 8 * 60 * 1000},
+             "handling_advice": "检查锚链受力，必要时降低流速影响",
+             "handle_status": "pending", "confirm_status": "unconfirmed"},
+            {"alarm_event_id": "ALM-0002", "alarm_type": "tilt", "risk_level": "orange",
+             "alarm_status": "acknowledged", "alarm_ts": now - 26 * 60 * 1000,
+             "trigger_field": "tilt_pitch", "trigger_value": 2.7, "trigger_threshold": 2,
+             "rule_id": "R-TILT-02", "rule_name": "网箱倾斜橙色预警",
+             "rule_condition": "tilt_pitch > 2 且 wave_height > 1.5",
+             "combine_condition": "AND(wave_height>1.5)",
+             "trigger_snapshot": {"tilt_pitch": 2.7, "tilt_roll": 1.9, "wave_height": 1.8, "ts": now - 26 * 60 * 1000},
+             "handling_advice": "关注网箱姿态，检查配重",
+             "handle_status": "handling", "confirm_status": "confirmed"},
+            {"alarm_event_id": "ALM-0003", "alarm_type": "low_battery", "risk_level": "yellow",
+             "alarm_status": "recovered", "alarm_ts": now - 55 * 60 * 1000,
+             "trigger_field": "battery_soc", "trigger_value": 19.4, "trigger_threshold": 20,
+             "rule_id": "R-BAT-01", "rule_name": "储能低电量黄色预警",
+             "rule_condition": "battery_soc < 20", "combine_condition": None,
+             "trigger_snapshot": {"battery_soc": 19.4, "battery_energy": 5.8, "ts": now - 55 * 60 * 1000},
+             "handling_advice": "优先保障关键设备供电",
+             "handle_status": "handled", "confirm_status": "confirmed",
+             "recover_ts": now - 31 * 60 * 1000},
+        ]
+
+    # ---------- 指令状态机 ----------
+    def send_command(self, device_id, command_type, params, inject=None):
+        with self.lock:
+            self._seq += 1
+            ymd = datetime.now().strftime("%Y%m%d")
+            cmd = {
+                "command_id": "cmd_%s_%04d" % (ymd, self._seq),
+                "device_id": device_id,
+                "command_type": command_type,
+                "params": params or {},
+                "timeout_ms": 5000,      # 裁定 8
+                "max_retry": 3,          # 裁定 8
+                "command_status": "created",
+                "retry_count": 0,
+                "state_changed_ts": int(time.time() * 1000),
+                "ts": int(time.time() * 1000),
+                "fail_reason": None,
+                "receipt_result": None,
+                "history": [],
+            }
+            self.commands.insert(0, cmd)
+
+        t = threading.Thread(target=self._advance, args=(cmd, inject), daemon=True)
+        t.start()
+        return cmd
+
+    def _advance(self, cmd, inject):
+        """created → sent → acknowledged → success
+        ；注入 timeout / offline 时走失败链（绝不允许静默失败）
+
+        ⚠️ 注入故障时**不能走完成功链**：
+           超时的命令根本没收到回执，不可能出现 acknowledged / success。
+           这里曾经写成"先走完整成功链再补失败链"，导致命令历史里
+           同时存在 success 和 escalated —— 自相矛盾，答辩时会被问倒。
+        """
+        if inject in ("offline", "timeout"):
+            steps = ["created", "sent"]      # 发出去了，但等不到回执
+        else:
+            steps = ["created", "sent", "acknowledged", "success"]
+
+        for st in steps:
+            time.sleep(0.7)
+            self._set(cmd, st)
+            if st == "success":
+                cmd["receipt_result"] = {"success": True, "result": "executed",
+                                         "actual_ts": int(time.time() * 1000), "error_code": None}
+                # 命令成功 → 设备状态更新
+                with self.lock:
+                    for d in self.devices:
+                        if d["device_id"] == cmd["device_id"]:
+                            d["device_state"] = "running"
+
+        if inject == "timeout":
+            time.sleep(1.2)
+            self._set(cmd, "timeout")
+            time.sleep(0.6)
+            cmd["retry_count"] = 1
+            self._set(cmd, "retrying")
+            time.sleep(0.6)
+            cmd["fail_reason"] = "超时未收到回执，重试 3 次后失败"
+            self._set(cmd, "failed")
+            time.sleep(0.6)
+            cmd["fail_reason"] = "已升级报警"
+            self._set(cmd, "escalated")
+            self._raise_command_alarm(cmd)
+        elif inject == "offline":
+            time.sleep(1.2)
+            cmd["fail_reason"] = "设备离线，命令未能送达"
+            self._set(cmd, "failed")
+            self._raise_command_alarm(cmd)
+
+    def _set(self, cmd, status):
+        with self.lock:
+            cmd["command_status"] = status
+            cmd["state_changed_ts"] = int(time.time() * 1000)
+            cmd["history"].append({"status": status, "ts": cmd["state_changed_ts"]})
+
+    def _raise_command_alarm(self, cmd):
+        """命令失败必须进告警中心 —— 不允许悄悄地失败"""
+        now = int(time.time() * 1000)
+        with self.lock:
+            n = len(self.alarms) + 1
+            self.alarms.insert(0, {
+                "alarm_event_id": "ALM-%04d" % n,
+                "alarm_type": "power_supply" if cmd["command_type"] == "light" else "tension",
+                "risk_level": "red",
+                "alarm_status": "active",
+                "alarm_ts": now,
+                "trigger_field": "command_status",
+                "trigger_value": "failed",
+                "trigger_threshold": "success",
+                "rule_id": "R-CMD-01",
+                "rule_name": "指令未获回执（升级报警）",
+                "rule_condition": "command_status == failed 且 重试耗尽",
+                "combine_condition": None,
+                "trigger_snapshot": {"command_id": cmd["command_id"], "device_id": cmd["device_id"],
+                                     "retry_count": cmd["retry_count"], "ts": now},
+                "handling_advice": "检查设备与链路；确认设备是否真的没动",
+                "handle_status": "pending",
+                "confirm_status": "unconfirmed",
+            })
+
+    def feed_records(self):
+        r = _rng()
+        now = int(time.time() * 1000)
+        out = []
+        for i in range(8, -1, -1):
+            out.append({
+                "ts": now - i * 3 * 3600 * 1000,
+                "amount_kg": round(r.gauss(11.5, 2), 1),
+                "trigger_by": "manual" if i % 3 == 0 else "auto",
+                "task_status": "running" if i == 0 else "done",
+                "command_id": "cmd_20261005_%04d" % (100 - i),
+            })
+        return out
+
+    def rule_check(self, row):
+        """「一条竖线」用的水温判定 —— 与前端同口径"""
+        if not row or row.get("water_temp") is None:
+            return None
+        t = row["water_temp"]
+        if t >= 21.5:
+            return {"alarm_type": "tilt", "risk_level": "red", "trigger_field": "water_temp",
+                    "trigger_value": t, "trigger_threshold": 21.5,
+                    "rule_id": "R-TEMP-01", "rule_name": "水温上限告警",
+                    "rule_condition": "water_temp >= 21.5"}
+        if t >= 20.5:
+            return {"alarm_type": "tilt", "risk_level": "yellow", "trigger_field": "water_temp",
+                    "trigger_value": t, "trigger_threshold": 20.5,
+                    "rule_id": "R-TEMP-02", "rule_name": "水温偏高提示",
+                    "rule_condition": "water_temp >= 20.5"}
+        return None
+
+
+PLATFORM = Platform()
+
+
+# ======================================================================
+# HTTP 服务
+# ======================================================================
+class Handler(BaseHTTPRequestHandler):
+    server_version = "DeepSeaPlatform/1.0"
+    protocol_version = "HTTP/1.1"
+
+    # ---------- 工具 ----------
+    def _json(self, obj, status=200):
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _err(self, code, msg):
+        """统一出错格式（通用规范 7.2）"""
+        self._json({"code": code, "msg": msg}, status=200 if code < 400 else code)
+
+    def _file(self, path):
+        if not os.path.isfile(path):
+            self.send_error(404, "Not Found")
+            return
+        ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
+            ctype += "; charset=utf-8"
+        with open(path, "rb") as f:
+            body = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, fmt, *args):
+        # 静音静态资源日志，只留 API
+        if "/api/" in (self.path or ""):
+            sys.stderr.write("[%s] %s\n" % (datetime.now().strftime("%H:%M:%S"), self.path))
+
+    # ---------- 路由 ----------
+    def do_GET(self):
+        u = urlparse(self.path)
+        p, q = u.path, parse_qs(u.query)
+
+        try:
+            if p.startswith("/api/"):
+                return self._api_get(p, q)
+            # 静态资源
+            rel = "index.html" if p in ("/", "") else p.lstrip("/")
+            target = os.path.normpath(os.path.join(FRONTEND, rel))
+            if not target.startswith(FRONTEND):       # 防目录穿越
+                return self.send_error(403, "Forbidden")
+            return self._file(target)
+        except Exception as e:                        # noqa: BLE001
+            return self._err(500, "服务内部错误：%s" % e)
+
+    def _api_get(self, p, q):
+        one = lambda k, d: (q.get(k) or [d])[0]   # noqa: E731
+        minutes = int(one("minutes", "60") or 60)
+        site = one("site_id", "site_01")
+
+        if p == "/api/health":
+            return self._json({"code": 200, "msg": "ok", "ts": int(time.time() * 1000)})
+
+        if p == "/api/sites":
+            return self._json(SITES)
+
+        if p == "/api/env":
+            storm = one("storm", "0") in ("1", "true")
+            heat = one("heat", "0") in ("1", "true")
+            off = one("offline_from", "")
+            return self._json(env_series(site, minutes, storm, heat, int(off) if off else None))
+
+        if p == "/api/fish":
+            return self._json(fish_series(minutes))
+
+        if p == "/api/heatmap":
+            return self._json({"grid": heat_grid(), "resolution": "10x10"})
+
+        if p == "/api/struct":
+            return self._json(struct_series(minutes))
+
+        if p == "/api/feed/decision":
+            return self._json(feed_decision())
+
+        if p == "/api/feed/records":
+            return self._json(PLATFORM.feed_records())
+
+        if p == "/api/devices":
+            return self._json(PLATFORM.devices)
+
+        if p == "/api/commands":
+            return self._json(PLATFORM.commands)
+
+        m = re.match(r"^/api/commands/([^/]+)$", p)
+        if m:
+            cid = m.group(1)
+            for c in PLATFORM.commands:
+                if c["command_id"] == cid:
+                    return self._json(c)
+            return self._err(404, "命令号不存在：%s" % cid)
+
+        if p == "/api/alarms":
+            return self._json(PLATFORM.alarms)
+
+        m = re.match(r"^/api/alarms/([^/]+)$", p)
+        if m:
+            for a in PLATFORM.alarms:
+                if a["alarm_event_id"] == m.group(1):
+                    return self._json(a)
+            return self._err(404, "告警事件编号不存在")
+
+        m = re.match(r"^/api/config/meta$", p)
+        if m:
+            return self._json({"cursor": _CURSOR})
+
+        return self._err(404, "接口不存在：%s" % p)
+
+    def do_POST(self):
+        u = urlparse(self.path)
+        p = u.path
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(n) if n else b"{}"
+            body = json.loads(raw.decode("utf-8") or "{}")
+        except Exception:                              # noqa: BLE001
+            return self._err(400, "参数错误：请求体不是合法 JSON")
+
+        try:
+            if p == "/api/commands":
+                did = body.get("device_id")
+                ctype = body.get("command_type")
+                if not did or not ctype:
+                    return self._err(400, "参数错误：缺少 device_id 或 command_type")
+                if did not in [d["device_id"] for d in PLATFORM.devices]:
+                    return self._err(404, "设备号不存在：%s" % did)
+                cmd = PLATFORM.send_command(did, ctype, body.get("params"), body.get("inject"))
+                return self._json(cmd)
+
+            m = re.match(r"^/api/alarms/([\w\-]+)/(confirm|handle)$", p)
+            if m:
+                aid, act = m.group(1), m.group(2)
+                for a in PLATFORM.alarms:
+                    if a["alarm_event_id"] == aid:
+                        if act == "confirm":
+                            a["confirm_status"] = "confirmed"
+                            a["confirm_ts"] = int(time.time() * 1000)
+                            a["alarm_status"] = "acknowledged"
+                            a["handle_status"] = "handled"
+                        else:
+                            a["handle_status"] = "handling"
+                        return self._json(a)
+                return self._err(404, "告警事件编号不存在")
+
+            return self._err(404, "接口不存在：%s" % p)
+        except Exception as e:                         # noqa: BLE001
+            return self._err(500, "服务内部错误：%s" % e)
+
+
+_CURSOR = "backend/server.py @ 2026-10-05"
+
+
+def main():
+    ap = argparse.ArgumentParser(description="深远海养殖与海洋牧场智能管控平台 —— 后端 + 前端托管")
+    ap.add_argument("--port", type=int, default=8080)
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--no-browser", action="store_true")
+    args = ap.parse_args()
+
+    if not os.path.isdir(FRONTEND):
+        print("!! 找不到前端目录：%s" % FRONTEND)
+        return 2
+
+    httpd = ThreadingHTTPServer((args.host, args.port), Handler)
+    url = "http://%s:%d/" % (args.host, args.port)
+    print("=" * 62)
+    print("  深远海养殖与海洋牧场智能管控平台")
+    print("=" * 62)
+    print("  平台地址：%s" % url)
+    print("  前端目录：%s" % FRONTEND)
+    print("  接口前缀：/api/        （健康检查 /api/health）")
+    print("  零依赖：只用 Python 标准库，无需 pip install、无需联网")
+    print()
+    print("  按 Ctrl+C 停止")
+    print("=" * 62)
+
+    if not args.no_browser:
+        threading.Thread(target=lambda: (time.sleep(1.0), webbrowser.open(url)), daemon=True).start()
+
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\n已停止。")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

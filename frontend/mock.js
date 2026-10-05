@@ -193,6 +193,33 @@
     return 'cmd_' + ymd + '_' + String(cmdSeq).padStart(4, '0');
   }
 
+  /* 命令失败必须进告警中心 —— 「不允许静默失败」的落地。
+     界面上写着"这条已经进告警中心"，那它就必须真的进去，不能只是文案。 */
+  function raiseCommandAlarm(cmd) {
+    const now = Date.now();
+    alarms.unshift({
+      alarm_event_id: 'ALM-' + String(alarms.length + 1).padStart(4, '0'),
+      alarm_type: cmd.command_type === 'light' ? 'power_supply' : 'tension',
+      risk_level: 'red',
+      alarm_status: 'active',
+      alarm_ts: now,
+      trigger_field: 'command_status',
+      trigger_value: cmd.command_status,
+      trigger_threshold: 'success',
+      rule_id: 'R-CMD-01',
+      rule_name: '指令未获回执（升级报警）',
+      rule_condition: 'command_status == failed 且 重试耗尽',
+      combine_condition: null,
+      trigger_snapshot: {
+        command_id: cmd.command_id, device_id: cmd.device_id,
+        retry_count: cmd.retry_count, ts: now
+      },
+      handling_advice: '检查设备与链路；确认设备是否真的没动',
+      handle_status: 'pending',
+      confirm_status: 'unconfirmed'
+    });
+  }
+
   /* 发一条命令，按状态机推进；timeout_ms=5000 / max_retry=3（裁定 8） */
   function sendCommand(deviceId, type, params, opts) {
     opts = opts || {};
@@ -213,9 +240,14 @@
     };
     commands.unshift(cmd);
     emit();
-    /* 造故障：inject = 'timeout'（不回复）| 'offline'（设备离线）| 'fail'（执行失败） */
+    /* 造故障：inject = 'timeout'（不回复）| 'offline'（设备离线）
+       ⚠️ 注入故障时**不能走完成功链** —— 超时的命令根本没收到回执，
+          不可能出现 acknowledged / success。这里曾经先走完整成功链再补失败链，
+          导致命令历史里同时有 success 和 escalated，自相矛盾。 */
     const inject = opts.inject || null;
-    const steps = inject === 'offline' ? ['sent'] : COMMAND_FLOW;
+    const steps = (inject === 'offline' || inject === 'timeout')
+      ? ['created', 'sent']
+      : COMMAND_FLOW;
     let i = 0;
     const tick = function () {
       if (i >= steps.length) return;
@@ -242,7 +274,9 @@
               cmd.history.push({ status: 'failed', ts: Date.now() }); emit();
               setTimeout(function () {
                 cmd.command_status = 'escalated'; cmd.fail_reason = '已升级报警';
-                cmd.history.push({ status: 'escalated', ts: Date.now() }); emit();
+                cmd.history.push({ status: 'escalated', ts: Date.now() });
+                raiseCommandAlarm(cmd);
+                emit();
               }, 600);
             }, 600);
           }, 600);
@@ -250,7 +284,9 @@
       } else if (inject === 'offline') {
         setTimeout(function () {
           cmd.command_status = 'failed'; cmd.fail_reason = '设备离线，命令未能送达';
-          cmd.history.push({ status: 'failed', ts: Date.now() }); emit();
+          cmd.history.push({ status: 'failed', ts: Date.now() });
+          raiseCommandAlarm(cmd);
+          emit();
         }, 1200);
       }
     };
