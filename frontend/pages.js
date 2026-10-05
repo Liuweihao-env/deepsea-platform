@@ -299,14 +299,394 @@
       '曲线：发电 / 功耗 / SOC 趋势'
     ]);
 
-  P['/ai/feed'] = todoPage('智能 · 自动投喂',
-    '<b>答辩重点：命令状态机</b>', [
-      '数值卡：当前生物量 / 上次投喂量 / 投饵机状态',
-      '投喂记录时间线',
-      '<b>命令状态机进度条</b>：created → sent → acknowledged → success',
-      '失败路径：超时 → 重试中 → 失败 → 升级报警（<b>绝不允许悄悄失败</b>）',
-      '「下发投喂命令」按钮 + <b>二次确认弹窗</b>'
-    ]);
+  /* ============================================================
+     智能 · 自动投喂  /ai/feed   —— 答辩重点：命令状态机
+     验收标准 3：一条投喂命令走完 created → sent → acknowledged → success
+     ============================================================ */
+  P['/ai/feed'] = {
+    data: function () {
+      return {
+        tick: 0,
+        /* 先给安全默认值：mounted 之前模板已经渲染一次，
+           dec 若是 null 会抛 "Cannot read properties of null" */
+        dec: { biomass_kg: null, feeding_intensity_cn: '—', suggest_kg_h: null,
+               water_temp: null, basis: [], times_per_day: 4 },
+        records: [], inject: '', confirmOpen: false, lastSent: null, unsub: null
+      };
+    },
+    computed: {
+      feeder: function () {
+        const d = API.devices().filter(function (x) { return x.device_id === 'feeder_01'; })[0];
+        return d || {};
+      },
+      commands: function () { this.tick; return API.commands(); },
+      latest: function () { this.tick; return this.commands.length ? this.commands[0] : null; },
+      steps: function () {
+        /* ⚠️ 这里显式读一次 this.tick（而不是只靠 this.latest 传导）。
+           实测：命令状态从 created 走到 success、latest 已更新，
+           但 steps 仍缓存着旧的空数组 —— computed 链式失效没有传导到第三层。
+           命令状态机是答辩重点，宁可多依赖一次，也不能显示过期状态。 */
+        this.tick;
+        const c = this.latest;
+        if (!c) return [];
+        return c.history.map(function (h) {
+          return { t: new Date(h.ts).toLocaleTimeString('zh-CN', { hour12: false }), s: h.status };
+        });
+      },
+      badEnd: function () {
+        this.tick;
+        const c = this.latest;
+        return !!(c && ['failed', 'escalated'].indexOf(c.command_status) >= 0);
+      }
+    },
+    methods: {
+      load: function () { this.dec = API.feedDecision(); this.records = API.feedRecords(); },
+      statusCn: function (s) {
+        return { created: '已创建', sent: '已发出', acknowledged: '已收到回执', success: '成功',
+                 timeout: '超时', retrying: '重试中', failed: '失败', escalated: '升级报警' }[s] || s;
+      },
+      time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
+      ask: function () { this.confirmOpen = true; },
+      cancel: function () { this.confirmOpen = false; },
+      confirm: function () {
+        this.confirmOpen = false;
+        const self = this;
+        const cmd = API.sendCommand('feeder_01', 'feed',
+          { amount_kg: this.dec.suggest_kg_h, duration_s: 60 },
+          this.inject ? { inject: this.inject } : {});
+        this.lastSent = cmd;
+        this.$nextTick(function () { /* 让状态机进度条立刻可见 */ });
+      }
+    },
+    mounted: function () {
+      this.load();
+      const self = this;
+      this.unsub = API.subscribe(function () { self.tick++; });
+    },
+    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    template: [
+      '<div>',
+      '  <page-head title="智能 · 自动投喂"',
+      '    desc="投喂决策归智能（裁定 1）；命令状态机是全项目卖点载体 —— <b>我知道设备到底动没动</b>"',
+      '    :sources="[\'simulated\',\'public\']" />',
+      '',
+      '  <div class="grid-stats">',
+      '    <stat-card name="当前生物量" field="total_biomass_kg" unit="kg" :value="dec.biomass_kg" source="public" />',
+      '    <stat-card name="鱼群摄食强度" field="feeding_intensity" unit="" :value="dec.feeding_intensity_cn" source="public" />',
+      '    <stat-card name="建议投喂量" field="suggest_kg_h" unit="kg/h" :value="dec.suggest_kg_h" source="simulated" />',
+      '    <stat-card name="投饵机状态" field="device_state" unit="" :value="feeder.device_state" source="simulated" />',
+      '    <stat-card name="饵料剩余" field="feed_remain_pct" unit="%" :value="feeder.device_params && feeder.device_params.feed_remain_pct" source="simulated" />',
+      '  </div>',
+      '',
+      '  <div class="split" style="margin-top:12px">',
+      '    <div>',
+      '      <!-- 命令状态机：答辩直接演示这一段 -->',
+      '      <div class="card">',
+      '        <div class="card-title">命令状态机</div>',
+      '        <div v-if="!latest" class="todo">还没有下发过命令</div>',
+      '        <div v-else>',
+      '          <command-flow :status="latest.command_status" />',
+      '          <div class="kv" style="margin-top:12px">',
+      '            <span class="k">命令号</span><span class="mono">{{ latest.command_id }}</span>',
+      '            <span class="k">设备</span><span class="mono">{{ latest.device_id }}</span>',
+      '            <span class="k">超时 / 重试</span><span>{{ latest.timeout_ms }} ms / 最多 {{ latest.max_retry }} 次（裁定 8）</span>',
+      '            <span class="k">已重试</span><span>{{ latest.retry_count }} 次</span>',
+      '            <span class="k">失败原因</span>',
+      '            <span :style="{ color: latest.fail_reason ? \'#991B1B\' : \'#6B7280\' }">',
+      '              {{ latest.fail_reason || \'—\' }}',
+      '            </span>',
+      '          </div>',
+      '          <div v-if="badEnd" class="hint" style="margin-top:10px;background:#FEF2F2;border-color:#FECACA">',
+      '            <b>命令失败已升级报警</b> —— 这条已经进告警中心。',
+      '            <a href="#/alarm">去告警中心看 →</a>',
+      '            <div class="small" style="margin-top:4px">「不允许静默失败」：命令发出去没回执，必须报警，绝不许悄悄过去。</div>',
+      '          </div>',
+      '          <div class="small muted" style="margin-top:10px">状态变更时间线</div>',
+      '          <div class="events">',
+      '            <div v-for="(s, i) in steps" :key="i" class="row-item" style="cursor:default">',
+      '              <span class="t">{{ s.t }}</span><span class="d">{{ statusCn(s.s) }}</span>',
+      '            </div>',
+      '          </div>',
+      '        </div>',
+      '      </div>',
+      '',
+      '      <!-- 投喂记录时间线 -->',
+      '      <div class="card">',
+      '        <div class="card-title">投喂记录</div>',
+      '        <div class="dt-wrap" style="max-height:260px">',
+      '          <table class="dt">',
+      '            <thead><tr><th>时间</th><th>投喂量 (kg)</th><th>触发来源</th><th>任务状态</th><th>命令号</th></tr></thead>',
+      '            <tbody>',
+      '              <tr v-for="r in records" :key="r.command_id">',
+      '                <td>{{ time(r.ts) }}</td><td>{{ r.amount_kg }}</td>',
+      '                <td>{{ r.trigger_by === \'auto\' ? \'自动\' : \'手动\' }}</td>',
+      '                <td>{{ r.task_status === \'done\' ? \'已完成\' : \'正在执行\' }}</td>',
+      '                <td class="mono">{{ r.command_id }}</td>',
+      '              </tr>',
+      '            </tbody>',
+      '          </table>',
+      '        </div>',
+      '      </div>',
+      '    </div>',
+      '',
+      '    <div>',
+      '      <div class="card">',
+      '        <div class="card-title">投喂决策依据（可追问）</div>',
+      '        <ul style="margin:0;padding-left:18px;line-height:1.9">',
+      '          <li v-for="(b, i) in dec.basis" :key="i">{{ b }}</li>',
+      '        </ul>',
+      '        <div class="hint" style="margin-top:10px">',
+      '          投喂量<b>由智能板块计算</b>，鱼类只出观测类指标 —— 裁定 1。',
+      '          鱼类不再提供 <code>suggest_feed_kg_h</code>。',
+      '        </div>',
+      '      </div>',
+      '',
+      '      <div class="card">',
+      '        <div class="card-title">造故障（验证闭环用）</div>',
+      '        <div class="row" style="gap:8px">',
+      '          <label class="small"><input type="radio" value="" v-model="inject"> 正常</label>',
+      '          <label class="small"><input type="radio" value="timeout" v-model="inject"> 命令超时</label>',
+      '          <label class="small"><input type="radio" value="offline" v-model="inject"> 设备离线</label>',
+      '        </div>',
+      '        <div class="small muted" style="margin-top:8px">',
+      '          选「命令超时」会走完 <b>超时 → 重试中 → 失败 → 升级报警</b> 整条链。',
+      '        </div>',
+      '      </div>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
+      '    <button class="primary" @click="ask">下发投喂命令（{{ dec.suggest_kg_h }} kg/h）</button>',
+      '    <span class="small muted">下发前必须二次确认 —— 不允许一键直接对设备生效</span>',
+      '  </div>',
+      '',
+      '  <!-- 二次确认弹窗 -->',
+      '  <div v-if="confirmOpen" style="position:fixed;inset:0;background:rgba(17,24,39,.45);display:flex;align-items:center;justify-content:center;z-index:50">',
+      '    <div class="card" style="width:420px">',
+      '      <div class="card-title">确认下发投喂命令？</div>',
+      '      <div class="kv">',
+      '        <span class="k">设备</span><span class="mono">feeder_01</span>',
+      '        <span class="k">投喂量</span><span>{{ dec.suggest_kg_h }} kg/h</span>',
+      '        <span class="k">时长</span><span>60 s</span>',
+      '        <span class="k">超时</span><span>5000 ms，最多重试 3 次</span>',
+      '      </div>',
+      '      <div class="row" style="justify-content:flex-end;margin-top:14px">',
+      '        <button @click="cancel">取消</button>',
+      '        <button class="primary" @click="confirm">确认下发</button>',
+      '      </div>',
+      '    </div>',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
+
+  /* ============================================================
+     跨板块 · 追溯查询  /trace   —— 答辩必答题
+     验收标准 2 的闭环：哪条数据 → 命中哪条规则 → 结果如何
+     ============================================================ */
+  P['/trace'] = {
+    data: function () { return { id: '', picked: null }; },
+    computed: {
+      alarms: function () { return API.alarms(); },
+      list: function () { return this.alarms; }
+    },
+    methods: {
+      time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
+      lvCn: function (lv) { return { blue: '蓝色', yellow: '黄色', orange: '橙色', red: '红色' }[lv] || lv; },
+      lvCls: function (lv) { return 'bg-' + (lv || 'blue'); },
+      pick: function (a) { this.picked = a; this.id = a.alarm_event_id; },
+      find: function () {
+        const a = API.alarm(this.id.trim());
+        this.picked = a;
+        if (!a) this.picked = null;
+      }
+    },
+    mounted: function () { if (this.list.length) this.pick(this.list[0]); },
+    template: [
+      '<div>',
+      '  <page-head title="跨板块 · 追溯查询"',
+      '    desc="答辩必答题：<b>哪条数据 → 命中哪条规则 → 结果如何</b>。抽 20 条要 100% 能反查"',
+      '    :sources="[\'simulated\']" />',
+      '',
+      '  <div class="card">',
+      '    <div class="row" style="align-items:center">',
+      '      <span class="small muted">告警事件编号</span>',
+      '      <input type="text" v-model="id" placeholder="ALM-0001" style="width:200px" @keyup.enter="find">',
+      '      <button class="primary" @click="find">反查全链路</button>',
+      '      <span v-if="id && !picked" class="small" style="color:#991B1B">查不到这个编号</span>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <div class="row" style="margin-top:12px;align-items:flex-start">',
+      '    <div class="card" style="flex:0 0 340px">',
+      '      <div class="card-title">现有告警（点一条直接追溯）</div>',
+      '      <div class="events">',
+      '        <div v-for="a in list" :key="a.alarm_event_id" class="row-item" @click="pick(a)"',
+      '             :style="{ background: picked && picked.alarm_event_id === a.alarm_event_id ? \'#F1F5F9\' : \'\' }">',
+      '          <span class="dot" :class="lvCls(a.risk_level)"></span>',
+      '          <span class="d"><span class="mono">{{ a.alarm_event_id }}</span> · {{ a.rule_name }}</span>',
+      '        </div>',
+      '      </div>',
+      '    </div>',
+      '',
+      '    <div style="flex:1;min-width:0">',
+      '      <div v-if="!picked" class="todo">左侧点一条告警，或输入编号反查</div>',
+      '      <div v-else>',
+      '        <div class="card">',
+      '          <div class="card-title">',
+      '            <span class="dot" :class="lvCls(picked.risk_level)"></span>',
+      '            {{ picked.alarm_event_id }} · {{ picked.rule_name }}',
+      '          </div>',
+      '          <div class="kv">',
+      '            <span class="k">规则编号</span><span class="mono">{{ picked.rule_id }}</span>',
+      '            <span class="k">规则条件</span><span class="mono">{{ picked.rule_condition }}</span>',
+      '            <span class="k">组合条件</span><span class="mono">{{ picked.combine_condition || \'—\' }}</span>',
+      '            <span class="k">预警类型</span><span>{{ picked.alarm_type }}</span>',
+      '            <span class="k">预警等级</span><span>{{ lvCn(picked.risk_level) }}预警</span>',
+      '            <span class="k">预警时间</span><span>{{ time(picked.alarm_ts) }}</span>',
+      '            <span class="k">预警状态</span><span>{{ picked.alarm_status }}</span>',
+      '          </div>',
+      '        </div>',
+      '',
+      '        <div class="card">',
+      '          <div class="card-title">① 哪条数据触发的</div>',
+      '          <div class="kv">',
+      '            <span class="k">触发字段</span><span class="mono">{{ picked.trigger_field }}</span>',
+      '            <span class="k">触发值</span><span><b>{{ picked.trigger_value }}</b></span>',
+      '            <span class="k">触发阈值</span><span>{{ picked.trigger_threshold }}</span>',
+      '          </div>',
+      '        </div>',
+      '',
+      '        <div class="card">',
+      '          <div class="card-title">② 触发数据快照（trigger_snapshot）</div>',
+      '          <pre class="mono small" style="margin:0;background:#F9FAFB;border:1px solid #E5E7EB;border-radius:6px;padding:10px;overflow:auto">{{ JSON.stringify(picked.trigger_snapshot, null, 2) }}</pre>',
+      '        </div>',
+      '',
+      '        <div class="card">',
+      '          <div class="card-title">③ 结果如何</div>',
+      '          <div class="kv">',
+      '            <span class="k">处置建议</span><span>{{ picked.handling_advice }}</span>',
+      '            <span class="k">处置状态</span><span>{{ picked.handle_status }}</span>',
+      '            <span class="k">确认状态</span><span>{{ picked.confirm_status }}</span>',
+      '            <span class="k">恢复时间</span><span>{{ picked.recover_ts ? time(picked.recover_ts) : \'尚未恢复\' }}</span>',
+      '          </div>',
+      '          <div class="row" style="margin-top:12px">',
+      '            <a href="#/handle"><button>去处置中心 →</button></a>',
+      '            <a href="#/alarm"><button>去告警中心 →</button></a>',
+      '          </div>',
+      '        </div>',
+      '      </div>',
+      '    </div>',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
+
+  /* ============================================================
+     跨板块 · 处置中心  /handle
+     所有处置动作走智能板块的指令状态机
+     ============================================================ */
+  P['/handle'] = {
+    data: function () { return { tick: 0, picked: null, unsub: null }; },
+    computed: {
+      alarms: function () { return API.alarms(); },
+      pending: function () {
+        return this.alarms.filter(function (a) { return a.handle_status !== 'handled'; });
+      },
+      commands: function () { this.tick; return API.commands(); }
+    },
+    methods: {
+      time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
+      lvCls: function (lv) { return 'bg-' + (lv || 'blue'); },
+      statusCn: function (s) {
+        return { pending: '待处置', handling: '处置中', handled: '已处置', failed: '处置失败' }[s] || s;
+      },
+      confirmCn: function (s) { return s === 'confirmed' ? '已确认' : '未确认'; },
+      pick: function (a) { this.picked = a; },
+      /* 处置动作 = 下发一条命令，走同一套状态机 */
+      act: function (a, type) {
+        this.picked = a;
+        a.handle_status = 'handling';
+        API.sendCommand('feeder_01', type, { from_alarm: a.alarm_event_id }, {});
+      },
+      confirmAlarm: function (a) {
+        a.confirm_status = 'confirmed';
+        a.confirm_ts = Date.now();
+        a.alarm_status = 'acknowledged';
+        a.handle_status = 'handled';
+      }
+    },
+    mounted: function () {
+      const self = this;
+      this.unsub = API.subscribe(function () { self.tick++; });
+      if (this.pending.length) this.picked = this.pending[0];
+    },
+    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    template: [
+      '<div>',
+      '  <page-head title="跨板块 · 处置中心"',
+      '    desc="所有处置动作走智能板块的<b>同一套指令状态机</b>（裁定 11 B 案：顶层统一）"',
+      '    :sources="[\'simulated\']" />',
+      '',
+      '  <div class="row" style="align-items:flex-start">',
+      '    <div class="card" style="flex:0 0 380px">',
+      '      <div class="card-title">待处置（{{ pending.length }} 条）</div>',
+      '      <div v-if="!pending.length" class="todo">没有待处置的告警</div>',
+      '      <div class="events">',
+      '        <div v-for="a in pending" :key="a.alarm_event_id" class="row-item" @click="pick(a)"',
+      '             :style="{ background: picked && picked.alarm_event_id === a.alarm_event_id ? \'#F1F5F9\' : \'\' }">',
+      '          <span class="dot" :class="lvCls(a.risk_level)"></span>',
+      '          <span class="d">',
+      '            <span class="mono">{{ a.alarm_event_id }}</span> {{ a.rule_name }}',
+      '            <div class="small muted">{{ statusCn(a.handle_status) }} · {{ confirmCn(a.confirm_status) }}</div>',
+      '          </span>',
+      '        </div>',
+      '      </div>',
+      '    </div>',
+      '',
+      '    <div style="flex:1;min-width:0">',
+      '      <div v-if="!picked" class="todo">左侧选一条告警</div>',
+      '      <div v-else>',
+      '        <div class="card">',
+      '          <div class="card-title">处置：{{ picked.alarm_event_id }}</div>',
+      '          <div class="kv">',
+      '            <span class="k">告警</span><span>{{ picked.rule_name }}</span>',
+      '            <span class="k">建议</span><span>{{ picked.handling_advice }}</span>',
+      '            <span class="k">处置状态</span><span>{{ statusCn(picked.handle_status) }}</span>',
+      '            <span class="k">确认状态</span><span>{{ confirmCn(picked.confirm_status) }}</span>',
+      '          </div>',
+      '          <div class="row" style="margin-top:12px">',
+      '            <button class="primary" @click="act(picked, \'feed\')">执行处置（下发命令）</button>',
+      '            <button @click="confirmAlarm(picked)">确认告警（人工）</button>',
+      '            <a href="#/ai/feed"><button>看状态机详情 →</button></a>',
+      '          </div>',
+      '          <div class="small muted" style="margin-top:8px">',
+      '            处置动作不是"点一下就当做完" —— 它下发一条命令，<b>走状态机、等回执</b>，链路与自动投喂完全一致。',
+      '          </div>',
+      '        </div>',
+      '',
+      '        <div class="card">',
+      '          <div class="card-title">本次会话下发的命令（{{ commands.length }} 条）</div>',
+      '          <div v-if="!commands.length" class="todo">还没有下发过命令</div>',
+      '          <div v-else class="dt-wrap" style="max-height:300px">',
+      '            <table class="dt">',
+      '              <thead><tr><th>命令号</th><th>类型</th><th>状态</th><th>重试</th><th>失败原因</th></tr></thead>',
+      '              <tbody>',
+      '                <tr v-for="c in commands" :key="c.command_id">',
+      '                  <td class="mono">{{ c.command_id }}</td><td>{{ c.command_type }}</td>',
+      '                  <td>{{ statusCn(c.command_status) }}</td><td>{{ c.retry_count }}</td>',
+      '                  <td :style="{ color: c.fail_reason ? \'#991B1B\' : \'#6B7280\' }">{{ c.fail_reason || \'—\' }}</td>',
+      '                </tr>',
+      '              </tbody>',
+      '            </table>',
+      '          </div>',
+      '        </div>',
+      '      </div>',
+      '    </div>',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
 
   P['/ai/light'] = todoPage('智能 · 智能补光',
     '本期<b>只做手工模式</b>（裁定 7：自动补光依据查不到出处，不编）', [
@@ -323,22 +703,6 @@
       '按 类型 / 等级 / 状态 筛选',
       '答辩卖点：<b>「一个告警中心能看到所有板块的异常」</b>',
       '告警分级规则由结构安全（邓宇涵）提供'
-    ]);
-
-  P['/handle'] = todoPage('跨板块 · 处置中心',
-    '所有处置动作走智能板块的指令状态机', [
-      '处置动作 → 命令状态机（复用 <code>/ai/feed</code> 同一套）',
-      '处置状态 <code>handle_status</code>：待处置 / 处置中 / 已处置 / 处置失败',
-      '确认状态 <code>confirm_status</code> + 确认时间'
-    ]);
-
-  P['/trace'] = todoPage('跨板块 · 追溯查询',
-    '<b>答辩必答题</b>：哪条数据 → 命中哪条规则 → 结果如何', [
-      '输入一个告警事件编号，反查全链路',
-      '<code>trigger_field</code> / <code>trigger_value</code> / <code>trigger_threshold</code>',
-      '<code>trigger_snapshot</code> 触发数据快照',
-      '<code>rule_id</code> / <code>rule_condition</code> / <code>combine_condition</code>',
-      '验收：<b>抽 20 条 100% 能反查</b>'
     ]);
 
   P['/config'] = todoPage('跨板块 · 参数配置',

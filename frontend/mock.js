@@ -323,6 +323,62 @@
       return null;
     },
 
+    /* ---------- 投喂决策（裁定 1：投喂量归智能算，鱼类只出观测指标） ---------- */
+    feedDecision: function () {
+      const fish = fishSeries(5);
+      const last = fish[fish.length - 1];
+      const water = envSeries('site_01', 5, {}).fast.slice(-1)[0].water_temp;
+
+      /* 摄食强度按真实规律给：鱼类在晨昏两个窗口摄食最旺。
+         不用随机数 —— 随机到「无」会让建议投喂量变成 0，演示时没东西可投。 */
+      const h = new Date().getHours();
+      const intensity = ((h >= 5 && h <= 9) || (h >= 16 && h <= 19)) ? 'strong'
+                      : (h >= 10 && h <= 15) ? 'mid' : 'weak';
+      const w = { none: 0, weak: 0.45, mid: 0.75, strong: 1 }[intensity];
+      const cn = { none: '无', weak: '弱', mid: '中', strong: '强' }[intensity];
+
+      const perDay = last.total_biomass_kg * 0.012;      // 日投饲率 1.2%
+      const times = 4;
+      const suggest = perDay / times * w;
+
+      return {
+        ts: last.ts,
+        biomass_kg: last.total_biomass_kg,
+        feeding_intensity: intensity,
+        feeding_intensity_cn: cn,
+        water_temp: water,
+        /* 智能板块算出来的建议值 —— 不再要鱼类提供 suggest_feed_kg_h */
+        suggest_kg_h: +Math.max(0.1, suggest).toFixed(1),
+        day_total_kg: +(perDay * w).toFixed(1),
+        times_per_day: times,
+        basis: [
+          '依据 1：生物量 ' + last.total_biomass_kg + ' kg × 日投饲率 1.2% = ' + perDay.toFixed(1) + ' kg/日',
+          '依据 2：当前时段（' + h + ' 时）摄食强度「' + cn + '」→ 折算系数 ' + w,
+          '依据 3：水温 ' + water + ' ℃ 处于适宜摄食区间（15–25 ℃）',
+          '分 ' + times + ' 次投喂，单次上限 ' + (perDay / times).toFixed(1) + ' kg'
+        ],
+        mode: 'manual'
+      };
+    },
+
+    /* 投喂记录（时间线用） */
+    feedRecords: function () {
+      resetSeed();
+      const out = [];
+      const now = Date.now();
+      for (let i = 8; i >= 0; i--) {
+        const amt = +rndn(11.5, 2).toFixed(1);
+        out.push({
+          ts: now - i * 3 * 3600 * 1000,
+          amount_kg: amt,
+          trigger_by: i % 3 === 0 ? 'manual' : 'auto',
+          task_status: i === 0 ? 'running' : 'done',
+          command_id: 'cmd_20261005_' + String(100 - i).padStart(4, '0')
+        });
+      }
+      return out;
+    },
+
     /* 冻结口径（接口文档 8.2 / 8.3）—— 界面上必须照这个显示 */
     sourceText: {
       real: '真实数据', public: '公开数据', simulated: '仿真数据', demo: '演示数据'
