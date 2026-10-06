@@ -1414,10 +1414,23 @@
           { field: 'dissolved_oxygen', name: '溶解氧下限', warn: 5.0, alarm: 4.0, unit: 'mg/L', owner: '环境' }
         ],
         rules: [],
-        saved: ''
+        saved: '',
+        /* ⚠️ tick 必须显式声明并读一次（见下面 species 计算属性）。
+           原因：参数库是后端异步拉来的，而 Vue 对「没有响应式依赖的 computed」会永久缓存 ——
+           不读一次 tick，拉回来也不会重算，页面上永远是 0 个鱼种。这个坑踩过两次了。 */
+        tick: 0,
+        unsub: null
       };
     },
     computed: {
+      /* 鱼种体长体重参数库（后端 data/鱼种体长体重参数.json）。
+         全项目唯一一处硬编码参数原来藏在后端 `(avg_w / 0.0218) ** (1/3.02)`
+         —— 没鱼种、没出处。现在参数连同出处一起显示在这里，答辩能当场翻。 */
+      species: function () { this.tick; return API.species() || []; },
+      primaryCount: function () {
+        const s = this.species;
+        return s.filter(function (r) { return r.source && r.source !== 'FishBase'; }).length;
+      },
       ruleList: function () {
         return [
           { id: 'R-TENSION-01', name: '锚泊张力黄色预警', cond: 'tension_pct > 80', level: 'yellow', from: 'tension_pct' },
@@ -1433,10 +1446,23 @@
     methods: {
       lvCls: function (l) { return 'bg-' + (l || 'blue'); },
       lvCn: function (l) { return { blue: '蓝色', yellow: '黄色', orange: '橙色', red: '红色' }[l] || l; },
+      /* 体长类型必须显示中文 —— 界面不许出现裸英文枚举（通用规范第五节）。
+         但缩写要留着：TL/FL/SL 是行业通用符号，去掉反而不好交流。 */
+      lenTypeCn: function (t) {
+        return { 'total length': '全长 TL', 'fork length': '叉长 FL',
+                 'standard length': '标准长 SL' }[t] || t || '—';
+      },
       save: function () {
         this.saved = '已保存（' + new Date().toLocaleTimeString('zh-CN', { hour12: false }) +
                      '）—— 规则引擎下一轮生效。真实系统此处会写配置并通知各板块。';
       }
+    },
+    mounted: function () {
+      const self = this;
+      this.unsub = API.subscribe(function () { self.tick++; });
+    },
+    beforeUnmount: function () {
+      if (this.unsub) { this.unsub(); this.unsub = null; }
     },
     template: [
       '<div>',
@@ -1482,6 +1508,48 @@
       '            <td class="mono small">{{ r.cond }}</td>',
       '            <td><span class="dot" :class="lvCls(r.level)"></span>{{ lvCn(r.level) }}</td>',
       '            <td class="mono small">{{ r.from }}</td>',
+      '          </tr>',
+      '        </tbody>',
+      '      </table>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <div class="card">',
+      '    <div class="card-title">鱼种体长体重参数库（{{ species.length }} 个鱼种）</div>',
+      '    <div class="hint" style="margin-bottom:10px">',
+      '      生长估算用的是水产界标准幂函数 <b>W(g) = a × L(cm)<sup>b</sup></b>。',
+      '      每条参数都有出处 —— <b>用前必须核对「体长类型」</b>：',
+      '      全长 TL / 叉长 FL / 标准长 SL 之间能差 10~20%，口径不一致算出来的体重会系统性偏掉。',
+      '    </div>',
+      '    <div class="dt-wrap" style="max-height:320px">',
+      '      <table class="dt">',
+      '        <thead><tr>',
+      '          <th>鱼种</th><th>拉丁学名</th><th>a</th><th>b</th>',
+      '          <th>体长类型</th><th>采用</th><th>出处</th>',
+      '        </tr></thead>',
+      '        <tbody>',
+      '          <tr v-for="s in species" :key="s.species_cn">',
+      '            <td><b>{{ s.species_cn }}</b></td>',
+      '            <td class="small" style="font-style:italic">{{ s.species_latin }}</td>',
+      '            <td class="mono">{{ s.lw_a }}</td>',
+      '            <td class="mono">{{ s.lw_b }}</td>',
+      '            <td class="small">{{ lenTypeCn(s.length_type) }}</td>',
+      '            <td class="small">',
+      '              <span v-if="s.used_source === \'原始研究\'" style="color:#166534;font-weight:600">原始研究</span>',
+      '              <span v-else class="muted">FishBase 估计</span>',
+      '            </td>',
+      '            <td class="small">',
+      '              <a v-if="s.source_url" :href="s.source_url" target="_blank" rel="noopener">',
+      '                {{ s.source_ref || \'FishBase\' }} ↗',
+      '              </a>',
+      '              <span v-else>{{ s.source_ref || \'FishBase\' }}</span>',
+      '            </td>',
+      '          </tr>',
+      '          <tr v-if="!species.length">',
+      '            <td colspan="7" class="muted small">',
+      '              参数库需要后端 —— 请双击 <b>启动平台.bat</b> 打开。',
+      '              纯前端演示模式下不提供，因为参数必须带文献出处，不能凭空生成。',
+      '            </td>',
       '          </tr>',
       '        </tbody>',
       '      </table>',

@@ -56,11 +56,91 @@ ROOT = os.path.dirname(HERE)
 FRONTEND = os.path.join(ROOT, "frontend")
 
 # ----------------------------------------------------------------------
+# 鱼种体长体重参数库（data/鱼种体长体重参数.json）
+#
+# 为什么要有这个库：
+#   原来代码里把 a、b **硬编码**在这一行——`(avg_w / 0.0218) ** (1 / 3.02)`
+#   参数没有鱼种、没有出处，答辩被问「这数哪来的」答不上来。
+#   现在改成从参数库查表，每一条都带文献出处（FishBase Ref. / 原始研究）。
+# ----------------------------------------------------------------------
+DATA_DIR = os.path.join(ROOT, "data")
+SPECIES_DB = {"species": [], "by_cn": {}}
+
+
+def load_species_db():
+    """加载鱼种参数库；失败不致命，回落到一条内置默认值并**明确标注**。
+
+    分两层，跟 `data/README.md` 写的一致：
+      1. `鱼种体长体重参数.json`   —— FishBase 贝叶斯估计（自动抓取，30 种全覆盖）
+      2. `原始文献补充.json`       —— 原始研究实测值（人工维护，**优先级更高**）
+
+    为什么必须有第 2 层：FishBase 的贝叶斯估计在物种数据不足时会掺入同亚科/科的鱼，
+    已实测有一个种偏差达 1.8 倍（卵形鲳鲹：原始研究 0.0640/2.5349 vs FishBase 0.01122/2.89）。
+    **有原始研究的种，一律用原始研究。**
+    """
+    global SPECIES_DB
+    path = os.path.join(DATA_DIR, "鱼种体长体重参数.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            rows = json.load(f).get("species", [])
+    except Exception as e:                                  # noqa: BLE001
+        print("  [警告] 鱼种参数库没读进来（%s），生长估算将用内置默认值" % e)
+        SPECIES_DB = {"species": [], "by_cn": {}}
+        return
+
+    # 盖上原始文献（有就用，并标明用了哪条）
+    ov_path = os.path.join(DATA_DIR, "原始文献补充.json")
+    n_primary = 0
+    try:
+        with open(ov_path, encoding="utf-8") as f:
+            overlay = json.load(f).get("species", {})
+    except Exception:                                       # noqa: BLE001
+        overlay = {}
+
+    for r in rows:
+        lst = overlay.get(r.get("species_cn"))
+        if not lst:
+            r["used_source"] = "FishBase"
+            r["used_note"] = "贝叶斯估计（FishBase 未提供该种专属实测值时可能掺入同科数据）"
+            continue
+        o = lst[0]
+        # 原始值换算到 cm / g 口径（本库统一口径，见 data/README.md）
+        r["fb_lw_a"], r["fb_lw_b"] = r.get("lw_a"), r.get("lw_b")
+        r["fb_source_ref"] = r.get("source_ref", "")
+        r["lw_a"], r["lw_b"] = o["a"], o["b"]
+        r["length_type"] = o.get("length_type", r.get("length_type", ""))
+        r["source_ref"] = (o.get("source") or "原始文献").split(".")[0]
+        r["source_url"] = o.get("source_url", "")
+        r["used_source"] = "原始研究"
+        r["used_note"] = o.get("note", "")
+        n_primary += 1
+
+    SPECIES_DB = {"species": rows,
+                  "by_cn": {r["species_cn"]: r for r in rows if r.get("status") == "OK"},
+                  "n_primary": n_primary}
+    if n_primary:
+        print("  鱼种参数库：%d 种，其中 %d 种用原始研究覆盖" % (len(rows), n_primary))
+
+
+def lwr_of(species_cn):
+    """取某鱼种的 (a, b, 出处)；查不到就给 None，由调用方决定怎么办。"""
+    r = SPECIES_DB["by_cn"].get(species_cn)
+    if not r:
+        return None
+    return {"a": r["lw_a"], "b": r["lw_b"],
+            "length_type": r.get("length_type", ""),
+            "source": r.get("source_ref", "FishBase"),
+            "url": r.get("source_url", "")}
+
+
+# ----------------------------------------------------------------------
 # 站点（接口文档 8.1）
 # ----------------------------------------------------------------------
 SITES = [
     {"site_id": "site_01", "site_name": "模拟养殖站点", "kind": "farm",
-     "latitude": 26.10, "longitude": 119.90, "farming_depth_m": 20},
+     "latitude": 26.10, "longitude": 119.90, "farming_depth_m": 20,
+     # 主养种：大黄鱼（福建宁德一带的主养鱼种，与站点位置 26.1N/119.9E 对得上）
+     "species": "大黄鱼", "stock_init_count": 1200, "stock_init_size_g": 420},
     {"site_id": "site_02", "site_name": "NDBC 观测站点 41001", "kind": "obs",
      "latitude": 34.72, "longitude": -72.27, "farming_depth_m": 0},
     {"site_id": "site_03", "site_name": "NDBC 观测站点 46001", "kind": "obs",
@@ -158,10 +238,19 @@ def fish_series(minutes=60):
     now = int(time.time() * 1000) // 1000 * 1000
     t0 = now - minutes * 60 * 1000
     r = _rng()
-    out, count = [], 1200
+    site = SITES[0]
+    sp_cn = site.get("species", "大黄鱼")
+    lwr = lwr_of(sp_cn)
+    if lwr:
+        a, b = lwr["a"], lwr["b"]
+    else:
+        # 参数库缺失时的兜底。**必须标注出来**，不许当成正常值用。
+        a, b = 0.00891, 3.06
+        lwr = {"a": a, "b": b, "source": "参数库缺失，用大黄鱼默认值", "url": ""}
+    out, count = [], site.get("stock_init_count", 1200)
     for i in range(n):
         count += round(r.gauss(0, .6))
-        avg_w = 420 + i / n * 6 + r.gauss(0, 3)
+        avg_w = site.get("stock_init_size_g", 420) + i / n * 6 + r.gauss(0, 3)
         out.append({
             "ts": t0 + i * STEP_FAST,
             "site_id": "site_01",
@@ -169,7 +258,9 @@ def fish_series(minutes=60):
             "quality": "good",
             "fish_count": count,
             "fish_density": round(count / 285, 1),
-            "avg_length_cm": round((avg_w / 0.0218) ** (1 / 3.02), 1),
+            # 由体重反推体长：W = a·L^b  →  L = (W/a)^(1/b)
+            # a、b 来自鱼种参数库（带文献出处），不再硬编码
+            "avg_length_cm": round((avg_w / a) ** (1.0 / b), 1),
             "avg_weight_g": round(avg_w, 1),
             "total_biomass_kg": round(count * avg_w / 1000, 1),
             "feeding_intensity": r.choice(["none", "weak", "mid", "strong"]),
@@ -546,7 +637,20 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"code": 200, "msg": "ok", "ts": int(time.time() * 1000)})
 
         if p == "/api/sites":
-            return self._json(SITES)
+            return self._json({"sites": SITES})
+
+        # 鱼种体长体重参数库 —— 页面上要能看到「这个 a、b 是哪来的」
+        if p == "/api/species":
+            sp = one("species", "")
+            if sp:
+                row = SPECIES_DB["by_cn"].get(sp)
+                return self._json({"species": row} if row else
+                                  {"error": "没有这个鱼种: %s" % sp})
+            return self._json({
+                "formula": "W(g) = lw_a * L(cm) ** lw_b",
+                "count": len(SPECIES_DB["species"]),
+                "species": SPECIES_DB["species"],
+            })
 
         if p == "/api/env":
             storm = one("storm", "0") in ("1", "true")
@@ -734,6 +838,8 @@ def main():
         print()
         return 1
 
+    load_species_db()          # 鱼种体长体重参数库（读不到会打警告并回落）
+
     print("=" * 62)
     print("  深远海养殖与海洋牧场智能管控平台")
     print("=" * 62)
@@ -741,6 +847,13 @@ def main():
     print("  前端目录：%s" % FRONTEND)
     print("  接口前缀：/api/        （健康检查 /api/health）")
     print("  零依赖：只用 Python 标准库，无需 pip install、无需联网")
+    site0 = SITES[0]
+    lwr0 = lwr_of(site0.get("species", ""))
+    if lwr0:
+        print("  主养鱼种：%s    W = %s × L^%s  (%s)"
+              % (site0["species"], lwr0["a"], lwr0["b"], lwr0["source"]))
+        print("            参数库 %d 个鱼种，出处见 /api/species"
+              % len(SPECIES_DB["species"]))
     print()
     print("  按 Ctrl+C 停止     （演示期间别关这个窗口）")
     print("=" * 62)

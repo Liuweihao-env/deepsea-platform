@@ -354,6 +354,10 @@
     resolve: function (v, cb) { cb(v); },
 
     sites: function () { return SITES.slice(); },
+    /* 鱼种体长体重参数库住在后端（data/鱼种体长体重参数.json）。
+       纯前端演示模式（后端没起）时这里返回空数组，页面会提示「需要后端」，
+       而不是编一份假参数 —— 参数带文献出处，编出来就是学术不端。 */
+    species: function () { return []; },
     now: function () { return Date.now(); },
 
     env: function (siteId, minutes, opts) { return envSeries(siteId, minutes || 60, opts); },

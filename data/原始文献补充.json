@@ -1,0 +1,27 @@
+{
+  "_说明": [
+    "人工维护的原始研究实测值。有原始研究的鱼种，优先级高于 FishBase 贝叶斯估计。",
+    "每条必须有：a、b、length_type、体长单位、体重单位、完整出处。缺一不可。",
+    "length_type 必须是 total length / fork length / standard length 之一 —— 不写就没法用。"
+  ],
+  "_单位约定": "W(g) = a × L(cm)^b（统一换算到 cm 与 g 之后填入）",
+  "species": {
+    "卵形鲳鲹": [
+      {
+        "a": 0.0640,
+        "b": 2.5349,
+        "length_type": "total length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": null,
+        "length_range": null,
+        "r2": null,
+        "scope": "养殖 · 未成熟个体",
+        "site": "中国海南岛东南沿海 · 深水浮式网箱",
+        "source": "Guo Huayang, Ma Zhenhua, Jiang Shigui, Zhang Dianchang, Zhang Nan, Li Youning (2014). Length-weight relationship of oval pompano, Trachinotus ovatus (Linnaeus, 1758) (Pisces: Carangidae) cultured in open sea floating sea cages in South China Sea. Indian Journal of Fisheries, 61(1): 93-95.",
+        "source_url": "https://epubs.icar.org.in/index.php/IJF/article/view/30269",
+        "note": "原文摘要另给出成熟个体 W = 0.1198 × L^2.5248。研究结论为负异速生长。本条与本项目场景（深水网箱）完全对口，优先于 FishBase。"
+      }
+    ]
+  }
+}

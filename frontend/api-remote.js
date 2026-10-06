@@ -116,4 +116,15 @@
     get('/api/devices').then(function (d) { if (Array.isArray(d)) { M._devices = d; M._bump(); } });
   }, 3000);
 
+  /* 鱼种体长体重参数库：静态配置，拉一次就够。
+     页面上要能看到「这个 a、b 是哪来的」—— 出处必须跟着数据一起过来。 */
+  M.species = function () { return M._species || []; };
+  get('/api/species').then(function (d) {
+    if (d && Array.isArray(d.species)) {
+      M._species = d.species;
+      M._speciesFormula = d.formula || '';
+      M._bump();
+    }
+  });
+
 })(window);
