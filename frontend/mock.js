@@ -16,7 +16,7 @@
   /* ---------- 站点（接口文档 8.1） ---------- */
   const SITES = [
     { site_id: 'site_01', site_name: '模拟养殖站点',   kind: 'farm',   latitude: 26.10, longitude: 119.90, farming_depth_m: 20 },
-    { site_id: 'site_02', site_name: 'NDBC 观测站点 41001', kind: 'obs', latitude: 34.72, longitude: -72.27, farming_depth_m: 0 },
+    { site_id: 'site_02', site_name: 'NDBC 观测站点 42001', kind: 'obs', latitude: 25.92, longitude: -89.64, farming_depth_m: 0 },
     { site_id: 'site_03', site_name: 'NDBC 观测站点 46001', kind: 'obs', latitude: 56.30, longitude: -148.02, farming_depth_m: 0 },
     { site_id: 'site_04', site_name: 'NDBC 观测站点 51001', kind: 'obs', latitude: 24.45, longitude: -162.00, farming_depth_m: 0 }
   ];

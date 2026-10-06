@@ -154,8 +154,14 @@ SITES = [
      "latitude": 26.10, "longitude": 119.90, "farming_depth_m": 20,
      # 主养种：大黄鱼（福建宁德一带的主养鱼种，与站点位置 26.1N/119.9E 对得上）
      "species": "大黄鱼", "stock_init_count": 1200, "stock_init_size_g": 420},
-    {"site_id": "site_02", "site_name": "NDBC 观测站点 41001", "kind": "obs",
-     "latitude": 34.72, "longitude": -72.27, "farming_depth_m": 0},
+    # site_02：原为 41001（EAST HATTERAS，美国东海岸），2026-10-06 更换。
+    # 原因：41001 是**停用站** —— 在 NDBC 在册（有经纬度）但 met=n / currents=n，
+    # 所有数据文件实测 404，连站点页都没有。平台上写着它的编号，评委一查就穿帮。
+    # 换成的 42001 实测数据新鲜完整（风速 199/200、水温 196、浪高 103 行有值）。
+    # 选它的理由：与 46001 形成**最大温差（11.5↔30.2℃）和最大海况反差（3.5↔0.4 m）**，
+    # 且暖水场景更接近中国南海的实际养殖条件。
+    {"site_id": "site_02", "site_name": "NDBC 观测站点 42001", "kind": "obs",
+     "latitude": 25.92, "longitude": -89.64, "farming_depth_m": 0},
     {"site_id": "site_03", "site_name": "NDBC 观测站点 46001", "kind": "obs",
      "latitude": 56.30, "longitude": -148.02, "farming_depth_m": 0},
     {"site_id": "site_04", "site_name": "NDBC 观测站点 51001", "kind": "obs",
