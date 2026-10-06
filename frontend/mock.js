@@ -56,11 +56,11 @@
       /* 造故障「水温骤升」：朝一个**绝对目标温度**爬，不是「在基线上加几度」。
          ⚠️ 为什么必须这样：水温基线带昼夜项 18.6 + sin((h-6)/24·2π)×1.8，
             夜里 22 点时 diurnal≈-0.87、基线只有 17.0℃ —— 加 4.2 也只到 21.4℃，
-            刚好差 0.1 够不到 21.5 的告警阈值。
+            刚好差 0.1 够不到告警阈值。2026-10-06 目标上调到 30.5℃ —— 水温告警改为按鱼种取值后，大黄鱼告警线是 28.0℃。
             结果就是「白天点造故障会报警、晚上点没反应」，现场答辩排在晚上就当场失败。 */
       const baseWater = 18.6 + diurnal * 1.8;
       const prog = heat ? Math.max(0, (i / n - 0.55) / 0.45) : 0;
-      const water = baseWater + (heat ? (23.5 - baseWater) * prog : 0) + rndn(0, .15);
+      const water = baseWater + (heat ? (30.5 - baseWater) * prog : 0) + rndn(0, .15);
       const air   = 22.4 + diurnal * 3.2 + rndn(0, .4) + (water - baseWater) * .6;
       const light = Math.max(0, (storm ? 4000 : 12000) * Math.max(0, Math.sin((h - 6) / 12 * Math.PI)) + rndn(0, 400));
 
@@ -394,17 +394,17 @@
     /* 「一条竖线」用的判定：水温越限 → 出告警 */
     ruleCheck: function (row) {
       if (!row || row.water_temp == null) return null;
-      if (row.water_temp >= 21.5) {
+      if (row.water_temp >= 28.0) {
         return { alarm_type: 'tilt', risk_level: 'red', trigger_field: 'water_temp',
-                 trigger_value: row.water_temp, trigger_threshold: 21.5,
+                 trigger_value: row.water_temp, trigger_threshold: 28.0,
                  rule_id: 'R-TEMP-01', rule_name: '水温上限告警',
-                 rule_condition: 'water_temp >= 21.5' };
+                 rule_condition: 'water_temp >= 28.0（大黄鱼高告警线）' };
       }
-      if (row.water_temp >= 20.5) {
+      if (row.water_temp >= 25.5) {
         return { alarm_type: 'tilt', risk_level: 'yellow', trigger_field: 'water_temp',
-                 trigger_value: row.water_temp, trigger_threshold: 20.5,
+                 trigger_value: row.water_temp, trigger_threshold: 25.5,
                  rule_id: 'R-TEMP-02', rule_name: '水温偏高提示',
-                 rule_condition: 'water_temp >= 20.5' };
+                 rule_condition: 'water_temp >= 25.5（大黄鱼高提示线）' };
       }
       return null;
     },

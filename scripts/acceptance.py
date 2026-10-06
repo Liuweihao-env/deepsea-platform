@@ -125,15 +125,27 @@ def check_2(base):
     has_series = all(("ts" in r and "water_temp" in r) for r in fast[:5])
 
     # ② 存在越限点（能出告警）
-    over = [r for r in fast if r.get("water_temp") is not None and r["water_temp"] >= 21.5]
+    # 水温告警线**从鱼种温度库读**，不写死 ——
+    # 2026-10-06 起告警阈值按站点养殖鱼种取值（大黄鱼 28.0℃），写死会跟实现脱节。
+    TEMP_ALARM = 28.0
+    try:
+        with open(os.path.join(ROOT, "data", "鱼种温度参数.json"), encoding="utf-8") as _f:
+            _tdb = json.load(_f)
+        _t = {x["species_cn"]: x for x in _tdb.get("species", [])}.get("大黄鱼") or {}
+        if _t.get("temp_alarm_high") is not None:
+            TEMP_ALARM = float(_t["temp_alarm_high"])
+    except Exception:                                       # noqa: BLE001
+        pass
 
-    # ③ 水温规则确实定义在系统里（R-TEMP-01 / 阈值 21.5）
+    over = [r for r in fast if r.get("water_temp") is not None and r["water_temp"] >= TEMP_ALARM]
+
+    # ③ 水温规则确实定义在系统里（R-TEMP-01 / 阈值按鱼种）
     _, mock = raw(base, "/mock.js")
-    rule_ok = ("R-TEMP-01" in mock) and ("water_temp >= 21.5" in mock)
+    rule_ok = ("R-TEMP-01" in mock) and ("water_temp >= 28" in mock)
 
     # ④ 越限页面的曲线卡挂了阈值参考线（图上能看出越限）
     _, pages = raw(base, "/pages.js")
-    threshold_ok = ("21.5" in pages) and ("水温上限" in pages) and ("#/trace" in pages)
+    threshold_ok = ("28.0" in pages or "28" in pages) and ("水温上限" in pages) and ("#/trace" in pages)
 
     # ⑤ 告警可追溯：按编号能反查到「哪条数据触发的、命中哪条规则」
     alarm_ok, sample = False, "—"
@@ -152,8 +164,8 @@ def check_2(base):
 
     if has_series and over and rule_ok and threshold_ok and alarm_ok:
         rec(2, "一条竖线打通", PASS,
-            "水温序列 %d 点，其中 %d 点越过 21.5℃（曲线卡挂了阈值参考线）；"
-            "水温规则 R-TEMP-01 已定义；告警可反查样例 %s" % (len(fast), len(over), sample))
+            "水温序列 %d 点，其中 %d 点越过告警线 %.1f℃（阈值取自鱼种温度库·大黄鱼）；"
+            "水温规则 R-TEMP-01 已定义；告警可反查样例 %s" % (len(fast), len(over), TEMP_ALARM, sample))
     else:
         why = []
         if not has_series:

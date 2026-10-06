@@ -72,6 +72,39 @@ FRONTEND = os.path.join(ROOT, "frontend")
 DATA_DIR = os.path.join(ROOT, "data")
 SPECIES_DB = {"species": [], "by_cn": {}}
 
+# ----------------------------------------------------------------------
+# 鱼种温度参数库（data/鱼种温度参数.json）
+#
+# 为什么水温告警要按鱼种走：
+#   原来用**一个统一阈值**（20.5℃ 提示 / 21.5℃ 告警）。但不同鱼种适宜温度差极大 ——
+#   大黄鱼最适 18~25℃、大菱鲆 15~18℃、罗非鱼 24~32℃、虹鳟 12~18℃。
+#   统一取 20.5℃ 的结果是：**大黄鱼在长得最好的时候被报警，大菱鲆常年误报。**
+#   现在改成「网箱里养什么鱼，就用什么鱼的温度阈值」。
+# ----------------------------------------------------------------------
+TEMP_DB = {"species": [], "by_cn": {}}
+
+
+def load_temp_db():
+    """加载鱼种温度参数库；读不到不致命，页面会提示。"""
+    global TEMP_DB
+    path = os.path.join(DATA_DIR, "鱼种温度参数.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            rows = json.load(f).get("species", [])
+        TEMP_DB = {"species": rows, "by_cn": {r["species_cn"]: r for r in rows}}
+        n_ok = sum(1 for r in rows if r.get("temp_alarm_high") is not None)
+        if rows:
+            print("  鱼种温度库：%d 种，其中 %d 种给出了高温告警线" % (len(rows), n_ok))
+    except Exception as e:                                  # noqa: BLE001
+        print("  [警告] 鱼种温度库没读进来（%s）—— 水温阈值将回落到通用值" % e)
+        TEMP_DB = {"species": [], "by_cn": {}}
+
+
+def temp_of(species_cn):
+    """取某鱼种的温度参数；查不到返回 None，由调用方决定回落。"""
+    return TEMP_DB["by_cn"].get(species_cn)
+
+
 
 def load_species_db():
     """加载鱼种参数库；失败不致命，回落到一条内置默认值并**明确标注**。
@@ -184,10 +217,12 @@ STEP_SLOW = 30 * 1000       # 慢变量 30 秒（盐度 / pH，裁定 3）
 # ⚠️ 必须是**绝对值**，不能是「在基线上加几度」：
 #    水温基线带昼夜项 18.6 + sin((h-6)/24·2π)×1.8，
 #    夜里 22 点时 diurnal≈-0.87，基线只有 17.0℃ —— 加 4.2 也只到 21.4℃，
-#    刚好差 0.1 够不到 21.5 的告警阈值。
+#    刚好差 0.1 够不到告警阈值。
+#    🔴 2026-10-06：目标从 23.5℃ 上调到 30.5℃ —— 水温告警改为按鱼种取值后，
+#       大黄鱼（平台主养种）的告警线是 28.0℃，23.5℃ 再也触发不了了。
 #    结果就是「白天点造故障会报警、晚上点没反应」。
 #    现场答辩要是排在下午或晚上，这条竖线演示当场失败。
-HEAT_TARGET_C = 23.5
+HEAT_TARGET_C = 30.5
 
 
 # ======================================================================
@@ -219,7 +254,7 @@ def env_series(site_id, minutes=60, storm=False, heat=False, offline_from=None, 
         wind = r.gauss(19, 2.5) if storm else r.gauss(8.3, 1.2)
         base_water = 18.6 + diurnal * 1.8
         if heat:
-            # 朝 HEAT_TARGET_C 爬：无论几点，最后一定能越过 21.5
+            # 朝 HEAT_TARGET_C 爬：无论几点，最后一定能越过 28.0℃（大黄鱼告警线）
             prog = max(0.0, (i / n - 0.55) / 0.45)
             water = base_water + (HEAT_TARGET_C - base_water) * prog + r.gauss(0, .12)
         else:
@@ -587,16 +622,16 @@ class Platform(object):
         if not row or row.get("water_temp") is None:
             return None
         t = row["water_temp"]
-        if t >= 21.5:
+        if t >= 28.0:
             return {"alarm_type": "tilt", "risk_level": "red", "trigger_field": "water_temp",
-                    "trigger_value": t, "trigger_threshold": 21.5,
+                    "trigger_value": t, "trigger_threshold": 28.0,
                     "rule_id": "R-TEMP-01", "rule_name": "水温上限告警",
-                    "rule_condition": "water_temp >= 21.5"}
-        if t >= 20.5:
+                    "rule_condition": "water_temp >= 28.0（大黄鱼高告警线，见鱼种温度库）"}
+        if t >= 25.5:
             return {"alarm_type": "tilt", "risk_level": "yellow", "trigger_field": "water_temp",
-                    "trigger_value": t, "trigger_threshold": 20.5,
+                    "trigger_value": t, "trigger_threshold": 25.5,
                     "rule_id": "R-TEMP-02", "rule_name": "水温偏高提示",
-                    "rule_condition": "water_temp >= 20.5"}
+                    "rule_condition": "water_temp >= 25.5（大黄鱼高提示线，见鱼种温度库）"}
         return None
 
 
@@ -690,7 +725,22 @@ class Handler(BaseHTTPRequestHandler):
             # 前端 api-remote.js 判的是 Array.isArray(d)，包一层就永远取不到值 ——
             # 症状是站点下拉框**一直是空的**，而且不报任何错，很难发现。
             # （2026-10-06 踩过：加 /api/species 时顺手把这里包了一层，属于回归。）
-            return self._json(SITES)
+            out = []
+            for x in SITES:
+                y = dict(x)
+                if y.get("species"):
+                    t = temp_of(y["species"])
+                    if t:
+                        y["temp_warn_high"] = t.get("temp_warn_high")
+                        y["temp_alarm_high"] = t.get("temp_alarm_high")
+                        y["temp_warn_low"] = t.get("temp_warn_low")
+                        y["temp_alarm_low"] = t.get("temp_alarm_low")
+                        y["temp_opt"] = [t.get("temp_opt_low"), t.get("temp_opt_high")]
+                        y["temp_evidence"] = t.get("evidence")
+                        y["temp_source"] = t.get("source")
+                        y["temp_note"] = t.get("note")
+                out.append(y)
+            return self._json(out)
 
         # 鱼种体长体重参数库 —— 页面上要能看到「这个 a、b 是哪来的」
         if p == "/api/species":
@@ -703,6 +753,20 @@ class Handler(BaseHTTPRequestHandler):
                 "formula": "W(g) = lw_a * L(cm) ** lw_b",
                 "count": len(SPECIES_DB["species"]),
                 "species": SPECIES_DB["species"],
+            })
+
+        # 鱼种温度参数库 —— 水温告警阈值按站点养殖鱼种取值
+        if p == "/api/species/temp":
+            cn = one("species", "")
+            if cn:
+                row = TEMP_DB["by_cn"].get(cn)
+                return self._json({"species": row} if row else
+                                  {"error": "温度库里没有这个鱼种: %s" % cn})
+            return self._json({
+                "unit": "℃",
+                "count": len(TEMP_DB["species"]),
+                "note": "水温告警按网箱养殖鱼种取值，不用统一阈值",
+                "species": TEMP_DB["species"],
             })
 
         if p == "/api/env":
@@ -924,6 +988,7 @@ def main():
         return 1
 
     load_species_db()          # 鱼种体长体重参数库（读不到会打警告并回落）
+    load_temp_db()             # 鱼种温度参数库（水温告警按鱼种取值）
 
     # NDBC 缓存：**启动时后台尽力刷一次**，但绝阻塞启动、绝影响可用性。
     # 为什么要"后台"：整个平台必须在断网时也能起来（R1 现场不能赌网络）。
