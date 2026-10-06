@@ -54,6 +54,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "datasource", "public"))
 import ndbc                                                  # noqa: E402
 
+# 养殖生产配置（管理板块）：网箱养什么鱼、存箱量台账、设备标定
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import farm as farmmod                                       # noqa: E402
+FARM = farmmod.Farm()
+
 # ----------------------------------------------------------------------
 # 路径
 # ----------------------------------------------------------------------
@@ -82,6 +87,33 @@ SPECIES_DB = {"species": [], "by_cn": {}}
 #   现在改成「网箱里养什么鱼，就用什么鱼的温度阈值」。
 # ----------------------------------------------------------------------
 TEMP_DB = {"species": [], "by_cn": {}}
+
+
+def sync_sites_from_farm():
+    """把 farm.json 里的养殖信息覆盖到 SITES 上。
+
+    为什么：以前 species / stock_init_count 是写死在 SITES 里的，
+    改了 farm.json 也不生效。现在**以 farm.json 为准** —— 它才是"养什么鱼"的唯一事实来源。
+    """
+    global SITES
+    for s in SITES:
+        if s.get("kind") != "farm":
+            continue
+        cages = [c for c in FARM.all_cages() if c["site_id"] == s["site_id"]]
+        if not cages:
+            continue
+        main = cages[0]                      # 主网箱决定站点的"主养鱼种"
+        s["species"] = main.get("species")
+        s["cage_id"] = main.get("cage_id")
+        s["cage_count"] = len(cages)
+        s["cages"] = [{"cage_id": c["cage_id"], "cage_name": c.get("cage_name"),
+                       "species": c.get("species"),
+                       "current_count": FARM.stock_of(c["cage_id"])} for c in cages]
+        st = FARM.stock_summary(main["cage_id"])
+        if st.get("current_count"):
+            s["stock_init_count"] = st["current_count"]
+        if st.get("init_size_g"):
+            s["stock_init_size_g"] = st["init_size_g"]
 
 
 def load_temp_db():
@@ -788,6 +820,34 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(env_series(site, minutes, storm, heat,
                                          int(off_from) if off_from else None, off))
 
+        # ---------- 管理板块：养殖生产配置 ----------
+        if p == "/api/farm":
+            return self._json({
+                "summary": FARM.summary(),
+                "sites": FARM.farm_sites(),
+                "cages": FARM.all_cages(),
+                "devices": FARM.devices(),
+            })
+
+        if p == "/api/farm/ledger":
+            cid = one("cage_id", "")
+            rows = FARM.ledger_of(cid or None)
+            return self._json({
+                "cage_id": cid or None,
+                "count": len(rows),
+                "ledger": rows,
+                "summaries": [FARM.stock_summary(c["cage_id"]) for c in FARM.all_cages()],
+                "type_cn": farmmod.LEDGER_CN,
+            })
+
+        if p == "/api/farm/devices":
+            devs = FARM.devices()
+            return self._json({
+                "count": len(devs),
+                "devices": devs,
+                "summary": FARM.summary(),
+            })
+
         # NDBC 直连：状态查询 + 显式拉取
         if p == "/api/ndbc/status":
             return self._json(ndbc.status())
@@ -850,6 +910,56 @@ class Handler(BaseHTTPRequestHandler):
             return self._err(400, "参数错误：请求体不是合法 JSON")
 
         try:
+            # ---------- 管理板块：写操作 ----------
+            if p == "/api/farm/ledger":
+                cid = body.get("cage_id")
+                ltype = body.get("type")
+                cnt = body.get("count")
+                if not cid or not ltype or cnt is None:
+                    return self._err(400, "参数错误：缺少 cage_id / type / count")
+                try:
+                    return self._json(FARM.add_ledger(cid, ltype, cnt, body.get("note", ""),
+                                                      body.get("ts")))
+                except ValueError as e:
+                    return self._err(400, str(e))
+
+            if p == "/api/farm/cage/species":
+                cid = body.get("cage_id")
+                sp = body.get("species")
+                if not cid or not sp:
+                    return self._err(400, "参数错误：缺少 cage_id 或 species")
+                if not temp_of(sp):
+                    return self._err(400, "鱼种档案里没有「%s」—— 没有它的温度参数就不能养" % sp)
+                try:
+                    r = FARM.set_species(cid, sp)
+                    sync_sites_from_farm()      # 立刻生效，不用重启
+                except ValueError as e:
+                    return self._err(400, str(e))
+                t = temp_of(sp) or {}
+                return self._json({
+                    "ok": True, "cage_id": cid,
+                    "old_species": r["old_species"], "new_species": sp,
+                    "applied": {
+                        "temp_warn_high": t.get("temp_warn_high"),
+                        "temp_alarm_high": t.get("temp_alarm_high"),
+                        "temp_warn_low": t.get("temp_warn_low"),
+                        "temp_alarm_low": t.get("temp_alarm_low"),
+                        "temp_opt": [t.get("temp_opt_low"), t.get("temp_opt_high")],
+                    },
+                    "note": "全平台阈值已按新品种重算（水温告警线、体长体重参数等）",
+                })
+
+            if p == "/api/farm/calibrate":
+                did = body.get("device_id")
+                if not did:
+                    return self._err(400, "参数错误：缺少 device_id")
+                try:
+                    return self._json(FARM.calibrate(did, body.get("date"),
+                                                     body.get("institution"),
+                                                     body.get("cert_no")))
+                except ValueError as e:
+                    return self._err(400, str(e))
+
             # 显式拉取 NDBC 最新数据并写本地缓存。
             # **这是唯一的联网动作**，只在用户点「立即拉取最新」或启动时触发；
             # 页面渲染永远只读本地缓存，所以断网也能演示。
@@ -989,6 +1099,7 @@ def main():
 
     load_species_db()          # 鱼种体长体重参数库（读不到会打警告并回落）
     load_temp_db()             # 鱼种温度参数库（水温告警按鱼种取值）
+    sync_sites_from_farm()     # 以 farm.json 为准覆盖站点的养殖信息
 
     # NDBC 缓存：**启动时后台尽力刷一次**，但绝阻塞启动、绝影响可用性。
     # 为什么要"后台"：整个平台必须在断网时也能起来（R1 现场不能赌网络）。

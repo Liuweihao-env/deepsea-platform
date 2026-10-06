@@ -146,4 +146,68 @@
     });
   };
 
+  /* ---------- 管理板块：养殖生产配置 ----------
+     这一块是"配置驱动"的落点：网箱养什么鱼，全平台的阈值与参数就跟着变。
+     所以每次写操作成功都要 _bump()，让所有页面立刻重算。 */
+
+  /* 鱼种温度参数库（30 个种）—— 管理板块的鱼种档案要用，
+     网箱改鱼种时也要靠它判断"这个种有没有温度参数、能不能养" */
+  M.speciesTemp = function () { return M._speciesTemp || null; };
+  get('/api/species/temp').then(function (d) {
+    if (d && Array.isArray(d.species)) { M._speciesTemp = d; M._bump(); }
+  });
+
+  M.farm = function () { return M._farm || null; };
+  function pullFarm() {
+    get('/api/farm').then(function (d) {
+      if (d && d.cages) { M._farm = d; M._bump(); }
+    });
+  }
+  pullFarm();
+
+  M.farmLedger = function () { return M._ledger || null; };
+  function pullLedger(cageId) {
+    var q = cageId ? ('?cage_id=' + encodeURIComponent(cageId)) : '';
+    return get('/api/farm/ledger' + q).then(function (d) {
+      if (d && d.ledger) { M._ledger = d; M._bump(); }
+      return d;
+    });
+  }
+  pullLedger();
+
+  M.farmDevices = function () { return M._farmDevices || null; };
+  function pullFarmDevices() {
+    return get('/api/farm/devices').then(function (d) {
+      if (d && d.devices) { M._farmDevices = d; M._bump(); }
+      return d;
+    });
+  }
+  pullFarmDevices();
+
+  /* 改网箱养的鱼 —— 全平台阈值随之重算 */
+  M.setCageSpecies = function (cageId, species) {
+    return post('/api/farm/cage/species', { cage_id: cageId, species: species })
+      .then(function (r) {
+        return pullFarm().then(function () { pullFarmDevices(); return r; });
+      });
+  };
+
+  /* 记一笔台账 */
+  M.addLedger = function (entry) {
+    return post('/api/farm/ledger', entry).then(function (r) {
+      return pullLedger().then(function () { pullFarm(); return r; });
+    });
+  };
+
+  /* 记一次标定 */
+  M.calibrate = function (deviceId, inst, cert) {
+    return post('/api/farm/calibrate',
+                { device_id: deviceId, institution: inst, cert_no: cert })
+      .then(function (r) { return pullFarmDevices().then(function () { return r; }); });
+  };
+
+  M.reloadFarm = function () {
+    return Promise.all([pullFarm(), pullLedger(), pullFarmDevices()]);
+  };
+
 })(window);

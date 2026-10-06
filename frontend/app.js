@@ -53,6 +53,16 @@
       { path: '/handle', label: '处置中心', ready: true },
       { path: '/trace',  label: '追溯查询', ready: true },
       { path: '/config', label: '参数配置', ready: true }
+    ]},
+    /* 管理板块 —— 养殖生产视角（场长用），与上面「参数配置」的技术参数视角区分开：
+         参数配置 = 阈值/规则（工程师改，很少动）
+         管理板块 = 哪个网箱养什么鱼、放了多少、设备标定到没到期（每批鱼都变）
+       这是「配置驱动」的落点：这里改了鱼种，全平台阈值跟着变。 */
+    { group: '管理', owner: '场长 / 运维', items: [
+      { path: '/mgmt/cages',       label: '网箱与站点',   ready: true },
+      { path: '/mgmt/species',     label: '鱼种档案',     ready: true },
+      { path: '/mgmt/ledger',      label: '存箱量台账',   ready: true },
+      { path: '/mgmt/calibration', label: '标定与维护',   ready: true }
     ]}
   ];
 
@@ -88,7 +98,10 @@
     { key: 'env',      label: '环境', first: '/env/sea' },
     { key: 'struct',   label: '结构安全', first: '/struct/alarm' },
     { key: 'ai',       label: '智能', first: '/ai/feed' },
-    { key: 'global',   label: '跨板块', first: '/alarm' }
+    { key: 'global',   label: '跨板块', first: '/alarm' },
+    /* 管理板块 —— 养殖生产视角（场长用）。
+       放在最后：它是配置类不是监控类。 */
+    { key: 'mgmt',     label: '管理', first: '/mgmt/cages' }
   ];
 
   const App = {
@@ -104,6 +117,7 @@
         if (p.indexOf('/env') === 0) return 'env';
         if (p.indexOf('/struct') === 0) return 'struct';
         if (p.indexOf('/ai') === 0) return 'ai';
+        if (p.indexOf('/mgmt') === 0) return 'mgmt';
         return 'global';
       },
       /* 左侧菜单只显示当前板块 */

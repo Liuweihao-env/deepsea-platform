@@ -373,6 +373,23 @@
     ndbcRefresh: function () {
       return { ok: false, error: '纯前端演示模式没有后端，无法拉取 NDBC 数据' };
     },
+    /* 管理板块同理：养殖生产配置住在后端（data/farm.json）。
+       纯前端模式拿不到，返回 null 让页面提示「需要后端」——
+       绝不在这里编一份假的网箱/台账数据，那会让"配置驱动"变成演戏。 */
+    farm: function () { return null; },
+    speciesTemp: function () { return null; },
+    farmLedger: function () { return null; },
+    farmDevices: function () { return null; },
+    setCageSpecies: function () {
+      return { ok: false, error: '纯前端演示模式没有后端，改不了网箱鱼种' };
+    },
+    addLedger: function () {
+      return { ok: false, error: '纯前端演示模式没有后端，记不了台账' };
+    },
+    calibrate: function () {
+      return { ok: false, error: '纯前端演示模式没有后端，记不了标定' };
+    },
+    reloadFarm: function () { return null; },
     now: function () { return Date.now(); },
 
     env: function (siteId, minutes, opts) { return envSeries(siteId, minutes || 60, opts); },
