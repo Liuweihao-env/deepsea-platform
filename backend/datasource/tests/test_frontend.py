@@ -59,6 +59,15 @@ class TestSeaPage(unittest.TestCase):
         for label in ("正常生成", "模拟大风大浪异常", "暂停生成"):
             self.assertIn(label, self.src)
 
+    def test_storm_type_detail_options(self):
+        # 问题二：大风大浪细化 —— 仅风速异常 / 仅浪高异常 / 两者
+        for label in ("仅风速异常", "仅浪高异常", "风速+浪高"):
+            self.assertIn(label, self.src)
+        self.assertIn('v-model="stormType"', self.src)
+        self.assertIn("storm_type: this.stormType", self.src)
+        # 选择细化项后应重新加载数据
+        self.assertIn("stormType: function ()", self.src)
+
     def test_pause_sites_independent(self):
         # 暂停站点括号展示所有被暂停站点（站点独立语义）
         self.assertIn("pausedSites.join", self.src)

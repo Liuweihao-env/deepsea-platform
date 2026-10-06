@@ -252,6 +252,7 @@
     watch: {
       series: function () { this.renderChart(); },
       show: { handler: function () { this.renderChart(); }, deep: true },
+      stormType: function () { if (this.mode === 'storm') { this.page = 0; this.load(); } },
       site: function () {
         _envRange(this.site);
         this.siteRangeKey = _envRange(this.site).key;
@@ -348,9 +349,15 @@
       '    <div v-if="debugOpen" class="row" style="gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">',
       '      <button @click="sendControl(\'normal\')">正常生成</button>',
       '      <button :class="{primary: mode === \'storm\'}" @click="sendControl(\'storm\')">模拟大风大浪异常</button>',
+      '      <template v-if="mode === \'storm\'">',
+      '        <span class="small muted">细化：</span>',
+      '        <label class="env-ck"><input type="radio" value="wind" v-model="stormType"> 仅风速异常</label>',
+      '        <label class="env-ck"><input type="radio" value="wave" v-model="stormType"> 仅浪高异常</label>',
+      '        <label class="env-ck"><input type="radio" value="both" v-model="stormType"> 风速+浪高</label>',
+      '      </template>',
       '      <button @click="sendControl(\'pause\')">暂停生成</button>',
       '      <span class="small" style="color:#B45309">{{ feedback }}</span>',
-      '      <span class="small muted" style="width:100%">异常工况用于系统告警全链路测试（结构安全预警板块消费这些数据）；控制仅作用于当前站点。</span>',
+      '      <span class="small muted" style="width:100%">异常工况用于系统告警全链路测试（结构安全预警板块消费这些数据）；控制仅作用于当前站点。细化选项可单独触发风速异常或浪高异常。</span>',
       '    </div>',
       '  </div>',
       '</div>'

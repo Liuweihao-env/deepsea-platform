@@ -221,6 +221,45 @@ class TestFinalFeatures(unittest.TestCase):
                          [r["water_temp"] for r in b["fast"]],
                          "同一时间区间结果应可复现（确定性 seed）")
 
+
+class TestStormTypeDetail(unittest.TestCase):
+    """问题二：大风大浪细化 —— 仅风速异常 / 仅浪高异常 / 两者。"""
+
+    def _mean(self, d, field):
+        vals = [r[field] for r in d["fast"] if r[field] is not None]
+        return sum(vals) / len(vals) if vals else 0.0
+
+    def test_wind_only(self):
+        d = generate("site_01", minutes=10, storm=True, storm_type="wind")
+        wind = self._mean(d, "wind_speed")
+        wave = self._mean(d, "wave_height")
+        # 正常均值约 8 / 1.3；仅风速异常：风速应明显高于正常、浪高保持正常
+        self.assertGreater(wind, 11.0, "仅风速异常时风速均值应显著抬升")
+        self.assertLess(wave, 3.0, "仅风速异常时浪高应保持正常")
+
+    def test_wave_only(self):
+        d = generate("site_01", minutes=10, storm=True, storm_type="wave")
+        wind = self._mean(d, "wind_speed")
+        wave = self._mean(d, "wave_height")
+        self.assertGreater(wave, 2.8, "仅浪高异常时浪高均值应显著抬升（风暴均值约3.2m，正常约1.4m）")
+        self.assertLess(wind, 11.0, "仅浪高异常时风速应保持正常")
+
+    def test_both(self):
+        d = generate("site_01", minutes=10, storm=True, storm_type="both")
+        self.assertGreater(self._mean(d, "wind_speed"), 11.0, "两者异常：风速应抬升")
+        self.assertGreater(self._mean(d, "wave_height"), 2.8, "两者异常：浪高应抬升（风暴均值约3.2m）")
+
+    def test_storm_true_defaults_both(self):
+        d = generate("site_01", minutes=10, storm=True)
+        self.assertGreater(self._mean(d, "wind_speed"), 11.0)
+        self.assertGreater(self._mean(d, "wave_height"), 2.8)
+
+    def test_none_normal(self):
+        d = generate("site_01", minutes=10)
+        self.assertLess(self._mean(d, "wind_speed"), 11.0)
+        self.assertLess(self._mean(d, "wave_height"), 4.0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 
