@@ -2,9 +2,9 @@
 REM ============================================================
 REM  Push this repository to GitHub.
 REM
-REM  ASCII-ONLY on purpose -- see 项目通用规范 8.3. cmd.exe reads
-REM  .bat with the console code page, and non-ASCII text leaves
-REM  dangling lead bytes that swallow the newline.
+REM  ASCII-ONLY on purpose -- see the project conventions doc, section 8.3.
+REM  cmd.exe reads .bat with the console code page, and non-ASCII text
+REM  leaves dangling lead bytes that swallow the newline.
 REM
 REM  Created: 2026-10-05
 REM ============================================================
