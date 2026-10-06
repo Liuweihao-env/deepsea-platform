@@ -48,6 +48,12 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
+# NDBC 公开浮标数据源（backend/datasource/public/ndbc.py）
+# 用 sys.path 显式加目录 —— 这样双击 .bat 从任意工作目录启动都能 import 到
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "datasource", "public"))
+import ndbc                                                  # noqa: E402
+
 # ----------------------------------------------------------------------
 # 路径
 # ----------------------------------------------------------------------
@@ -161,10 +167,13 @@ SITES = [
     # 选它的理由：与 46001 形成**最大温差（11.5↔30.2℃）和最大海况反差（3.5↔0.4 m）**，
     # 且暖水场景更接近中国南海的实际养殖条件。
     {"site_id": "site_02", "site_name": "NDBC 观测站点 42001", "kind": "obs",
+     "station_id": "42001",
      "latitude": 25.92, "longitude": -89.64, "farming_depth_m": 0},
     {"site_id": "site_03", "site_name": "NDBC 观测站点 46001", "kind": "obs",
+     "station_id": "46001",
      "latitude": 56.30, "longitude": -148.02, "farming_depth_m": 0},
     {"site_id": "site_04", "site_name": "NDBC 观测站点 51001", "kind": "obs",
+     "station_id": "51001",
      "latitude": 24.45, "longitude": -162.00, "farming_depth_m": 0},
 ]
 
@@ -656,7 +665,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"code": 200, "msg": "ok", "ts": int(time.time() * 1000)})
 
         if p == "/api/sites":
-            return self._json({"sites": SITES})
+            # ⚠️ 必须返回**裸数组**，不能包成 {"sites": [...]}。
+            # 前端 api-remote.js 判的是 Array.isArray(d)，包一层就永远取不到值 ——
+            # 症状是站点下拉框**一直是空的**，而且不报任何错，很难发现。
+            # （2026-10-06 踩过：加 /api/species 时顺手把这里包了一层，属于回归。）
+            return self._json(SITES)
 
         # 鱼种体长体重参数库 —— 页面上要能看到「这个 a、b 是哪来的」
         if p == "/api/species":
@@ -676,8 +689,23 @@ class Handler(BaseHTTPRequestHandler):
             heat = one("heat", "0") in ("1", "true")
             off = one("offline", "0") in ("1", "true")
             off_from = one("offline_from", "")
+
+            # 观测站点：返回 **NDBC 实测数据**（接口文档 8.2 的对外口径靠这里坐实）。
+            # 只在「没有造故障注入」时走真实数据 —— 造故障是对仿真的操作，
+            # 往真实数据里注入假故障会让「真实」两个字失效。
+            if not (storm or heat or off or off_from):
+                s = next((x for x in SITES if x["site_id"] == site), None)
+                if s and s.get("kind") == "obs":
+                    real = ndbc.as_env(s, minutes)
+                    if real:
+                        return self._json(real)
+
             return self._json(env_series(site, minutes, storm, heat,
                                          int(off_from) if off_from else None, off))
+
+        # NDBC 直连：状态查询 + 显式拉取
+        if p == "/api/ndbc/status":
+            return self._json(ndbc.status())
 
         if p == "/api/fish":
             return self._json(fish_series(minutes))
@@ -735,6 +763,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._err(400, "参数错误：请求体不是合法 JSON")
 
         try:
+            # 显式拉取 NDBC 最新数据并写本地缓存。
+            # **这是唯一的联网动作**，只在用户点「立即拉取最新」或启动时触发；
+            # 页面渲染永远只读本地缓存，所以断网也能演示。
+            if p == "/api/ndbc/refresh":
+                ids = body.get("stations") or None
+                if ids and not isinstance(ids, list):
+                    return self._err(400, "参数错误：stations 应为数组")
+                res = ndbc.refresh(ids)
+                return self._json({
+                    "results": res,
+                    "ok_count": sum(1 for r in res if r.get("ok")),
+                    "fail_count": sum(1 for r in res if not r.get("ok")),
+                    "status": ndbc.status(),
+                })
+
             if p == "/api/commands":
                 did = body.get("device_id")
                 ctype = body.get("command_type")
@@ -858,6 +901,26 @@ def main():
         return 1
 
     load_species_db()          # 鱼种体长体重参数库（读不到会打警告并回落）
+
+    # NDBC 缓存：**启动时后台尽力刷一次**，但绝阻塞启动、绝影响可用性。
+    # 为什么要"后台"：整个平台必须在断网时也能起来（R1 现场不能赌网络）。
+    # 所以这里是 daemon 线程 + 只在缓存过期时才拉；拉失败只记一行日志。
+    def _bg_ndbc_refresh():
+        try:
+            for st in ndbc.status().get("stations", []):
+                age = st.get("age_minutes")
+                if (not st.get("has_cache")) or (age is not None and age > 180):
+                    r = ndbc.refresh([st["station_id"]])
+                    for x in r:
+                        if x.get("ok"):
+                            print("  [NDBC] %s 已更新：%d 条，最新 %s UTC"
+                                  % (x["station_id"], x["count"], x.get("latest_ts_utc")))
+                        else:
+                            print("  [NDBC] %s 拉取失败（用本地缓存继续）：%s"
+                                  % (x["station_id"], x.get("error")))
+        except Exception as e:                              # noqa: BLE001
+            print("  [NDBC] 后台刷新异常（不影响使用）：%s" % e)
+    threading.Thread(target=_bg_ndbc_refresh, daemon=True).start()
 
     print("=" * 62)
     print("  深远海养殖与海洋牧场智能管控平台")

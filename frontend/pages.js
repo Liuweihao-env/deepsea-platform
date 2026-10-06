@@ -46,11 +46,37 @@
      ============================================================ */
   P['/env/sea'] = {
     data: function () {
-      return { minutes: 60, site: 'site_01', storm: false, picked: null, series: null };
+      return { minutes: 60, site: 'site_01', storm: false, picked: null, series: null,
+               tick: 0, unsub: null, refreshing: false, refreshMsg: '', refreshOk: null };
     },
     computed: {
       fast: function () { return this.series ? this.series.fast : []; },
-      last: function () { return this.fast.length ? this.fast[this.fast.length - 1] : {}; },
+      /* 「当前值」：观测站点用后端挑好的「四字段齐全的那条」，
+         养殖站点直接用最后一条。卡片上的 ts 就是这条记录的真实观测时间。 */
+      last: function () {
+        const s = this.series;
+        if (s && s.current) return s.current;
+        return this.fast.length ? this.fast[this.fast.length - 1] : {};
+      },
+      /* 当前站点是不是 NDBC 观测站点 —— 决定页面显示"实测"还是"仿真" */
+      isObs: function () {
+        const sid = this.site;
+        const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
+        return !!(s && s.kind === 'obs');
+      },
+      /* NDBC 直连状态（读后端缓存，不联网） */
+      ndbc: function () { this.tick; return API.ndbcStatus(); },
+      ndbcList: function () { const n = this.ndbc; return (n && n.stations) || []; },
+      ndbcAny: function () {
+        return this.ndbcList.filter(function (s) { return s.has_cache; }).length;
+      },
+      /* 数据来源：观测站点实时读的是本地缓存，不是每次渲染去联网 */
+      srcLabel: function () {
+        if (this.isObs) {
+          return 'NOAA NDBC 公开浮标实测（读本地缓存）';
+        }
+        return '仿真生成（模拟养殖站点）';
+      },
       charts: function () {
         return [
           { name: '浪高', unit: 'm', data: this.fast.map(function (r) { return [r.ts, r.wave_height]; }) },
@@ -83,9 +109,43 @@
       },
       time: function (ts) {
         return new Date(ts).toLocaleString('zh-CN', { hour12: false });
+      },
+      /* 显式拉取最新 —— 全平台唯一的联网动作 */
+      doRefresh: function () {
+        const self = this;
+        this.refreshing = true;
+        this.refreshMsg = '正在从 NOAA NDBC 拉取…';
+        this.refreshOk = null;
+        API.resolve(API.ndbcRefresh(), function (r) {
+          self.refreshing = false;
+          if (r && r.ok_count > 0) {
+            self.refreshOk = true;
+            self.refreshMsg = '已更新 ' + r.ok_count + ' 个浮标' +
+              (r.fail_count ? '（' + r.fail_count + ' 个失败）' : '') + ' —— 页面数据已刷新';
+          } else if (r && r.results && r.results.length) {
+            self.refreshOk = false;
+            const e = r.results[0].error || '未知错误';
+            self.refreshMsg = '拉取失败：' + e + '（不影响演示，页面仍读本地缓存）';
+          } else {
+            self.refreshOk = false;
+            self.refreshMsg = (r && r.error) || '拉取失败（不影响演示，页面仍读本地缓存）';
+          }
+          self.load();
+        });
+      },
+      ageText: function (m) {
+        if (m == null) return '—';
+        if (m < 1) return '刚刚';
+        if (m < 60) return Math.round(m) + ' 分钟前';
+        return (m / 60).toFixed(1) + ' 小时前';
       }
     },
-    mounted: function () { this.load(); },
+    mounted: function () {
+      const self = this;
+      this.unsub = API.subscribe(function () { self.tick++; });
+      this.load();
+    },
+    beforeUnmount: function () { if (this.unsub) { this.unsub(); this.unsub = null; } },
     watch: {
       minutes: function () { this.load(); },
       site: function () { this.load(); },
@@ -94,18 +154,58 @@
     template: [
       '<div>',
       '  <page-head title="环境 · 海况"',
-      '    desc="浪高 / 风速 / 流速 / 气温。数据来源：公开浮标 + 仿真生成"',
-      '    :sources="[\'public\',\'simulated\']" />',
+      '    desc="浪高 / 风速 / 流速 / 气温。观测站点为 NOAA NDBC 公开浮标实测，养殖站点为仿真生成"',
+      '    :sources="isObs ? [\'public\'] : [\'simulated\']" />',
+      '',
+      '  <!-- NDBC 直连面板：说明数据从哪来、缓存新不新、一键拉最新 -->',
+      '  <div class="card" style="margin-bottom:12px">',
+      '    <div class="card-title">数据来源 · NOAA NDBC 直连</div>',
+      '    <div class="small" style="margin-bottom:8px">',
+      '      当前站点：<b>{{ siteName() }}</b> —— {{ srcLabel }}',
+      '    </div>',
+      '    <div class="dt-wrap" style="max-height:200px">',
+      '      <table class="dt">',
+      '        <thead><tr><th>浮标</th><th>海域</th><th>缓存条数</th><th>数据到</th><th>抓取于</th></tr></thead>',
+      '        <tbody>',
+      '          <tr v-for="s in ndbcList" :key="s.station_id">',
+      '            <td class="mono">{{ s.station_id }}</td>',
+      '            <td class="small">{{ s.station.cn }}</td>',
+      '            <td>{{ s.count }}</td>',
+      '            <td class="small mono">{{ s.latest_ts_utc || \'—\' }} UTC</td>',
+      '            <td class="small">{{ ageText(s.age_minutes) }}</td>',
+      '          </tr>',
+      '          <tr v-if="!ndbcList.length">',
+      '            <td colspan="5" class="muted small">',
+      '              NDBC 状态需要后端 —— 请双击 <b>启动平台.bat</b> 打开。',
+      '            </td>',
+      '          </tr>',
+      '        </tbody>',
+      '      </table>',
+      '    </div>',
+      '    <div class="hint" style="margin-top:10px">',
+      '      <b>页面读的是本地缓存，不是每次渲染去联网</b> —— 所以<b>拔掉网线也能演示</b>。',
+      '      只有点下面这个按钮才会联网。',
+      '    </div>',
+      '    <div style="margin-top:8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">',
+      '      <button class="primary" :disabled="refreshing" @click="doRefresh">',
+      '        {{ refreshing ? \'正在拉取…\' : \'立即拉取最新（联网）\' }}',
+      '      </button>',
+      '      <span v-if="refreshMsg" class="small"',
+      '            :style="{ color: refreshOk === false ? \'#991B1B\' : (refreshOk ? \'#166534\' : \'#6B7280\') }">',
+      '        {{ refreshMsg }}',
+      '      </span>',
+      '    </div>',
+      '  </div>',
       '',
       '  <div class="grid-stats">',
       '    <stat-card name="浪高" field="wave_height" unit="m" :value="last.wave_height"',
-      '               :quality="last.quality" :ts="last.ts" source="simulated" />',
+      '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '    <stat-card name="风速" field="wind_speed" unit="m/s" :value="last.wind_speed"',
-      '               :quality="last.quality" :ts="last.ts" source="simulated" />',
+      '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '    <stat-card name="海水流速" field="current_speed" unit="m/s" :value="last.current_speed"',
-      '               :quality="last.quality" :ts="last.ts" source="simulated" />',
+      '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '    <stat-card name="环境气温" field="air_temp" unit="℃" :value="last.air_temp"',
-      '               :quality="last.quality" :ts="last.ts" source="simulated" />',
+      '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '  </div>',
       '',
       '  <div class="split" style="margin-top:12px">',

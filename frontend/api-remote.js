@@ -127,4 +127,23 @@
     }
   });
 
+  /* NDBC 直连状态。**只读缓存状态，不在渲染时联网** ——
+     联网只在用户点「立即拉取最新」时发生（M.ndbcRefresh）。 */
+  M.ndbcStatus = function () { return M._ndbc || null; };
+  function pullNdbcStatus() {
+    get('/api/ndbc/status').then(function (d) {
+      if (d && Array.isArray(d.stations)) { M._ndbc = d; M._bump(); }
+    });
+  }
+  pullNdbcStatus();
+
+  M.ndbcRefresh = function (stations) {
+    var body = {};
+    if (stations && stations.length) body.stations = stations;
+    return post('/api/ndbc/refresh', body).then(function (r) {
+      if (r && r.status) { M._ndbc = r.status; M._bump(); }
+      return r;
+    });
+  };
+
 })(window);

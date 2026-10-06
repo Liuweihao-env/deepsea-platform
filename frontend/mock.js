@@ -358,6 +358,12 @@
        纯前端演示模式（后端没起）时这里返回空数组，页面会提示「需要后端」，
        而不是编一份假参数 —— 参数带文献出处，编出来就是学术不端。 */
     species: function () { return []; },
+    /* NDBC 直连同理：纯前端模式没有后端，拿不到浮标数据，返回 null 让页面提示。
+       绝不编造「浮标实测」数据 —— 那是最容易被戳穿的一类造假。 */
+    ndbcStatus: function () { return null; },
+    ndbcRefresh: function () {
+      return { ok: false, error: '纯前端演示模式没有后端，无法拉取 NDBC 数据' };
+    },
     now: function () { return Date.now(); },
 
     env: function (siteId, minutes, opts) { return envSeries(siteId, minutes || 60, opts); },
