@@ -236,3 +236,20 @@ select, input[type=text], input[type=datetime-local] {
   background: #fff; border-radius: 8px; padding: 16px 20px;
   width: 340px; max-width: 90vw; box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
 }
+
+/* ============================================================
+   环境板块 · 最终版还原页面样式（env- 前缀，环境专属）
+   新增：2026-10-06，刘伟豪（环境板块）
+   ============================================================ */
+.env-mini {
+  background: #fff; border: 1px solid #D1D5DB; border-radius: 6px;
+  padding: 4px 10px; font-size: 13px; cursor: pointer; color: #374151;
+}
+.env-mini:hover { border-color: #2F5496; color: #2F5496; }
+.env-mini.active { border-color: #2F5496; color: #2F5496; font-weight: 600; }
+.env-num {
+  border: 1px solid #D1D5DB; border-radius: 6px; padding: 4px 6px;
+  font-size: 13px; text-align: center; color: #111827; background: #fff;
+}
+.env-unit { color: #6B7280; font-size: 13px; margin: 0 2px; }
+.env-ck { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }

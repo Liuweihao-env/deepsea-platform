@@ -40,235 +40,636 @@
     };
   }
 
+
+  /* ---------- 环境页共享小工具（两页共用） ----------
+     站点独立时间范围记忆：每个站点记住自己的档位与自定义区间，互不影响；
+     年/月/日 纯数字 + 汉字单位解析；CSV 分页辅助。 */
+  const _envRanges = {};   // site_id -> { key:'1h'|'6h'|'24h'|'custom', custom:{start,end}|null }
+  const _envRangeMin = { '1h': 60, '6h': 360, '24h': 1440 };
+  function _envRange(site) {
+    if (!_envRanges[site]) _envRanges[site] = { key: '1h', custom: null };
+    return _envRanges[site];
+  }
+  function _envRangeSet(site, key) {
+    const c = _envRange(site); c.key = key; c.custom = null;
+  }
+  function _envRangeCustom(site, start, end) {
+    const c = _envRange(site); c.key = 'custom'; c.custom = { start: start, end: end };
+  }
+  function _partsToTs(y, m, d, endOfDay) {
+    const dt = new Date(y, m - 1, d, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0, endOfDay ? 999 : 0);
+    if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return null;
+    return dt.getTime();
+  }
+  function _fmtTs(ms) {
+    const d = new Date(ms);
+    const p = function (n) { return String(n).padStart(2, '0'); };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+           ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+
+
   /* ============================================================
-     环境 · 海况  /env/sea        —— 样板页 A（总览型模板）
-     模板 A：数值卡区 + 主图区(62%) + 侧栏(38%) + 操作条
+     环境 · 海况  /env/sea    —— 最终版还原（总览 + 明细 + 调试面板）
+     数值卡(4) + 海况时序(ECharts 多指标勾选/bad红点/hover全字段/缩放框选) +
+     时间范围(1h/6h/24h/自定义 年·月·日) + 原始数据表(分页/CSV) +
+     折叠调试面板(正常生成/模拟大风大浪异常/暂停生成，站点独立)
      ============================================================ */
   P['/env/sea'] = {
     data: function () {
-      return { minutes: 60, site: 'site_01', storm: false, picked: null, series: null };
+      return {
+        minutes: 60, site: 'site_01',
+        siteRangeKey: '1h', customFrom: {}, customTo: {},
+        show: { wave_height: true, wind_speed: true, current_speed: true, air_temp: true },
+        series: null, loading: false, error: '',
+        mode: 'normal', pausedSites: [], stormType: 'both',
+        feedback: '', debugOpen: false, page: 0
+      };
     },
     computed: {
       fast: function () { return this.series ? this.series.fast : []; },
+      rows: function () { return this.fast; },
       last: function () { return this.fast.length ? this.fast[this.fast.length - 1] : {}; },
-      charts: function () {
-        return [
-          { name: '浪高', unit: 'm', data: this.fast.map(function (r) { return [r.ts, r.wave_height]; }) },
-          { name: '风速', unit: 'm/s', data: this.fast.map(function (r) { return [r.ts, r.wind_speed]; }) }
-        ];
+      pageRows: function () {
+        const p = this.page, s = 50;
+        return this.rows.slice(p * s, p * s + s);
       },
-      events: function () {
-        /* 由真实数据算出的事件：越限即列为事件（不做假数据） */
-        const out = [];
-        const self = this;
-        this.fast.forEach(function (r) {
-          if (r.wave_height != null && r.wave_height >= 2.5) {
-            out.push({ id: 'w' + r.ts, ts: r.ts, level: r.wave_height >= 3 ? 'red' : 'orange',
-                       text: '浪高 ' + r.wave_height + ' m 超阈值（≥2.5 m）' });
-          }
-        });
-        return out.slice(-20).reverse();
+      totalPages: function () { return Math.max(1, Math.ceil(this.rows.length / 50)); },
+      modeText: function () {
+        return { normal: 'normal', storm: '大风大浪', pause: '已暂停' }[this.mode] || this.mode;
       }
     },
     methods: {
       load: function () {
+        const cfg = _envRange(this.site);
         const self = this;
-        API.resolve(API.env(this.site, this.minutes, { storm: this.storm }),
-                    function (d) { self.series = d; });
+        this.loading = true;
+        const done = function (d) { self.series = d; self.loading = false; };
+        const opts = { storm: this.mode === 'storm', storm_type: this.stormType };
+        if (cfg.custom) {
+          opts.start_ts = cfg.custom.start; opts.end_ts = cfg.custom.end;
+          API.resolve(API.env(this.site, 60, opts), done);
+        } else {
+          API.resolve(API.env(this.site, cfg.minutes, opts), done);
+        }
+      },
+      pickRange: function (key) {
+        _envRangeSet(this.site, key);
+        this.siteRangeKey = key; this.customFrom = {}; this.customTo = {};
+        this.page = 0; this.load();
+      },
+      applyCustom: function () {
+        const f = this.customFrom, t = this.customTo;
+        if (!f || !f.y || !f.m || !f.d || !t || !t.y || !t.m || !t.d) {
+          this.error = '请完整填写起止日期（年/月/日）'; return;
+        }
+        const start = _partsToTs(f.y, f.m, f.d, false);
+        const end = _partsToTs(t.y, t.m, t.d, true);
+        if (start === null || end === null) { this.error = '日期无效，请检查年/月/日'; return; }
+        if (end < start) { this.error = '结束日期不能早于开始日期'; return; }
+        this.error = '';
+        _envRangeCustom(this.site, start, end);
+        this.siteRangeKey = 'custom'; this.page = 0; this.load();
+      },
+      renderChart: function () {
+        const el = this.$refs.chart;
+        if (!el) return;
+        let inst = echarts.getInstanceByDom(el);
+        if (!inst) inst = echarts.init(el);
+        const rows = this.rows;
+        const META = {
+          wave_height: { name: '浪高', unit: 'm', color: '#38bdf8' },
+          wind_speed: { name: '风速', unit: 'm/s', color: '#a78bfa' },
+          current_speed: { name: '海水流速', unit: 'm/s', color: '#34d399' },
+          air_temp: { name: '环境气温', unit: '℃', color: '#fbbf24' }
+        };
+        const active = ['wave_height', 'wind_speed', 'current_speed', 'air_temp']
+          .filter(function (k) { return this.show[k]; }.bind(this));
+        const series = active.map(function (k) {
+          const m = META[k];
+          return {
+            name: m.name + '（' + m.unit + '）', type: 'line',
+            showSymbol: false, smooth: true,
+            lineStyle: { width: 2, color: m.color }, itemStyle: { color: m.color },
+            data: rows.map(function (r) {
+              return [r.ts, (r[k] === null || r[k] === undefined) ? null : r[k]];
+            })
+          };
+        });
+        const badPts = rows.filter(function (r) { return r.quality === 'bad' && r.ts; });
+        const badSeries = active.map(function (k) {
+          const m = META[k];
+          return {
+            name: m.name + ' 异常点', type: 'scatter', symbolSize: 9,
+            itemStyle: { color: '#f87171' },
+            data: badPts.map(function (r) {
+              return [r.ts, (r[k] === null || r[k] === undefined) ? null : r[k]];
+            })
+          };
+        });
+        inst.setOption({
+          backgroundColor: 'transparent',
+          tooltip: {
+            trigger: 'axis', confine: true,
+            formatter: function (params) {
+              const p = params && params[0];
+              if (!p || !p.value) return '';
+              const rec = null;
+              const ts = p.value[0];
+              let found = null;
+              for (let i = 0; i < rows.length; i++) { if (rows[i].ts === ts) { found = rows[i]; break; } }
+              if (!found) return '';
+              const lines = [_fmtTs(found.ts)];
+              Object.keys(META).forEach(function (k) {
+                const v = found[k];
+                lines.push(META[k].name + ': ' + (v === null || v === undefined ? '--' : v) + ' ' + META[k].unit);
+              });
+              lines.push('来源: ' + found.source);
+              lines.push('质量: ' + found.quality);
+              lines.push('站点: ' + found.site_id);
+              return lines.join('<br/>');
+            }
+          },
+          legend: { type: 'scroll', top: 0, textStyle: { fontSize: 12 } },
+          grid: { left: 56, right: 20, top: 36, bottom: 50 },
+          xAxis: { type: 'time', axisLabel: { fontSize: 11 },
+                   splitLine: { show: false } },
+          yAxis: { type: 'value', scale: true, axisLabel: { fontSize: 11 },
+                   splitLine: { lineStyle: { color: '#EEF2F6' } } },
+          dataZoom: [
+            { type: 'inside', start: 0, end: 100 },
+            { type: 'slider', height: 18, bottom: 10 }
+          ],
+          series: series.concat(badSeries)
+        }, true);
+        const self = this;
+        setTimeout(function () {
+          if (self.$refs.chart && inst && !inst.isDisposed()) inst.resize();
+        }, 30);
+      },
+      exportCsv: function () {
+        const head = ['时间', '站点', '浪高(m)', '风速(m/s)', '流速(m/s)', '气温(℃)', '来源', '质量'];
+        const esc = function (s) { return '"' + String(s).replace(/"/g, '""') + '"'; };
+        const lines = [head.join(',')].concat(this.rows.map(function (r) {
+          return [r.ts, r.site_id, r.wave_height, r.wind_speed, r.current_speed, r.air_temp,
+                  r.source, r.quality].map(esc).join(',');
+        }));
+        const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = '海况数据_' + this.site + '.csv';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      },
+      sendControl: function (cmd) {
+        if (cmd === 'normal') {
+          this.mode = 'normal';
+          this.pausedSites = this.pausedSites.filter(function (s) { return s !== this.site; }.bind(this));
+          this.feedback = '已切换 → normal（' + this.site + '）生成中';
+          this.page = 0; this.load();
+        } else if (cmd === 'storm') {
+          this.mode = 'storm';
+          this.pausedSites = this.pausedSites.filter(function (s) { return s !== this.site; }.bind(this));
+          this.feedback = '已切换 → 大风大浪（' + this.site + '）';
+          this.page = 0; this.load();
+        } else if (cmd === 'pause') {
+          this.mode = 'pause';
+          if (this.pausedSites.indexOf(this.site) < 0) this.pausedSites.push(this.site);
+          this.feedback = '已暂停生成（' + this.site + '）—— 图表冻结在当前数据';
+        }
       },
       siteName: function () {
-        const sid = this.site;
-        const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
-        return s ? s.site_name : sid;
+        const s = API.sites().filter(function (x) { return x.site_id === this.site; }.bind(this))[0];
+        return s ? s.site_name : this.site;
       },
-      time: function (ts) {
-        return new Date(ts).toLocaleString('zh-CN', { hour12: false });
-      }
+      time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
+      fmt: function (v) { return (v === null || v === undefined) ? '—' : v; }
     },
-    mounted: function () { this.load(); },
+    mounted: function () {
+      this.load();
+      this.$nextTick(function () { this.renderChart(); });
+    },
     watch: {
-      minutes: function () { this.load(); },
-      site: function () { this.load(); },
-      storm: function () { this.load(); }
+      series: function () { this.renderChart(); },
+      show: { handler: function () { this.renderChart(); }, deep: true },
+      site: function () {
+        _envRange(this.site);
+        this.siteRangeKey = _envRange(this.site).key;
+        this.customFrom = {}; this.customTo = {}; this.page = 0; this.load();
+      }
     },
     template: [
       '<div>',
       '  <page-head title="环境 · 海况"',
-      '    desc="浪高 / 风速 / 流速 / 气温。数据来源：公开浮标 + 仿真生成"',
+      '    desc="浪高 / 风速 / 海水流速 / 环境气温。数据来源：公开浮标 + 仿真生成"',
       '    :sources="[\'public\',\'simulated\']" />',
       '',
       '  <div class="grid-stats">',
       '    <stat-card name="浪高" field="wave_height" unit="m" :value="last.wave_height"',
-      '               :quality="last.quality" :ts="last.ts" source="simulated" />',
+      '               :quality="last.quality" :ts="last.ts" :source="last.source" />',
       '    <stat-card name="风速" field="wind_speed" unit="m/s" :value="last.wind_speed"',
-      '               :quality="last.quality" :ts="last.ts" source="simulated" />',
+      '               :quality="last.quality" :ts="last.ts" :source="last.source" />',
       '    <stat-card name="海水流速" field="current_speed" unit="m/s" :value="last.current_speed"',
-      '               :quality="last.quality" :ts="last.ts" source="simulated" />',
+      '               :quality="last.quality" :ts="last.ts" :source="last.source" />',
       '    <stat-card name="环境气温" field="air_temp" unit="℃" :value="last.air_temp"',
-      '               :quality="last.quality" :ts="last.ts" source="simulated" />',
+      '               :quality="last.quality" :ts="last.ts" :source="last.source" />',
       '  </div>',
       '',
-      '  <div class="split" style="margin-top:12px">',
-      '    <trend-chart title="浪高 / 风速 趋势" :series="charts"',
-      '                 :thresholds="[{value:2.5,label:\'浪高阈值 2.5 m\',color:\'#991B1B\'}]" />',
-      '    <div class="card">',
-      '      <div class="card-title">海况事件（由数据实时判定）</div>',
-      '      <event-list :items="events" empty-text="本时段无越限事件" @pick="picked = $event" />',
-      '      ',
-      '      <div v-if="picked" class="hint" style="margin-top:10px">',
-      '        <b>已选事件</b><br>{{ picked.text }}<br>',
-      '        <span class="small">时间：{{ time(picked.ts) }}</span>',
-      '      </div>',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title">海况时序</div>',
+      '    <div class="row" style="gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">',
+      '      <button class="env-mini" :class="{active: siteRangeKey === \'1h\'}" @click="pickRange(\'1h\')">最近 1h</button>',
+      '      <button class="env-mini" :class="{active: siteRangeKey === \'6h\'}" @click="pickRange(\'6h\')">最近 6h</button>',
+      '      <button class="env-mini" :class="{active: siteRangeKey === \'24h\'}" @click="pickRange(\'24h\')">最近 24h</button>',
+      '      <span class="small muted" style="margin-left:6px">自定义</span>',
+      '      <input class="env-num" type="number" v-model.number="customFrom.y" placeholder="年" style="width:56px" />',
+      '      <span class="env-unit">年</span>',
+      '      <input class="env-num" type="number" v-model.number="customFrom.m" placeholder="月" style="width:44px" />',
+      '      <span class="env-unit">月</span>',
+      '      <input class="env-num" type="number" v-model.number="customFrom.d" placeholder="日" style="width:44px" />',
+      '      <span class="env-unit">日</span>',
+      '      <span class="small muted">~</span>',
+      '      <input class="env-num" type="number" v-model.number="customTo.y" placeholder="年" style="width:56px" />',
+      '      <span class="env-unit">年</span>',
+      '      <input class="env-num" type="number" v-model.number="customTo.m" placeholder="月" style="width:44px" />',
+      '      <span class="env-unit">月</span>',
+      '      <input class="env-num" type="number" v-model.number="customTo.d" placeholder="日" style="width:44px" />',
+      '      <span class="env-unit">日</span>',
+      '      <button class="env-mini" @click="applyCustom">自定义</button>',
+      '      <span v-if="loading" class="small muted">加载中…</span>',
+      '      <span v-if="error" class="small" style="color:#991B1B">{{ error }}</span>',
+      '    </div>',
+      '    <div class="row" style="gap:14px;margin-bottom:8px;font-size:13px;color:#374151">',
+      '      <label class="env-ck"><input type="checkbox" v-model="show.wave_height" /> 浪高（m）</label>',
+      '      <label class="env-ck"><input type="checkbox" v-model="show.wind_speed" /> 风速（m/s）</label>',
+      '      <label class="env-ck"><input type="checkbox" v-model="show.current_speed" /> 海水流速（m/s）</label>',
+      '      <label class="env-ck"><input type="checkbox" v-model="show.air_temp" /> 环境气温（℃）</label>',
+      '    </div>',
+      '    <div ref="chart" style="width:100%;height:340px"></div>',
+      '    <p class="small muted" style="margin-top:6px">quality=bad 数据以红点标记；hover 查看该时刻全部指标、来源与质量；支持滚轮缩放/框选。</p>',
+      '  </div>',
+      '',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title">原始数据</div>',
+      '    <div class="dt-wrap">',
+      '      <table class="dtable">',
+      '        <thead><tr><th>时间</th><th>站点</th><th>浪高(m)</th><th>风速(m/s)</th><th>流速(m/s)</th><th>气温(℃)</th><th>来源</th><th>质量</th></tr></thead>',
+      '        <tbody>',
+      '          <tr v-if="!pageRows.length"><td colspan="8" class="empty">暂无数据</td></tr>',
+      '          <tr v-for="r in pageRows" :key="r.ts">',
+      '            <td class="t">{{ time(r.ts) }}</td>',
+      '            <td>{{ r.site_id }}</td>',
+      '            <td>{{ fmt(r.wave_height) }}</td>',
+      '            <td>{{ fmt(r.wind_speed) }}</td>',
+      '            <td>{{ fmt(r.current_speed) }}</td>',
+      '            <td>{{ fmt(r.air_temp) }}</td>',
+      '            <td><span class="tag" :class="\'tag-\' + r.source">{{ API.sourceText[r.source] || r.source }}</span></td>',
+      '            <td>{{ CN.quality(r.quality) }}</td>',
+      '          </tr>',
+      '        </tbody>',
+      '      </table>',
+      '    </div>',
+      '    <div class="row" style="margin-top:8px;align-items:center;gap:8px">',
+      '      <button :disabled="page <= 0" @click="page--">上一页</button>',
+      '      <span class="small muted">第 {{ page + 1 }} / {{ totalPages }} 页 · 共 {{ rows.length }} 条</span>',
+      '      <button :disabled="page >= totalPages - 1" @click="page++">下一页</button>',
+      '      <span style="flex:1"></span>',
+      '      <button @click="exportCsv">导出 CSV</button>',
       '    </div>',
       '  </div>',
       '',
-      '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
-      '    <time-range v-model="minutes" />',
-      '    <span style="width:12px"></span>',
-      '    <span class="small muted">站点</span>',
-      '    <select v-model="site">',
-      '      <option v-for="s in API.sites()" :key="s.site_id" :value="s.site_id">{{ s.site_name }}</option>',
-      '    </select>',
-      '    <span style="flex:1"></span>',
-      '    <button :class="{ primary: storm }" @click="storm = !storm">',
-      '      {{ storm ? \'恢复平常海况\' : \'触发大风大浪（造故障）\' }}',
-      '    </button>',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title" style="cursor:pointer;display:flex;gap:6px;align-items:center;margin-bottom:0" @click="debugOpen = !debugOpen">',
+      '      <span>{{ debugOpen ? \'▾\' : \'▸\' }}</span>',
+      '      调试面板（仿真工况控制）· {{ siteName() }} 当前模式：{{ modeText }}',
+      '      <span v-if="pausedSites.length" class="small" style="color:#991B1B">暂停生成（{{ pausedSites.join(\'、\') }}）</span>',
+      '      <span class="small muted" style="margin-left:auto">比赛展示可收起</span>',
+      '    </div>',
+      '    <div v-if="debugOpen" class="row" style="gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">',
+      '      <button @click="sendControl(\'normal\')">正常生成</button>',
+      '      <button :class="{primary: mode === \'storm\'}" @click="sendControl(\'storm\')">模拟大风大浪异常</button>',
+      '      <button @click="sendControl(\'pause\')">暂停生成</button>',
+      '      <span class="small" style="color:#B45309">{{ feedback }}</span>',
+      '      <span class="small muted" style="width:100%">异常工况用于系统告警全链路测试（结构安全预警板块消费这些数据）；控制仅作用于当前站点。</span>',
+      '    </div>',
       '  </div>',
       '</div>'
     ].join('\n')
   };
 
   /* ============================================================
-     环境 · 水质  /env/water      —— 样板页 B（总览型模板）
-     这一页承载「一条竖线」：水温 → 曲线 → 越限 → 告警
+     环境 · 水质  /env/water    —— 最终版还原（总览 + 明细 + 调试面板）
+     数值卡(4：水温/溶解氧/盐度/pH) + 水质时序(ECharts 多指标勾选/bad红点/hover全字段/缩放框选) +
+     时间范围(1h/6h/24h/自定义 年·月·日) + 原始数据表(分页/CSV) +
+     折叠调试面板(正常生成/模拟溶氧暴跌异常/暂停生成，站点独立)
      ============================================================ */
   P['/env/water'] = {
     data: function () {
-      return { minutes: 60, site: 'site_01', heat: false, offline: false, picked: null, series: null,
-               show: { water_temp: true, dissolved_oxygen: true, light_intensity: false } };
+      return {
+        minutes: 60, site: 'site_01',
+        siteRangeKey: '1h', customFrom: {}, customTo: {},
+        show: { water_temp: true, dissolved_oxygen: true, salinity: true, ph: true },
+        series: null, loading: false, error: '',
+        mode: 'normal', pausedSites: [],
+        feedback: '', debugOpen: false, page: 0
+      };
     },
     computed: {
       fast: function () { return this.series ? this.series.fast : []; },
-      slow: function () { return this.series ? this.series.slow : []; },
-      last: function () { return this.fast.length ? this.fast[this.fast.length - 1] : {}; },
-      lastSlow: function () { return this.slow.length ? this.slow[this.slow.length - 1] : {}; },
-      charts: function () {
-        const s = this.show, out = [];
-        const add = function (name, unit, key) {
-          if (s[key]) out.push({ name: name, unit: unit, data: this.fast.map(function (r) { return [r.ts, r[key]]; }) });
-        }.bind(this);
-        add('水温', '℃', 'water_temp');
-        add('溶解氧', 'mg/L', 'dissolved_oxygen');
-        add('光照强度', 'lux', 'light_intensity');
-        return out;
+      slowMap: function () {
+        const m = {};
+        (this.series ? this.series.slow : []).forEach(function (r) { m[r.ts] = r; });
+        return m;
       },
-      /* ★ 一条竖线：水温越限 → 出告警（判定规则在 API.ruleCheck，与后端同口径） */
-      alarms: function () {
-        const out = [];
-        this.fast.forEach(function (r) {
-          const hit = API.ruleCheck(r);
-          if (hit) out.push({ id: 'a' + r.ts, ts: r.ts, level: hit.risk_level, hit: hit, row: r });
-        });
-        return out;
-      },
-      events: function () {
-        return this.alarms.slice(-20).reverse().map(function (a) {
-          return { id: a.id, ts: a.ts, level: a.level,
-                   text: '水温 ' + a.hit.trigger_value + ' ℃ 触发「' + a.hit.rule_name + '」' };
+      rows: function () {
+        const m = this.slowMap;
+        return this.fast.map(function (r) {
+          const s = m[r.ts] || {};
+          return {
+            ts: r.ts, site_id: r.site_id, source: r.source, quality: r.quality,
+            water_temp: r.water_temp, dissolved_oxygen: r.dissolved_oxygen,
+            salinity: s.salinity, ph: s.ph, light_intensity: r.light_intensity
+          };
         });
       },
-      topAlarm: function () { return this.alarms.length ? this.alarms[this.alarms.length - 1] : null; }
+      last: function () {
+        if (!this.fast.length) return {};
+        const r = this.fast[this.fast.length - 1];
+        const sl = this.series && this.series.slow;
+        const s = (sl && sl.length) ? sl[sl.length - 1] : {};
+        // 盐度 / pH 是 30s 慢变量，卡片取 slow 最新一条，避免误报「设备离线」
+        return {
+          ts: r.ts, site_id: r.site_id, source: r.source, quality: r.quality,
+          water_temp: r.water_temp, dissolved_oxygen: r.dissolved_oxygen,
+          light_intensity: r.light_intensity,
+          salinity: s.salinity, ph: s.ph
+        };
+      },
+      pageRows: function () {
+        const p = this.page, s = 50;
+        return this.rows.slice(p * s, p * s + s);
+      },
+      totalPages: function () { return Math.max(1, Math.ceil(this.rows.length / 50)); },
+      modeText: function () {
+        return { normal: 'normal', low_do: '溶氧暴跌', pause: '已暂停' }[this.mode] || this.mode;
+      }
     },
     methods: {
       load: function () {
+        const cfg = _envRange(this.site);
         const self = this;
-        API.resolve(API.env(this.site, this.minutes, { heat: this.heat, offline: this.offline }),
-                    function (d) { self.series = d; });
+        this.loading = true;
+        const done = function (d) { self.series = d; self.loading = false; };
+        const opts = { heat: false, low_do: this.mode === 'low_do' };
+        if (cfg.custom) {
+          opts.start_ts = cfg.custom.start; opts.end_ts = cfg.custom.end;
+          API.resolve(API.env(this.site, 60, opts), done);
+        } else {
+          API.resolve(API.env(this.site, cfg.minutes, opts), done);
+        }
       },
-      time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); }
+      pickRange: function (key) {
+        _envRangeSet(this.site, key);
+        this.siteRangeKey = key; this.customFrom = {}; this.customTo = {};
+        this.page = 0; this.load();
+      },
+      applyCustom: function () {
+        const f = this.customFrom, t = this.customTo;
+        if (!f || !f.y || !f.m || !f.d || !t || !t.y || !t.m || !t.d) {
+          this.error = '请完整填写起止日期（年/月/日）'; return;
+        }
+        const start = _partsToTs(f.y, f.m, f.d, false);
+        const end = _partsToTs(t.y, t.m, t.d, true);
+        if (start === null || end === null) { this.error = '日期无效，请检查年/月/日'; return; }
+        if (end < start) { this.error = '结束日期不能早于开始日期'; return; }
+        this.error = '';
+        _envRangeCustom(this.site, start, end);
+        this.siteRangeKey = 'custom'; this.page = 0; this.load();
+      },
+      renderChart: function () {
+        const el = this.$refs.chart;
+        if (!el) return;
+        let inst = echarts.getInstanceByDom(el);
+        if (!inst) inst = echarts.init(el);
+        const rows = this.rows;
+        const META = {
+          water_temp: { name: '水温', unit: '℃', color: '#38bdf8' },
+          dissolved_oxygen: { name: '溶解氧', unit: 'mg/L', color: '#34d399' },
+          salinity: { name: '盐度', unit: '‰', color: '#fbbf24' },
+          ph: { name: 'pH', unit: '', color: '#f472b6' }
+        };
+        const active = ['water_temp', 'dissolved_oxygen', 'salinity', 'ph']
+          .filter(function (k) { return this.show[k]; }.bind(this));
+        const series = active.map(function (k) {
+          const m = META[k];
+          // 慢变量（盐度/pH）30 秒一条：只取有值点连线，避免 null 断线
+          const pts = (k === 'salinity' || k === 'ph')
+            ? rows.filter(function (r) { return r[k] !== null && r[k] !== undefined; })
+            : rows;
+          return {
+            name: m.name + (m.unit ? '（' + m.unit + '）' : ''), type: 'line',
+            showSymbol: false, smooth: true,
+            lineStyle: { width: 2, color: m.color }, itemStyle: { color: m.color },
+            data: pts.map(function (r) {
+              return [r.ts, (r[k] === null || r[k] === undefined) ? null : r[k]];
+            })
+          };
+        });
+        const badPts = rows.filter(function (r) { return r.quality === 'bad' && r.ts; });
+        const badSeries = active.map(function (k) {
+          const m = META[k];
+          return {
+            name: m.name + ' 异常点', type: 'scatter', symbolSize: 9,
+            itemStyle: { color: '#f87171' },
+            data: badPts.map(function (r) {
+              return [r.ts, (r[k] === null || r[k] === undefined) ? null : r[k]];
+            })
+          };
+        });
+        inst.setOption({
+          backgroundColor: 'transparent',
+          tooltip: {
+            trigger: 'axis', confine: true,
+            formatter: function (params) {
+              const p = params && params[0];
+              if (!p || !p.value) return '';
+              const ts = p.value[0];
+              let found = null;
+              for (let i = 0; i < rows.length; i++) { if (rows[i].ts === ts) { found = rows[i]; break; } }
+              if (!found) return '';
+              const lines = [_fmtTs(found.ts)];
+              Object.keys(META).forEach(function (k) {
+                const v = found[k];
+                lines.push(META[k].name + ': ' + (v === null || v === undefined ? '--' : v) + (META[k].unit ? ' ' + META[k].unit : ''));
+              });
+              lines.push('来源: ' + found.source);
+              lines.push('质量: ' + found.quality);
+              lines.push('站点: ' + found.site_id);
+              return lines.join('<br/>');
+            }
+          },
+          legend: { type: 'scroll', top: 0, textStyle: { fontSize: 12 } },
+          grid: { left: 56, right: 20, top: 36, bottom: 50 },
+          xAxis: { type: 'time', axisLabel: { fontSize: 11 },
+                   splitLine: { show: false } },
+          yAxis: { type: 'value', scale: true, axisLabel: { fontSize: 11 },
+                   splitLine: { lineStyle: { color: '#EEF2F6' } } },
+          dataZoom: [
+            { type: 'inside', start: 0, end: 100 },
+            { type: 'slider', height: 18, bottom: 10 }
+          ],
+          series: series.concat(badSeries)
+        }, true);
+        const self = this;
+        setTimeout(function () {
+          if (self.$refs.chart && inst && !inst.isDisposed()) inst.resize();
+        }, 30);
+      },
+      exportCsv: function () {
+        const head = ['时间', '站点', '水温(℃)', '溶解氧(mg/L)', '盐度(‰)', 'pH', '光照(lux)', '来源', '质量'];
+        const esc = function (s) { return '"' + String(s).replace(/"/g, '""') + '"'; };
+        const lines = [head.join(',')].concat(this.rows.map(function (r) {
+          return [r.ts, r.site_id, r.water_temp, r.dissolved_oxygen, r.salinity, r.ph,
+                  r.light_intensity, r.source, r.quality].map(esc).join(',');
+        }));
+        const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = '水质数据_' + this.site + '.csv';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      },
+      sendControl: function (cmd) {
+        if (cmd === 'normal') {
+          this.mode = 'normal';
+          this.pausedSites = this.pausedSites.filter(function (s) { return s !== this.site; }.bind(this));
+          this.feedback = '已切换 → normal（' + this.site + '）生成中';
+          this.page = 0; this.load();
+        } else if (cmd === 'low_do') {
+          this.mode = 'low_do';
+          this.pausedSites = this.pausedSites.filter(function (s) { return s !== this.site; }.bind(this));
+          this.feedback = '已切换 → 溶氧暴跌（' + this.site + '）—— 溶解氧将跌至接近 0';
+          this.page = 0; this.load();
+        } else if (cmd === 'pause') {
+          this.mode = 'pause';
+          if (this.pausedSites.indexOf(this.site) < 0) this.pausedSites.push(this.site);
+          this.feedback = '已暂停生成（' + this.site + '）—— 图表冻结在当前数据';
+        }
+      },
+      siteName: function () {
+        const s = API.sites().filter(function (x) { return x.site_id === this.site; }.bind(this))[0];
+        return s ? s.site_name : this.site;
+      },
+      time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
+      fmt: function (v) { return (v === null || v === undefined) ? '—' : v; }
     },
-    mounted: function () { this.load(); },
+    mounted: function () {
+      this.load();
+      this.$nextTick(function () { this.renderChart(); });
+    },
     watch: {
-      minutes: function () { this.load(); },
-      site: function () { this.load(); },
-      heat: function () { this.load(); },
-      offline: function () { this.load(); }
+      series: function () { this.renderChart(); },
+      show: { handler: function () { this.renderChart(); }, deep: true },
+      site: function () {
+        _envRange(this.site);
+        this.siteRangeKey = _envRange(this.site).key;
+        this.customFrom = {}; this.customTo = {}; this.page = 0; this.load();
+      }
     },
     template: [
       '<div>',
       '  <page-head title="环境 · 水质"',
-      '    desc="水温 / 溶解氧 5 秒；盐度 / pH 30 秒慢变量；光照强度 5 秒"',
+      '    desc="水温 / 溶解氧 5 秒；盐度 / pH 30 秒慢变量。数据来源：公开浮标 + 仿真生成"',
       '    :sources="[\'public\',\'simulated\']" />',
-      '',
-      '  <!-- 一条竖线的可视化：命中规则时当场显示，点得开、看得见依据 -->',
-      '  <div v-if="topAlarm" class="hint" style="margin-bottom:12px;background:#FEF2F2;border-color:#FECACA">',
-      '    <b>⚠ 本时段命中规则：{{ topAlarm.hit.rule_name }}</b>',
-      '    <span class="tag tag-simulated" style="margin-left:8px">规则 {{ topAlarm.hit.rule_id }}</span>',
-      '    <div class="small" style="margin-top:6px">',
-      '      {{ topAlarm.hit.trigger_field }} = <b>{{ topAlarm.hit.trigger_value }}</b>',
-      '      （阈值 {{ topAlarm.hit.trigger_threshold }}）· 时间 {{ time(topAlarm.ts) }}',
-      '      · <a href="#/trace">去追溯查询看完整链路 →</a>',
-      '    </div>',
-      '  </div>',
       '',
       '  <div class="grid-stats">',
       '    <stat-card name="水温" field="water_temp" unit="℃" :value="last.water_temp"',
-      '               :quality="last.quality" :ts="last.ts" source="simulated" />',
+      '               :quality="last.quality" :ts="last.ts" :source="last.source" />',
       '    <stat-card name="溶解氧" field="dissolved_oxygen" unit="mg/L" :value="last.dissolved_oxygen"',
-      '               :quality="last.quality" :ts="last.ts" source="simulated" />',
-      '    <stat-card name="盐度" field="salinity" unit="‰" :value="lastSlow.salinity"',
-      '               :quality="lastSlow.quality" :ts="lastSlow.ts" source="simulated" />',
-      '    <stat-card name="pH 值" field="ph" unit="" :value="lastSlow.ph"',
-      '               :quality="lastSlow.quality" :ts="lastSlow.ts" source="simulated" />',
-      '    <stat-card name="光照强度" field="light_intensity" unit="lux" :value="last.light_intensity"',
-      '               :quality="last.quality" :ts="last.ts" source="simulated" />',
+      '               :quality="last.quality" :ts="last.ts" :source="last.source" />',
+      '    <stat-card name="盐度" field="salinity" unit="‰" :value="last.salinity"',
+      '               :quality="last.quality" :ts="last.ts" :source="last.source" />',
+      '    <stat-card name="pH 值" field="ph" unit="" :value="last.ph"',
+      '               :quality="last.quality" :ts="last.ts" :source="last.source" />',
       '  </div>',
       '',
-      '  <div class="split" style="margin-top:12px">',
-      '    <div>',
-      '      <trend-chart title="水质趋势（可勾选参数）" :series="charts"',
-      '                   :thresholds="[{value:21.5,label:\'水温上限 21.5 ℃\',color:\'#991B1B\'}]" />',
-      '      <div class="card" style="margin-top:12px">',
-      '        <span class="small muted">曲线显示：</span>',
-      '        <label class="small" style="margin-left:10px"><input type="checkbox" v-model="show.water_temp"> 水温</label>',
-      '        <label class="small" style="margin-left:10px"><input type="checkbox" v-model="show.dissolved_oxygen"> 溶解氧</label>',
-      '        <label class="small" style="margin-left:10px"><input type="checkbox" v-model="show.light_intensity"> 光照强度</label>',
-      '      </div>',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title">水质时序</div>',
+      '    <div class="row" style="gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">',
+      '      <button class="env-mini" :class="{active: siteRangeKey === \'1h\'}" @click="pickRange(\'1h\')">最近 1h</button>',
+      '      <button class="env-mini" :class="{active: siteRangeKey === \'6h\'}" @click="pickRange(\'6h\')">最近 6h</button>',
+      '      <button class="env-mini" :class="{active: siteRangeKey === \'24h\'}" @click="pickRange(\'24h\')">最近 24h</button>',
+      '      <span class="small muted" style="margin-left:6px">自定义</span>',
+      '      <input class="env-num" type="number" v-model.number="customFrom.y" placeholder="年" style="width:56px" />',
+      '      <span class="env-unit">年</span>',
+      '      <input class="env-num" type="number" v-model.number="customFrom.m" placeholder="月" style="width:44px" />',
+      '      <span class="env-unit">月</span>',
+      '      <input class="env-num" type="number" v-model.number="customFrom.d" placeholder="日" style="width:44px" />',
+      '      <span class="env-unit">日</span>',
+      '      <span class="small muted">~</span>',
+      '      <input class="env-num" type="number" v-model.number="customTo.y" placeholder="年" style="width:56px" />',
+      '      <span class="env-unit">年</span>',
+      '      <input class="env-num" type="number" v-model.number="customTo.m" placeholder="月" style="width:44px" />',
+      '      <span class="env-unit">月</span>',
+      '      <input class="env-num" type="number" v-model.number="customTo.d" placeholder="日" style="width:44px" />',
+      '      <span class="env-unit">日</span>',
+      '      <button class="env-mini" @click="applyCustom">自定义</button>',
+      '      <span v-if="loading" class="small muted">加载中…</span>',
+      '      <span v-if="error" class="small" style="color:#991B1B">{{ error }}</span>',
       '    </div>',
-      '    <div class="card">',
-      '      <div class="card-title">水质事件 / 告警（由规则实时判定）</div>',
-      '      <event-list :items="events" empty-text="本时段无越限事件" @pick="picked = $event" />',
-      '      <div v-if="picked" class="hint" style="margin-top:10px">',
-      '        <b>已选</b><br>{{ picked.text }}<br>',
-      '        <span class="small">时间：{{ time(picked.ts) }}</span>',
-      '      </div>',
+      '    <div class="row" style="gap:14px;margin-bottom:8px;font-size:13px;color:#374151">',
+      '      <label class="env-ck"><input type="checkbox" v-model="show.water_temp" /> 水温（℃）</label>',
+      '      <label class="env-ck"><input type="checkbox" v-model="show.dissolved_oxygen" /> 溶解氧（mg/L）</label>',
+      '      <label class="env-ck"><input type="checkbox" v-model="show.salinity" /> 盐度（‰）</label>',
+      '      <label class="env-ck"><input type="checkbox" v-model="show.ph" /> pH</label>',
+      '    </div>',
+      '    <div ref="chart" style="width:100%;height:340px"></div>',
+      '    <p class="small muted" style="margin-top:6px">quality=bad 数据以红点标记；hover 查看该时刻全部指标、来源与质量；支持滚轮缩放/框选。</p>',
+      '  </div>',
+      '',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title">原始数据</div>',
+      '    <div class="dt-wrap">',
+      '      <table class="dtable">',
+      '        <thead><tr><th>时间</th><th>站点</th><th>水温(℃)</th><th>溶解氧(mg/L)</th><th>盐度(‰)</th><th>pH</th><th>来源</th><th>质量</th></tr></thead>',
+      '        <tbody>',
+      '          <tr v-if="!pageRows.length"><td colspan="8" class="empty">暂无数据</td></tr>',
+      '          <tr v-for="r in pageRows" :key="r.ts">',
+      '            <td class="t">{{ time(r.ts) }}</td>',
+      '            <td>{{ r.site_id }}</td>',
+      '            <td>{{ fmt(r.water_temp) }}</td>',
+      '            <td>{{ fmt(r.dissolved_oxygen) }}</td>',
+      '            <td>{{ fmt(r.salinity) }}</td>',
+      '            <td>{{ fmt(r.ph) }}</td>',
+      '            <td><span class="tag" :class="\'tag-\' + r.source">{{ API.sourceText[r.source] || r.source }}</span></td>',
+      '            <td>{{ CN.quality(r.quality) }}</td>',
+      '          </tr>',
+      '        </tbody>',
+      '      </table>',
+      '    </div>',
+      '    <div class="row" style="margin-top:8px;align-items:center;gap:8px">',
+      '      <button :disabled="page <= 0" @click="page--">上一页</button>',
+      '      <span class="small muted">第 {{ page + 1 }} / {{ totalPages }} 页 · 共 {{ rows.length }} 条</span>',
+      '      <button :disabled="page >= totalPages - 1" @click="page++">下一页</button>',
+      '      <span style="flex:1"></span>',
+      '      <button @click="exportCsv">导出 CSV</button>',
       '    </div>',
       '  </div>',
       '',
-      '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
-      '    <time-range v-model="minutes" />',
-      '    <span style="width:12px"></span>',
-      '    <span class="small muted">站点</span>',
-      '    <select v-model="site">',
-      '      <option v-for="s in API.sites()" :key="s.site_id" :value="s.site_id">{{ s.site_name }}</option>',
-      '    </select>',
-      '    <span style="flex:1"></span>',
-      '    <button :class="{ primary: heat }" @click="heat = !heat">',
-      '      {{ heat ? \'恢复正常水温\' : \'触发水温骤升（造故障）\' }}',
-      '    </button>',
-      '    <button :class="{ primary: offline }" @click="offline = !offline">',
-      '      {{ offline ? \'恢复设备在线\' : \'模拟设备离线（造故障）\' }}',
-      '    </button>',
-      '    <!-- 就地反馈：效果显示在你点的地方，不用滚回页首去看 -->',
-      '    <span v-if="offline" class="small" style="color:#991B1B">',
-      '      已触发：设备离线 —— 上方 5 张数值卡应变「— / 设备离线」',
-      '    </span>',
-      '    <span v-else-if="heat" class="small" style="color:#991B1B">',
-      '      已触发：水温骤升 —— 当前水温 <b>{{ last.water_temp }}</b> ℃',
-      '      <span v-if="topAlarm">，命中「{{ topAlarm.hit.rule_name }}」</span>',
-      '    </span>',
-      '    <span style="width:12px"></span>',
-      '    <span class="small muted">口径：{{ API.disclaimer }}</span>',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title" style="cursor:pointer;display:flex;gap:6px;align-items:center;margin-bottom:0" @click="debugOpen = !debugOpen">',
+      '      <span>{{ debugOpen ? \'▾\' : \'▸\' }}</span>',
+      '      调试面板（仿真工况控制）· {{ siteName() }} 当前模式：{{ modeText }}',
+      '      <span v-if="pausedSites.length" class="small" style="color:#991B1B">暂停生成（{{ pausedSites.join(\'、\') }}）</span>',
+      '      <span class="small muted" style="margin-left:auto">比赛展示可收起</span>',
+      '    </div>',
+      '    <div v-if="debugOpen" class="row" style="gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">',
+      '      <button @click="sendControl(\'normal\')">正常生成</button>',
+      '      <button :class="{primary: mode === \'low_do\'}" @click="sendControl(\'low_do\')">模拟溶氧暴跌异常</button>',
+      '      <button @click="sendControl(\'pause\')">暂停生成</button>',
+      '      <span class="small" style="color:#B45309">{{ feedback }}</span>',
+      '      <span class="small muted" style="width:100%">异常工况用于系统告警全链路测试（结构安全预警板块消费这些数据）；控制仅作用于当前站点。</span>',
+      '    </div>',
       '  </div>',
       '</div>'
     ].join('\n')

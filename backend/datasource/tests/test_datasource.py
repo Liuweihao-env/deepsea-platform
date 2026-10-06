@@ -185,5 +185,42 @@ class TestPublicNdbc(unittest.TestCase):
         self.assertEqual(STATION_MAP["site_03"], "51001")
 
 
+
+class TestFinalFeatures(unittest.TestCase):
+    """最终版还原配套测试（问题一）：溶氧暴跌异常 / 显式时间区间（自定义历史）。"""
+
+    def test_low_do_crash(self):
+        d = generate("site_01", minutes=10, low_do=True)
+        n = len(d["fast"])
+        head = [r["dissolved_oxygen"] for r in d["fast"][: n // 4]]
+        tail = [r["dissolved_oxygen"] for r in d["fast"][int(n * 0.85):]]
+        self.assertGreater(sum(head) / len(head), 7.0, "正常段溶解氧应高于 7 mg/L")
+        self.assertLess(sum(tail) / len(tail), 4.0, "暴跌段溶解氧应显著低于正常")
+
+    def test_no_low_do_normal(self):
+        d = generate("site_01", minutes=10)
+        tail = [r["dissolved_oxygen"] for r in d["fast"][-10:]]
+        self.assertGreater(sum(tail) / len(tail), 7.0, "未触发 low_do 时溶解氧保持正常")
+
+    def test_explicit_range(self):
+        start = 1700000000000
+        end = start + 30 * 60 * 1000
+        d = generate("site_01", start_ts=start, end_ts=end)
+        self.assertEqual(d["fast"][0]["ts"], start)
+        self.assertLessEqual(d["fast"][-1]["ts"], end)
+        for r in d["fast"]:
+            self.assertGreaterEqual(r["ts"], start, "记录不得早于区间起点")
+            self.assertLessEqual(r["ts"], end, "记录不得晚于区间终点")
+
+    def test_explicit_range_deterministic(self):
+        start = 1700000000000
+        end = start + 30 * 60 * 1000
+        a = generate("site_01", start_ts=start, end_ts=end)
+        b = generate("site_01", start_ts=start, end_ts=end)
+        self.assertEqual([r["water_temp"] for r in a["fast"]],
+                         [r["water_temp"] for r in b["fast"]],
+                         "同一时间区间结果应可复现（确定性 seed）")
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

@@ -87,9 +87,14 @@
   M.sites = function () { return M._sites || []; };
   M.env = function (site, minutes, opts) {
     opts = opts || {};
-    return get('/api/env', { site_id: site, minutes: minutes || 60,
-                             storm: opts.storm ? 1 : 0, heat: opts.heat ? 1 : 0,
-                             offline: opts.offline ? 1 : 0 });
+    const q = { site_id: site, minutes: minutes || 60,
+                storm: opts.storm ? 1 : 0,
+                storm_type: opts.storm_type || '',
+                heat: opts.heat ? 1 : 0,
+                offline: opts.offline ? 1 : 0,
+                low_do: opts.low_do ? 1 : 0 };
+    if (opts.start_ts != null && opts.end_ts != null) { q.start_ts = opts.start_ts; q.end_ts = opts.end_ts; }
+    return get('/api/env', q);
   };
   M.fish = function (m) { return get('/api/fish', { minutes: m || 60 }); };
   M.struct = function (m) { return get('/api/struct', { minutes: m || 60 }); };

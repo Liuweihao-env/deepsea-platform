@@ -182,16 +182,34 @@ def _rng(seed=20261005):
     return random.Random(seed)
 
 
-def env_series(site_id, minutes=60, storm=False, heat=False, offline_from=None, offline=False):
-    """环境时序（接口文档 4.1 / 4.2 / 4.3）"""
-    n = max(2, int(minutes * 60 * 1000 / STEP_FAST))
-    n_slow = max(2, int(minutes * 60 * 1000 / STEP_SLOW))
+def env_series(site_id, minutes=60, storm=False, storm_type=None,
+               heat=False, offline_from=None, offline=False, low_do=False,
+               start_ts=None, end_ts=None):
+    """环境时序（接口文档 4.1 / 4.2 / 4.3）
+
+    storm_type（storm 生效）：'wind' 仅风速异常 / 'wave' 仅浪高异常 / None 或 'both' 完整大风大浪；
+    low_do：溶氧暴跌异常（从时段 55% 起 DO 线性跌至接近 0，供溶氧告警链路测试）；
+    start_ts / end_ts：显式时间区间（毫秒），两者都提供时优先于 minutes（自定义历史仿真数据）。
+    口径与 backend/datasource/simulated/generator.py 的 generate() 完全同构。
+    """
+    if start_ts is not None and end_ts is not None:
+        t0 = start_ts
+        n = max(2, int((end_ts - start_ts) / STEP_FAST))
+        n_slow = max(2, int((end_ts - start_ts) / STEP_SLOW))
+        r = random.Random(t0)
+    else:
+        n = max(2, int(minutes * 60 * 1000 / STEP_FAST))
+        n_slow = max(2, int(minutes * 60 * 1000 / STEP_SLOW))
+        now = int(time.time() * 1000) // 1000 * 1000
+        t0 = now - minutes * 60 * 1000
+        r = _rng()
     if offline:
         # 设备离线：从时段 60% 起所有值给 null（验收第 4 条）
         offline_from = int(n * 0.6)
-    now = int(time.time() * 1000) // 1000 * 1000
-    t0 = now - minutes * 60 * 1000
-    r = _rng()
+    do_crash_from = int(n * 0.55) if low_do else None
+
+    wave_storm = bool(storm) and storm_type in (None, "both", "wave")
+    wind_storm = bool(storm) and storm_type in (None, "both", "wind")
 
     fast = []
     for i in range(n):
@@ -200,8 +218,8 @@ def env_series(site_id, minutes=60, storm=False, heat=False, offline_from=None, 
         diurnal = math.sin((h - 6) / 24 * 2 * math.pi)
         offline = offline_from is not None and i >= offline_from
 
-        wave = r.gauss(3.2, .5) if storm else r.gauss(1.4, .25)
-        wind = r.gauss(17, 2.5) if storm else r.gauss(8.3, 1.2)
+        wave = r.gauss(3.2, .5) if wave_storm else r.gauss(1.4, .25)
+        wind = r.gauss(17, 2.5) if wind_storm else r.gauss(8.3, 1.2)
         base_water = 18.6 + diurnal * 1.8
         if heat:
             # 朝 HEAT_TARGET_C 爬：无论几点，最后一定能越过 21.5
@@ -211,6 +229,14 @@ def env_series(site_id, minutes=60, storm=False, heat=False, offline_from=None, 
             water = base_water + r.gauss(0, .15)
         air = 22.4 + diurnal * 3.2 + r.gauss(0, .4) + (water - base_water) * .6
         light = max(0.0, (4000 if storm else 12000) * max(0.0, math.sin((h - 6) / 12 * math.pi)) + r.gauss(0, 400))
+
+        do_base = 9.2 - (water - 18.6) * .45
+        if do_crash_from is not None and i >= do_crash_from:
+            crash_prog = (i - do_crash_from) / max(1, (n - do_crash_from))
+            do_val = max(0.2, do_base * (1 - 0.92 * crash_prog))
+        else:
+            do_val = do_base
+        do = do_val + r.gauss(0, .12)
 
         fast.append({
             "ts": ts,
@@ -223,7 +249,7 @@ def env_series(site_id, minutes=60, storm=False, heat=False, offline_from=None, 
             "current_speed": None if offline else round(r.gauss(1.4 if storm else .6, .12), 1),
             "air_temp": None if offline else round(air, 1),
             "water_temp": None if offline else round(water, 1),
-            "dissolved_oxygen": None if offline else round(9.2 - (water - 18.6) * .45 + r.gauss(0, .12), 1),
+            "dissolved_oxygen": None if offline else round(do, 1),
             "light_intensity": None if offline else round(light),
         })
 
@@ -243,6 +269,35 @@ def env_series(site_id, minutes=60, storm=False, heat=False, offline_from=None, 
         })
 
     return {"fast": fast, "slow": slow}
+
+
+def public_series(site_id, start_ts, end_ts, limit=2000):
+    """公开浮标真实历史（自定义时间查询）：NDBC 数据转统一 fast 结构。
+
+    站点必须是公开观测站点（site_02 / site_03）；盐度 / pH / 流速 / 光照
+    该源天然没有 → 给 null（slow 为空）。返回 {"fast": [...], "slow": []}。
+    """
+    try:
+        from datasource.public import ndbc
+    except Exception:
+        return {"fast": [], "slow": []}
+    rows = ndbc.query(site_id, start_ts, end_ts, limit=limit)
+    fast = []
+    for r in rows:
+        fast.append({
+            "ts": r["ts"],
+            "site_id": site_id,
+            "source": "public",
+            "quality": r["quality"],
+            "wave_height": r["wave_height"],
+            "wind_speed": r["wind_speed"],
+            "current_speed": None,
+            "air_temp": r["air_temp"],
+            "water_temp": r["water_temp"],
+            "dissolved_oxygen": None,
+            "light_intensity": None,
+        })
+    return {"fast": fast, "slow": []}
 
 
 def fish_series(minutes=60):
@@ -667,11 +722,22 @@ class Handler(BaseHTTPRequestHandler):
 
         if p == "/api/env":
             storm = one("storm", "0") in ("1", "true")
+            stype = one("storm_type", "")
             heat = one("heat", "0") in ("1", "true")
             off = one("offline", "0") in ("1", "true")
             off_from = one("offline_from", "")
-            return self._json(env_series(site, minutes, storm, heat,
-                                         int(off_from) if off_from else None, off))
+            ldo = one("low_do", "0") in ("1", "true")
+            start_s = one("start_ts", "")
+            end_s = one("end_ts", "")
+            if start_s and end_s:
+                # 自定义时间区间：公开站点查 NDBC 真实历史；仿真站点按区间确定性生成
+                start_ts, end_ts = int(start_s), int(end_s)
+                if site in ("site_02", "site_03", "site_04"):
+                    return self._json(public_series(site, start_ts, end_ts))
+                return self._json(env_series(site, 60, storm, stype or None, heat,
+                                             None, off, ldo, start_ts, end_ts))
+            return self._json(env_series(site, minutes, storm, stype or None, heat,
+                                         int(off_from) if off_from else None, off, ldo))
 
         if p == "/api/fish":
             return self._json(fish_series(minutes))

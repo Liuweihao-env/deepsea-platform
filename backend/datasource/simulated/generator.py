@@ -39,21 +39,40 @@ def _rng():
     return random.Random(int(time.time() * 1000) % 100000)
 
 
-def generate(site_id="site_01", minutes=60, storm=False, heat=False, offline=False):
+def generate(site_id="site_01", minutes=60, storm=False, storm_type=None,
+             heat=False, offline=False, low_do=False, start_ts=None, end_ts=None):
     """生成环境仿真时序，返回 {"fast": [...], "slow": [...]}。
 
     参数（与 /api/env 接口一致）：
-      site_id  站点编号；minutes 时间窗（分钟）；storm 大风大浪；heat 热浪；offline 设备离线。
+      site_id  站点编号；minutes 时间窗（分钟）；
+      storm    大风大浪总开关；storm_type 细化（storm 生效）：
+               'wind' 仅风速异常 / 'wave' 仅浪高异常 / None 或 'both' 完整大风大浪；
+      heat     热浪（水温骤升）；offline 设备离线；low_do 溶氧暴跌异常；
+      start_ts / end_ts  显式时间区间（毫秒）：两者都提供时优先于 minutes，
+               生成该区间内的仿真数据（seed 由 start_ts 决定，同一区间结果稳定，
+               用于「自定义时间查看历史仿真数据」演示）。
     """
-    n = max(2, int(minutes * 60 * 1000 / STEP_FAST))
-    n_slow = max(2, int(minutes * 60 * 1000 / STEP_SLOW))
+    if start_ts is not None and end_ts is not None:
+        t0 = start_ts
+        n = max(2, int((end_ts - start_ts) / STEP_FAST))
+        n_slow = max(2, int((end_ts - start_ts) / STEP_SLOW))
+        r = random.Random(t0)   # 确定性：同一时间区间数据可复现
+    else:
+        now = int(time.time() * 1000) // 1000 * 1000
+        t0 = now - minutes * 60 * 1000
+        n = max(2, int(minutes * 60 * 1000 / STEP_FAST))
+        n_slow = max(2, int(minutes * 60 * 1000 / STEP_SLOW))
+        r = _rng()
     offline_from = None
     if offline:
         # 设备离线：从时段 60% 起所有值给 null（验收纪律 4）
         offline_from = int(n * 0.6)
-    now = int(time.time() * 1000) // 1000 * 1000
-    t0 = now - minutes * 60 * 1000
-    r = _rng()
+    # 溶氧暴跌：从时段 55% 起 DO 线性跌至接近 0（触发溶氧告警链路）
+    do_crash_from = int(n * 0.55) if low_do else None
+
+    # storm 细化：完整 / 仅风速 / 仅浪高
+    wave_storm = bool(storm) and storm_type in (None, "both", "wave")
+    wind_storm = bool(storm) and storm_type in (None, "both", "wind")
 
     fast = []
     for i in range(n):
@@ -63,8 +82,8 @@ def generate(site_id="site_01", minutes=60, storm=False, heat=False, offline=Fal
         diurnal = math.sin((h - 6) / 24 * 2 * math.pi)
         off = offline_from is not None and i >= offline_from
 
-        wave = r.gauss(3.2, .5) if storm else r.gauss(1.4, .25)
-        wind = r.gauss(17, 2.5) if storm else r.gauss(8.3, 1.2)
+        wave = r.gauss(3.2, .5) if wave_storm else r.gauss(1.4, .25)
+        wind = r.gauss(17, 2.5) if wind_storm else r.gauss(8.3, 1.2)
         base_water = 18.6 + diurnal * 1.8
         if heat:
             # 热浪：无论几点，最后一定能越过 21.5
@@ -74,6 +93,15 @@ def generate(site_id="site_01", minutes=60, storm=False, heat=False, offline=Fal
             water = base_water + r.gauss(0, .15)
         air = 22.4 + diurnal * 3.2 + r.gauss(0, .4) + (water - base_water) * .6
         light = max(0.0, (4000 if storm else 12000) * max(0.0, math.sin((h - 6) / 12 * math.pi)) + r.gauss(0, 400))
+
+        # 溶解氧：正常与水温负相关；low_do 时从时段 55% 起暴跌至接近 0
+        do_base = 9.2 - (water - 18.6) * .45
+        if do_crash_from is not None and i >= do_crash_from:
+            crash_prog = (i - do_crash_from) / max(1, (n - do_crash_from))
+            do_val = max(0.2, do_base * (1 - 0.92 * crash_prog))
+        else:
+            do_val = do_base
+        do = do_val + r.gauss(0, .12)
 
         fast.append({
             "ts": ts,
@@ -85,7 +113,7 @@ def generate(site_id="site_01", minutes=60, storm=False, heat=False, offline=Fal
             "current_speed": None if off else round(r.gauss(1.4 if storm else .6, .12), 1),
             "air_temp": None if off else round(air, 1),
             "water_temp": None if off else round(water, 1),
-            "dissolved_oxygen": None if off else round(9.2 - (water - 18.6) * .45 + r.gauss(0, .12), 1),
+            "dissolved_oxygen": None if off else round(do, 1),
             "light_intensity": None if off else round(light),
         })
 
