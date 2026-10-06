@@ -1533,13 +1533,24 @@
   P['/config'] = {
     data: function () {
       return {
+        /* 每个阈值都带一份「依据」—— 页面上显示为数值旁的灰色问号，悬停可看。
+           任务书要求逐项说明"阈值从哪来（标准？文献？自己设的？）"，
+           所以 basis.level 必须如实标注证据强度，不许含糊。
+           ⚠️ 改这里的依据时，必须同步改 项目记录.md 与 统一数据接口文档，
+              三处口径不一致是答辩硬伤（裁定 2）。 */
         thresholds: [
-          { field: 'tension_pct', name: '锚泊张力占设计值', warn: 80, alarm: 95, unit: '%', owner: '结构安全' },
-          { field: 'tilt_pitch', name: '网箱俯仰角', warn: 2, alarm: 3, unit: '°', owner: '结构安全' },
-          { field: 'tilt_roll', name: '网箱横滚角', warn: 2, alarm: 3, unit: '°', owner: '结构安全' },
-          { field: 'battery_soc', name: '储能电量', warn: 20, alarm: 10, unit: '%', owner: '结构安全' },
-          { field: 'water_temp', name: '水温上限', warn: 20.5, alarm: 21.5, unit: '℃', owner: '环境' },
-          { field: 'dissolved_oxygen', name: '溶解氧下限', warn: 5.0, alarm: 4.0, unit: 'mg/L', owner: '环境' }
+          { field: 'tension_pct', name: '锚泊张力占设计值', warn: 80, alarm: 95, unit: '%', owner: '结构安全',
+            basis: { level: '没找到', text: '待补：正从锚泊系统设计规范与网箱标准中查证。', source: '', url: '' } },
+          { field: 'tilt_pitch', name: '网箱俯仰角', warn: 2, alarm: 3, unit: '°', owner: '结构安全',
+            basis: { level: '没找到', text: '待补：正从网箱稳性与倾覆判定文献中查证。', source: '', url: '' } },
+          { field: 'tilt_roll', name: '网箱横滚角', warn: 2, alarm: 3, unit: '°', owner: '结构安全',
+            basis: { level: '没找到', text: '待补：同俯仰角，横滚与俯仰共用同一组阈值。', source: '', url: '' } },
+          { field: 'battery_soc', name: '储能电量', warn: 20, alarm: 10, unit: '%', owner: '结构安全',
+            basis: { level: '没找到', text: '待补：正从锂电池储能放电深度（DoD）常规做法中查证。', source: '', url: '' } },
+          { field: 'water_temp', name: '水温上限', warn: 20.5, alarm: 21.5, unit: '℃', owner: '环境',
+            basis: { level: '没找到', text: '待补：正从养殖鱼种温度耐受区间中查证。', source: '', url: '' } },
+          { field: 'dissolved_oxygen', name: '溶解氧下限', warn: 5.0, alarm: 4.0, unit: 'mg/L', owner: '环境',
+            basis: { level: '没找到', text: '待补：正从鱼类低氧耐受阈值文献中查证。', source: '', url: '' } }
         ],
         rules: [],
         saved: '',
@@ -1580,6 +1591,16 @@
     methods: {
       lvCls: function (l) { return 'bg-' + (l || 'blue'); },
       lvCn: function (l) { return { blue: '蓝色', yellow: '黄色', orange: '橙色', red: '红色' }[l] || l; },
+      /* 证据强度配色 —— 与 HelpDot 里的配色保持一致，一眼看出哪几项底气不足 */
+      basisColor: function (t) {
+        const lv = (t.basis && t.basis.level) || '未标注';
+        return {
+          '直接支持': { bg: '#F0FDF4', br: '#86EFAC', fg: '#166534' },
+          '间接支持': { bg: '#EFF6FF', br: '#BFDBFE', fg: '#1D4ED8' },
+          '仅类比':   { bg: '#FFFBEB', br: '#FDE68A', fg: '#92400E' },
+          '没找到':   { bg: '#FEF2F2', br: '#FECACA', fg: '#991B1B' }
+        }[lv] || { bg: '#F3F4F6', br: '#E5E7EB', fg: '#6B7280' };
+      },
       /* 体长类型必须显示中文 —— 界面不许出现裸英文枚举（通用规范第五节）。
          但缩写要留着：TL/FL/SL 是行业通用符号，去掉反而不好交流。 */
       lenTypeCn: function (t) {
@@ -1617,10 +1638,21 @@
       '        <tbody>',
       '          <tr v-for="t in thresholds" :key="t.field">',
       '            <td class="mono">{{ t.field }}</td><td>{{ t.name }}</td><td>{{ t.owner }}</td>',
-      '            <td><input type="text" v-model.number="t.warn" style="width:76px"></td>',
-      '            <td><input type="text" v-model.number="t.alarm" style="width:76px"></td>',
+      '            <td style="white-space:nowrap">',
+      '              <input type="text" v-model.number="t.warn" style="width:64px">',
+      '              <help-dot :info="t.basis" :label="t.name + \' · 黄色预警线 \' + t.warn + t.unit" />',
+      '            </td>',
+      '            <td style="white-space:nowrap">',
+      '              <input type="text" v-model.number="t.alarm" style="width:64px">',
+      '              <help-dot :info="t.basis" :label="t.name + \' · 红色预警线 \' + t.alarm + t.unit" />',
+      '            </td>',
       '            <td>{{ t.unit }}</td>',
-      '            <td class="small">经验值（未经标定）</td>',
+      '            <td class="small">',
+      '              <span class="hd-badge"',
+      '                    :style="{ background: basisColor(t).bg, borderColor: basisColor(t).br, color: basisColor(t).fg }">',
+      '                {{ (t.basis && t.basis.level) || \'未标注\' }}',
+      '              </span>',
+      '            </td>',
       '          </tr>',
       '        </tbody>',
       '      </table>',

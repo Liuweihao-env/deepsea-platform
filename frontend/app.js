@@ -187,6 +187,7 @@
   app.component('time-range', C.TimeRangePicker);
   app.component('command-flow', C.CommandFlow);
   app.component('page-head', C.PageHead);
+  app.component('help-dot', C.HelpDot);   /* 阈值依据：灰色问号 + 悬停看解释与出处 */
   app.mount('#app');
 
   window.ROUTER = Router;
