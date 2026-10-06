@@ -375,7 +375,7 @@
       return {
         minutes: 60, site: 'site_01',
         siteRangeKey: '1h', customFrom: {}, customTo: {},
-        show: { water_temp: true, dissolved_oxygen: true, salinity: true, ph: true },
+        show: { water_temp: true, dissolved_oxygen: true, salinity: true, ph: true, light_intensity: true },
         series: null, loading: false, error: '',
         mode: 'normal', pausedSites: [],
         feedback: '', debugOpen: false, page: 0
@@ -463,9 +463,10 @@
           water_temp: { name: '水温', unit: '℃', color: '#38bdf8' },
           dissolved_oxygen: { name: '溶解氧', unit: 'mg/L', color: '#34d399' },
           salinity: { name: '盐度', unit: '‰', color: '#fbbf24' },
-          ph: { name: 'pH', unit: '', color: '#f472b6' }
+          ph: { name: 'pH', unit: '', color: '#f472b6' },
+          light_intensity: { name: '光照强度', unit: 'lux', color: '#fb923c' }
         };
-        const active = ['water_temp', 'dissolved_oxygen', 'salinity', 'ph']
+        const active = ['water_temp', 'dissolved_oxygen', 'salinity', 'ph', 'light_intensity']
           .filter(function (k) { return this.show[k]; }.bind(this));
         const series = active.map(function (k) {
           const m = META[k];
@@ -586,7 +587,7 @@
     template: [
       '<div>',
       '  <page-head title="环境 · 水质"',
-      '    desc="水温 / 溶解氧 5 秒；盐度 / pH 30 秒慢变量。数据来源：公开浮标 + 仿真生成"',
+      '    desc="水温 / 溶解氧 / 光照 5 秒；盐度 / pH 30 秒慢变量。数据来源：公开浮标 + 仿真生成"',
       '    :sources="[\'public\',\'simulated\']" />',
       '',
       '  <div class="grid-stats">',
@@ -597,6 +598,8 @@
       '    <stat-card name="盐度" field="salinity" unit="‰" :value="last.salinity"',
       '               :quality="last.quality" :ts="last.ts" :source="last.source" />',
       '    <stat-card name="pH 值" field="ph" unit="" :value="last.ph"',
+      '               :quality="last.quality" :ts="last.ts" :source="last.source" />',
+      '    <stat-card name="光照强度" field="light_intensity" unit="lux" :value="last.light_intensity" :digits="0"',
       '               :quality="last.quality" :ts="last.ts" :source="last.source" />',
       '  </div>',
       '',
@@ -629,6 +632,7 @@
       '      <label class="env-ck"><input type="checkbox" v-model="show.dissolved_oxygen" /> 溶解氧（mg/L）</label>',
       '      <label class="env-ck"><input type="checkbox" v-model="show.salinity" /> 盐度（‰）</label>',
       '      <label class="env-ck"><input type="checkbox" v-model="show.ph" /> pH</label>',
+      '      <label class="env-ck"><input type="checkbox" v-model="show.light_intensity" /> 光照强度（lux）</label>',
       '    </div>',
       '    <div ref="chart" style="width:100%;height:340px"></div>',
       '    <p class="small muted" style="margin-top:6px">quality=bad 数据以红点标记；hover 查看该时刻全部指标、来源与质量；支持滚轮缩放/框选。</p>',
@@ -638,9 +642,9 @@
       '    <div class="card-title">原始数据</div>',
       '    <div class="dt-wrap">',
       '      <table class="dtable">',
-      '        <thead><tr><th>时间</th><th>站点</th><th>水温(℃)</th><th>溶解氧(mg/L)</th><th>盐度(‰)</th><th>pH</th><th>来源</th><th>质量</th></tr></thead>',
+      '        <thead><tr><th>时间</th><th>站点</th><th>水温(℃)</th><th>溶解氧(mg/L)</th><th>盐度(‰)</th><th>pH</th><th>光照(lux)</th><th>来源</th><th>质量</th></tr></thead>',
       '        <tbody>',
-      '          <tr v-if="!pageRows.length"><td colspan="8" class="empty">暂无数据</td></tr>',
+      '          <tr v-if="!pageRows.length"><td colspan="9" class="empty">暂无数据</td></tr>',
       '          <tr v-for="r in pageRows" :key="r.ts">',
       '            <td class="t">{{ time(r.ts) }}</td>',
       '            <td>{{ r.site_id }}</td>',
@@ -648,6 +652,7 @@
       '            <td>{{ fmt(r.dissolved_oxygen) }}</td>',
       '            <td>{{ fmt(r.salinity) }}</td>',
       '            <td>{{ fmt(r.ph) }}</td>',
+      '            <td>{{ fmt(r.light_intensity) }}</td>',
       '            <td><span class="tag" :class="\'tag-\' + r.source">{{ API.sourceText[r.source] || r.source }}</span></td>',
       '            <td>{{ CN.quality(r.quality) }}</td>',
       '          </tr>',

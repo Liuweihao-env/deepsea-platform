@@ -111,6 +111,14 @@ class TestWaterPage(unittest.TestCase):
         self.assertIn("避免误报", self.src)
         self.assertNotIn("rows[rows.length - 1].salinity", self.src)
 
+    def test_light_intensity_kept(self):
+        # 问题三：水质内容保留光照强度（数值卡 / 时序勾选 / 明细表 / CSV）
+        self.assertIn("光照强度", self.src)
+        self.assertIn('name="光照强度" field="light_intensity" unit="lux"', self.src)
+        self.assertIn("v-model=\"show.light_intensity\"", self.src)
+        self.assertIn("光照(lux)", self.src)
+        self.assertIn("light_intensity: true", self.src)
+
 
 class TestNoPollution(unittest.TestCase):
     """还原不污染其他板块：其余页面定义与公共页面完整保留。"""
