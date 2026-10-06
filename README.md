@@ -8,6 +8,33 @@
 
 ---
 
+## ⚠️ 在国内推不上 GitHub？先看这条（2026-10-06 实测踩过）
+
+**症状**：`git push` 报 `Failed to connect to github.com port 443` 或 `Recv failure: Connection was reset`，
+**但浏览器能打开 github.com**。
+
+**原因**：系统开着本地代理（如 `127.0.0.1:10808`），**浏览器走代理，命令行 git 不走** —— git 直连被墙。
+（实测：`Invoke-WebRequest https://github.com` 返回 200，而 `git push` 连不上 —— 就是这个原因。）
+
+**解决**（只改本仓库，不动全局配置）：
+
+```bash
+git config http.proxy  socks5h://127.0.0.1:10808
+git config https.proxy socks5h://127.0.0.1:10808
+```
+
+> **端口怎么找**：看你代理软件里「SOCKS / 本地端口」写的是多少。常见的有
+> `10808`（v2ray SOCKS）、`7890` / `7897`（Clash）、`1080`。
+> 用 `Test-NetConnection 127.0.0.1 -Port <端口>` 或直接看代理软件界面确认。
+>
+> **`socks5h` 的 `h` 很重要**：让 DNS 也走代理，否则域名解析这一步照样被拦。
+
+**不想用命令行？** 用 **GitHub Desktop** —— 它跟随系统代理，**不用配也能用**（见项目根目录《GitHub上传教程》）。
+
+> 💡 **组员克隆不下来，多半是同一个原因。** 让他们确认代理端口，或者改用手机热点试一次。
+
+---
+
 ## 这个仓库是什么
 
 **平台代码与冻结文档的唯一代码仓库。**

@@ -296,10 +296,10 @@ def check_extra(base):
         problems.append("投喂决策没有给依据（裁定 1 要求可追问）")
 
     if not problems:
-        rec(5, "接口形状符合接口文档 v1.2", PASS,
+        rec(5, "接口形状符合接口文档 v1.3", PASS,
             "慢变量分离、light_intensity、light_dimming_pct、battery_capacity_kwh、投喂依据 —— 全部就位")
     else:
-        rec(5, "接口形状符合接口文档 v1.2", FAIL, "；".join(problems))
+        rec(5, "接口形状符合接口文档 v1.3", FAIL, "；".join(problems))
 
 
 # ======================================================================
