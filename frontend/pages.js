@@ -84,13 +84,22 @@
         ];
       },
       events: function () {
-        /* 由真实数据算出的事件：越限即列为事件（不做假数据） */
-        const out = [];
-        const self = this;
+        /* 由真实数据算出的事件：越限即列为事件（不做假数据）。
+           🔴 2026-10-06 浪高阈值对齐国标（GB/T 19721.2 / 海浪警报级别）：
+              蓝色 2.5~3.9 m / 黄色 4.0~5.9 / 橙色 6.0~8.9 / 红色 ≥9.0 m。
+              原来把 3.0 m 叫「红色」是错的 —— 国标里 3.0 m 连黄色都不到。
+              深远海网箱运营上，4.0 m 是「灾害性海浪」定义线，作为停作业/撤离线最站得住。 */
         this.fast.forEach(function (r) {
-          if (r.wave_height != null && r.wave_height >= 2.5) {
-            out.push({ id: 'w' + r.ts, ts: r.ts, level: r.wave_height >= 3 ? 'red' : 'orange',
-                       text: '浪高 ' + r.wave_height + ' m 超阈值（≥2.5 m）' });
+          const w = r.wave_height;
+          if (w == null) return;
+          let lv = null, note = '';
+          if (w >= 9.0)      { lv = 'red';    note = '红色警报级（≥9.0 m）'; }
+          else if (w >= 6.0) { lv = 'red';    note = '橙色警报级（≥6.0 m）'; }
+          else if (w >= 4.0) { lv = 'orange'; note = '黄色警报级 · 灾害性海浪（≥4.0 m）'; }
+          else if (w >= 2.5) { lv = 'yellow'; note = '蓝色警报级 · 国家海浪警报起始（≥2.5 m）'; }
+          if (lv) {
+            out.push({ id: 'w' + r.ts, ts: r.ts, level: lv,
+                       text: '浪高 ' + w + ' m —— ' + note });
           }
         });
         return out.slice(-20).reverse();
@@ -238,7 +247,7 @@
       '',
       '  <div class="split" style="margin-top:12px">',
       '    <trend-chart title="浪高 / 风速 趋势" :series="charts"',
-      '                 :thresholds="[{value:2.5,label:\'浪高阈值 2.5 m\',color:\'#991B1B\'}]" />',
+      '                 :thresholds="[{value:2.5,label:\'蓝色警报 2.5 m\',color:\'#1D4ED8\'},{value:4.0,label:\'灾害性海浪 4.0 m\',color:\'#991B1B\'}]" />',
       '    <div class="card">',
       '      <div class="card-title">海况事件（由数据实时判定）</div>',
       '      <event-list :items="events" empty-text="本时段无越限事件" @pick="picked = $event" />',
@@ -697,11 +706,16 @@
                 ? ['R-TENSION-02', '锚泊张力红色预警', '张力超过设计值 95%']
                 : ['R-TENSION-01', '锚泊张力黄色预警', '张力超过设计值 80%'] },
             { fam: 'tilt', type: 'tilt', field: 'tilt_pitch', value: r.tilt_pitch,
-              lv: Math.abs(r.tilt_pitch) >= 3 ? 'red' : (Math.abs(r.tilt_pitch) >= 2 ? 'orange' : null),
-              th: Math.abs(r.tilt_pitch) >= 3 ? 3 : 2,
-              rule: Math.abs(r.tilt_pitch) >= 3
-                ? ['R-TILT-02', '网箱倾斜红色预警', '俯仰角超过 3°']
-                : ['R-TILT-01', '网箱倾斜橙色预警', '俯仰角超过 2°'] },
+              /* 🔴 2026-10-06 由 2°/3° 改为 5°/15°：
+                 2°/3° 查不到任何标准或文献出处，而且量级偏小 —— 波浪作用下网箱常态横摇
+                 就可能超过 2°，会持续误报，现场一定会把告警关掉（"狼来了"）。
+                 15° 有规范出处：CCS《海上渔业养殖设施检验指南》(初稿2023) 3.2.1.7
+                 完整稳性衡准 ——「复原力臂从正浮至 15 度内，应均为正值」。 */
+              lv: Math.abs(r.tilt_pitch) >= 15 ? 'red' : (Math.abs(r.tilt_pitch) >= 5 ? 'orange' : null),
+              th: Math.abs(r.tilt_pitch) >= 15 ? 15 : 5,
+              rule: Math.abs(r.tilt_pitch) >= 15
+                ? ['R-TILT-02', '网箱倾斜红色预警', '俯仰角超过 15°（CCS 完整稳性衡准角）']
+                : ['R-TILT-01', '网箱倾斜橙色预警', '俯仰角超过 5°'] },
             { fam: 'battery', type: 'low_battery', field: 'battery_soc', value: r.battery_soc,
               lv: r.battery_soc < 10 ? 'red' : (r.battery_soc < 20 ? 'yellow' : null),
               th: r.battery_soc < 10 ? 10 : 20,
@@ -1546,19 +1560,19 @@
               source: 'CCS《海上单点系泊装置入级规范》(2021) 表4.4.4.3；CCS《海上渔业养殖设施检验指南》(初稿2023) 4.4.1.2；王斌等. 养殖网箱锚泊系统结构设计与性能分析研究进展. 上海海洋大学学报, 2025, 34(1):176-187 (表4 给出极限张力 50/60/70/80 %MBS)',
               url: 'https://www.ccs.org.cn/ccswz//file/download?fileid=202310130967039404'
             } },
-          { field: 'tilt_pitch', name: '网箱俯仰角', warn: 2, alarm: 3, unit: '°', owner: '结构安全',
+          { field: 'tilt_pitch', name: '网箱俯仰角', warn: 5, alarm: 15, unit: '°', owner: '结构安全',
             basis: {
-              level: '没找到',
-              text: '⚠️ 2°/3° 查不到任何标准或文献出处，而且量级偏小：可查到的角度都是 15°/45°/90° 量级，波浪作用下网箱常态横摇就可能超过 2°，会持续误报，现场一定会把告警关掉。有规范出处的角度只有 CCS《海上渔业养殖设施检验指南》(初稿2023) 3.2.1.7 的完整稳性衡准角 15°（「复原力臂从正浮至 15 度内应均为正值」）。建议改成 ≥5° 提示 / ≥10° 关注 / ≥15° 告警，或明确标注为「自设阈值，待现场标定」。',
-              source: '角度出处：CCS《海上渔业养殖设施检验指南》(初稿2023) 3.2.1.7（15°）；《沉浮式养殖网箱自动化控制与管理系统研究》渔业现代化 2023,50(6):33-40（15/45/90°分档）。2°/3° 本身：无出处',
+              level: '间接支持',
+              text: '⚠️ 原用 2°/3°，查不到任何标准或文献出处，而且量级偏小 —— 波浪作用下网箱常态横摇就可能超过 2°，会持续误报，现场一定会把告警关掉（"狼来了"）。2026-10-06 改为 5°/15°：① 15° 有规范出处 —— CCS《海上渔业养殖设施检验指南》(初稿2023) 3.2.1.7 完整稳性衡准「复原力臂从正浮至 15 度内，应均为正值」；② 5° 为自设提示线，取在常态横摇之上、稳性衡准角之下的合理位置，可现场标定。中间 10° 可作为「关注」档（平台目前只有两档）。参考：可查到的网箱角度量级是 15°/45°/90°（渔业现代化 2023,50(6):33-40 的控制系统效果分档）。',
+              source: 'CCS《海上渔业养殖设施检验指南》(初稿2023) 3.2.1.7（15° 稳性衡准角，官方 PDF）；《沉浮式养殖网箱自动化控制与管理系统研究》渔业现代化 2023,50(6):33-40（15/45/90° 分档）；5° 为自设，待现场标定',
               url: 'https://www.ccs.org.cn/ccswz/file/download?fileid=202305310555635104'
             } },
-          { field: 'tilt_roll', name: '网箱横滚角', warn: 2, alarm: 3, unit: '°', owner: '结构安全',
+          { field: 'tilt_roll', name: '网箱横滚角', warn: 5, alarm: 15, unit: '°', owner: '结构安全',
             basis: {
-              level: '没找到',
-              text: '同俯仰角 —— 横滚与俯仰共用同一组阈值，同样没有出处。见俯仰角那一条的说明。',
-              source: '同上',
-              url: ''
+              level: '间接支持',
+              text: '同俯仰角 —— 横滚与俯仰共用同一组阈值（同一个完整稳性衡准，不区分横滚与俯仰）。见俯仰角那一条的说明。',
+              source: '同俯仰角',
+              url: 'https://www.ccs.org.cn/ccswz/file/download?fileid=202305310555635104'
             } },
           { field: 'battery_soc', name: '储能电量', warn: 20, alarm: 10, unit: '%', owner: '结构安全',
             basis: {
@@ -1608,10 +1622,10 @@
       },
       ruleList: function () {
         return [
-          { id: 'R-TENSION-01', name: '锚泊张力黄色预警', cond: 'tension_pct > 80', level: 'yellow', from: 'tension_pct' },
-          { id: 'R-TENSION-02', name: '锚泊张力红色预警', cond: 'tension_pct > 95', level: 'red', from: 'tension_pct' },
-          { id: 'R-TILT-01', name: '网箱倾斜橙色预警', cond: 'tilt_pitch > 2 且 wave_height > 1.5', level: 'orange', from: 'tilt_pitch + wave_height' },
-          { id: 'R-TILT-02', name: '网箱倾斜红色预警', cond: 'tilt_pitch > 3', level: 'red', from: 'tilt_pitch' },
+          { id: 'R-TENSION-01', name: '锚泊张力黄色预警', cond: '张力利用率 R > 80%（R = T_max / T_design，T_design = PB/1.67）', level: 'yellow', from: 'tension_pct' },
+          { id: 'R-TENSION-02', name: '锚泊张力红色预警', cond: '张力利用率 R > 95%（等价约 57% PB，低于 60% PB 许用上限）', level: 'red', from: 'tension_pct' },
+          { id: 'R-TILT-01', name: '网箱倾斜橙色预警', cond: 'tilt_pitch > 5 且 wave_height > 1.5', level: 'orange', from: 'tilt_pitch + wave_height' },
+          { id: 'R-TILT-02', name: '网箱倾斜红色预警', cond: 'tilt_pitch > 15（CCS 完整稳性衡准角）', level: 'red', from: 'tilt_pitch' },
           { id: 'R-BAT-01', name: '储能低电量黄色预警', cond: 'battery_soc < 20', level: 'yellow', from: 'battery_soc' },
           { id: 'R-BAT-02', name: '储能严重低电量预警', cond: 'battery_soc < 10', level: 'red', from: 'battery_soc' },
           { id: 'R-TEMP-01', name: '水温上限告警', cond: 'water_temp >= 21.5', level: 'red', from: 'water_temp' }

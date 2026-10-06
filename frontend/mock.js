@@ -51,8 +51,8 @@
       const diurnal = Math.sin((h - 6) / 24 * 2 * Math.PI);       // 昼夜变化
       const offline = offlineFrom != null && i >= offlineFrom;
 
-      const wave  = storm ? rndn(3.2, .5) : rndn(1.4, .25);
-      const wind  = storm ? rndn(17, 2.5) : rndn(8.3, 1.2);
+      const wave  = storm ? rndn(4.6, .55) : rndn(1.4, .25);
+      const wind  = storm ? rndn(19, 2.5) : rndn(8.3, 1.2);
       /* 造故障「水温骤升」：朝一个**绝对目标温度**爬，不是「在基线上加几度」。
          ⚠️ 为什么必须这样：水温基线带昼夜项 18.6 + sin((h-6)/24·2π)×1.8，
             夜里 22 点时 diurnal≈-0.87、基线只有 17.0℃ —— 加 4.2 也只到 21.4℃，
@@ -154,20 +154,29 @@
       const day = Math.max(0, Math.sin((h - 6) / 12 * Math.PI));
 
       /* 姿态与张力：平时平稳，每 10 分钟来一次持续约 70 秒的「涌浪 / 阵风」事件。
-         为什么要这样建模：原来俯仰角是 gauss(2.4, .4) —— 长期骑在 2°/3° 阈值上，
+         为什么要这样建模：原来俯仰角是 gauss(2.4, .4) —— 长期骑在阈值上，
          噪声反复穿越阈值，一小时刷出上千条告警，界面上看着像系统坏了。
-         真实养殖场平时就是平稳的，异常是「事件」，不是常态。 */
+         真实养殖场平时就是平稳的，倾斜是「事件」，不是常态。
+
+         🔴 2026-10-06 改：阈值从 2°/3° 改为 5°/15° 后，原来的幅值（峰 ~3.4°）永远触不到。
+            同时把倾斜与「大风大浪」造故障**联动** —— 物理上说得通（海况差 → 网箱倾斜），
+            演示时也有明确路径：点「触发大风大浪」→ 倾角抬升 → 红色预警。 */
       const per = 120;                      // 120 个点 = 10 分钟
       const phase = i % per;
       let excursion = 0;
       if (phase < 14) {
-        const mag = (Math.floor(i / per) % 2 === 0) ? 2.2 : 1.3;
+        // mag 5.5 → 峰值约 6.7°，越过 5° 黄色线；台风级 15 → 峰值约 16°，越过 15° 红色线
+        // 平常幅值刻意压在 5° 提示线**下方**（峰 4.2° + 噪声 ≈ 4.9°），避免「狼来了」
+        const mag = storm ? 15.0 : ((Math.floor(i / per) % 2 === 0) ? 3.0 : 1.6);
         excursion = mag * Math.sin(phase / 14 * Math.PI);
       }
 
       const roll = 1.1 + excursion * 0.5 + rndn(0, .18);
       const pitch = 1.2 + excursion + rndn(0, .22);
-      const tension = 42.5 + excursion * 4.5 + rndn(0, 1.2);   // 海况差 → 张力跟着涨
+      /* 海况差 → 张力跟着涨（大浪对锚泊的载荷是非线性的，造故障时耦合更强）。
+         配着 designTension=60 kN 调：平常约 77% **不越 80% 黄线**（避免"狼来了"）；
+         造故障约 105%，越 95% 红线。 */
+      const tension = 37.5 + excursion * (storm ? 1.6 : 1.15) + rndn(0, 1.2);   // 海况差 → 张力跟着涨
       soc = Math.min(100, Math.max(8, soc + (day > .2 ? .18 : -.22) + rndn(0, .12)));
       out.push({
         ts: t0 + i * STEP_FAST,
@@ -333,10 +342,10 @@
       trigger_snapshot: { anchor_tension: 49.9, design_tension: 60, tension_pct: 83.2, ts: NOW - 8 * 60 * 1000 },
       handling_advice: '检查锚链受力，必要时降低流速影响', handle_status: 'pending', confirm_status: 'unconfirmed' },
     { alarm_event_id: 'ALM-0002', alarm_type: 'tilt', risk_level: 'orange', alarm_status: 'acknowledged',
-      alarm_ts: NOW - 26 * 60 * 1000, trigger_field: 'tilt_pitch', trigger_value: 2.7, trigger_threshold: 2,
-      rule_id: 'R-TILT-02', rule_name: '网箱倾斜橙色预警',
-      rule_condition: 'tilt_pitch > 2 且 wave_height > 1.5', combine_condition: 'AND(wave_height>1.5)',
-      trigger_snapshot: { tilt_pitch: 2.7, tilt_roll: 1.9, wave_height: 1.8, ts: NOW - 26 * 60 * 1000 },
+      alarm_ts: NOW - 26 * 60 * 1000, trigger_field: 'tilt_pitch', trigger_value: 6.2, trigger_threshold: 5,
+      rule_id: 'R-TILT-01', rule_name: '网箱倾斜橙色预警',
+      rule_condition: 'tilt_pitch > 5 且 wave_height > 1.5', combine_condition: 'AND(wave_height>1.5)',
+      trigger_snapshot: { tilt_pitch: 6.2, tilt_roll: 2.4, wave_height: 1.8, ts: NOW - 26 * 60 * 1000 },
       handling_advice: '关注网箱姿态，检查配重', handle_status: 'handling', confirm_status: 'confirmed' },
     { alarm_event_id: 'ALM-0003', alarm_type: 'low_battery', risk_level: 'yellow', alarm_status: 'recovered',
       alarm_ts: NOW - 55 * 60 * 1000, trigger_field: 'battery_soc', trigger_value: 19.4, trigger_threshold: 20,

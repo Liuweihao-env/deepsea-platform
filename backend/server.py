@@ -215,8 +215,8 @@ def env_series(site_id, minutes=60, storm=False, heat=False, offline_from=None, 
         diurnal = math.sin((h - 6) / 24 * 2 * math.pi)
         offline = offline_from is not None and i >= offline_from
 
-        wave = r.gauss(3.2, .5) if storm else r.gauss(1.4, .25)
-        wind = r.gauss(17, 2.5) if storm else r.gauss(8.3, 1.2)
+        wave = r.gauss(4.6, .55) if storm else r.gauss(1.4, .25)
+        wind = r.gauss(19, 2.5) if storm else r.gauss(8.3, 1.2)
         base_water = 18.6 + diurnal * 1.8
         if heat:
             # 朝 HEAT_TARGET_C 爬：无论几点，最后一定能越过 21.5
@@ -309,8 +309,13 @@ def heat_grid():
     return g
 
 
-def struct_series(minutes=60):
-    """结构安全（接口文档 第五节）"""
+def struct_series(minutes=60, storm=False):
+    """结构安全（接口文档 第五节）
+
+    storm 参数：造故障「大风大浪」要能让网箱倾角与锚泊张力真的抬起来。
+    2026-10-06 加 —— 倾角阈值从 2°/3° 改成 5°/15° 后，
+    如果不联动海况，演示时永远触发不到预警。
+    """
     n = max(2, int(minutes * 60 * 1000 / STEP_FAST))
     now = int(time.time() * 1000) // 1000 * 1000
     t0 = now - minutes * 60 * 1000
@@ -322,21 +327,36 @@ def struct_series(minutes=60):
         day = max(0.0, math.sin((h - 6) / 12 * math.pi))
 
         # 姿态与张力：平时平稳，每 10 分钟来一次持续约 70 秒的「涌浪 / 阵风」事件。
-        # 为什么要这样建模：原来俯仰角是 gauss(2.4, .4) —— 长期骑在 2°/3° 阈值上，
+        # 为什么要这样建模：原来俯仰角是 gauss(2.4, .4) —— 长期骑在阈值上，
         # 噪声反复穿越阈值，一小时刷出上千条告警，界面上看着像系统坏了。
-        # 真实养殖场平时就是平稳的，异常是「事件」，不是常态。
+        # 真实网箱平时就是平稳的，倾斜是「事件」，不是常态。
+        #
+        # 🔴 2026-10-06 改：阈值从 2°/3° 改为 5°/15° 后，原来的幅值（峰 ~3.4°）永远触不到。
+        #    同时把倾斜与「大风大浪」造故障**联动** —— 物理上说得通（海况差 → 网箱倾斜），
+        #    演示时也有明确路径：点「触发大风大浪」→ 倾角抬升 → 红色预警。
         per = 120                       # 120 个点 = 10 分钟
         phase = i % per
         if phase < 14:
-            mag = 2.2 if (i // per) % 2 == 0 else 1.3
+            # mag 5.5 → 峰值约 6.7°，越过 5° 黄色线；台风级 mag 15 → 峰值约 16°，越过 15° 红色线
+            if storm:
+                mag = 15.0              # 造故障：大风大浪 → 达到 CCS 稳性衡准角量级
+            else:
+                # 平常幅值刻意压在 5° 提示线**下方**（峰 4.2° + 噪声 ≈ 4.9°），
+                # 否则每 10 分钟就报一次橙色预警，又变成「狼来了」
+                mag = 3.0 if (i // per) % 2 == 0 else 1.6
             excursion = mag * math.sin(phase / 14 * math.pi)
         else:
             excursion = 0.0
 
         roll = 1.1 + excursion * 0.5 + r.gauss(0, .18)
         pitch = 1.2 + excursion + r.gauss(0, .22)
-        # 海况差 → 张力跟着涨（物理上说得通）
-        tension = 42.5 + excursion * 4.5 + r.gauss(0, 1.2)
+        # 海况差 → 张力跟着涨（物理上说得通：大浪对锚泊的载荷是非线性的，
+        # 所以造故障时耦合系数更大）。
+        # 数值配着 design_tension = 60 kN 调，让两条线各就各位 ——
+        # **平常海况不许越 80% 黄线**，否则黄色预警天天响，等于没有预警（"狼来了"）：
+        #   平常（excursion 峰 4.6，系数 1.15）→ 约 42.8 + 噪声 ≈ 77%  < 80%  ✅
+        #   造故障（excursion 峰 15，系数 1.6） → 约 61.5 + 噪声 ≈ 105% > 95%  ✅
+        tension = 37.5 + excursion * (1.6 if storm else 1.15) + r.gauss(0, 1.2)
         soc = min(100.0, max(8.0, soc + (0.18 if day > .2 else -0.22) + r.gauss(0, .12)))
         out.append({
             "ts": ts,
@@ -421,17 +441,18 @@ class Platform(object):
              "alarm_status": "active", "alarm_ts": now - 8 * 60 * 1000,
              "trigger_field": "tension_pct", "trigger_value": 83.2, "trigger_threshold": 80,
              "rule_id": "R-TENSION-01", "rule_name": "锚泊张力黄色预警",
-             "rule_condition": "tension_pct > 80", "combine_condition": None,
+             "rule_condition": "张力利用率 R > 80%（R = T_max / T_design，T_design = PB/1.67）",
+             "combine_condition": None,
              "trigger_snapshot": {"anchor_tension": 49.9, "design_tension": 60, "tension_pct": 83.2, "ts": now - 8 * 60 * 1000},
              "handling_advice": "检查锚链受力，必要时降低流速影响",
              "handle_status": "pending", "confirm_status": "unconfirmed"},
             {"alarm_event_id": "ALM-0002", "alarm_type": "tilt", "risk_level": "orange",
              "alarm_status": "acknowledged", "alarm_ts": now - 26 * 60 * 1000,
-             "trigger_field": "tilt_pitch", "trigger_value": 2.7, "trigger_threshold": 2,
-             "rule_id": "R-TILT-02", "rule_name": "网箱倾斜橙色预警",
-             "rule_condition": "tilt_pitch > 2 且 wave_height > 1.5",
+             "trigger_field": "tilt_pitch", "trigger_value": 6.2, "trigger_threshold": 5,
+             "rule_id": "R-TILT-01", "rule_name": "网箱倾斜橙色预警",
+             "rule_condition": "tilt_pitch > 5 且 wave_height > 1.5",
              "combine_condition": "AND(wave_height>1.5)",
-             "trigger_snapshot": {"tilt_pitch": 2.7, "tilt_roll": 1.9, "wave_height": 1.8, "ts": now - 26 * 60 * 1000},
+             "trigger_snapshot": {"tilt_pitch": 6.2, "tilt_roll": 2.4, "wave_height": 1.8, "ts": now - 26 * 60 * 1000},
              "handling_advice": "关注网箱姿态，检查配重",
              "handle_status": "handling", "confirm_status": "confirmed"},
             {"alarm_event_id": "ALM-0003", "alarm_type": "low_battery", "risk_level": "yellow",
@@ -714,7 +735,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"grid": heat_grid(), "resolution": "10x10"})
 
         if p == "/api/struct":
-            return self._json(struct_series(minutes))
+            # storm 透传：造故障「大风大浪」要能让网箱倾角真的抬起来，
+            # 否则倾角阈值改成 5°/15° 之后演示时永远触发不到（2026-10-06 踩过）
+            return self._json(struct_series(minutes, one("storm", "0") in ("1", "true")))
 
         if p == "/api/feed/decision":
             return self._json(feed_decision())
