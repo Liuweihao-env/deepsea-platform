@@ -2,10 +2,52 @@
   "_说明": [
     "人工维护的原始研究实测值。有原始研究的鱼种，优先级高于 FishBase 贝叶斯估计。",
     "每条必须有：a、b、length_type、体长单位、体重单位、完整出处。缺一不可。",
-    "length_type 必须是 total length / fork length / standard length 之一 —— 不写就没法用。"
+    "length_type 必须是 total length / fork length / standard length 之一 —— 不写就没法用。",
+    "",
+    "evidence 字段（证据等级）—— 答辩时的诚实底线，四种不许混：",
+    "  measured_farmed    实测·养殖     最好：研究对象就是养殖鱼，与本项目场景一致",
+    "  measured_wild      实测·野生     次之：野生群体，体型可能与养殖群体有差",
+    "  predicted          贝叶斯预测    FishBase 无该种实测数据时的模型外推，不确定性大",
+    "  predicted_no_data  预测·零记录  FishBase 该种实测文献数为 0，纯靠科属先验外推"
   ],
   "_单位约定": "W(g) = a × L(cm)^b（统一换算到 cm 与 g 之后填入）",
   "species": {
+    "大黄鱼": [
+      {
+        "a": 0.0195,
+        "b": 2.9775,
+        "length_type": "total length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": 780,
+        "length_range": "2.05 - 32.0 cm",
+        "r2": 0.9959,
+        "evidence": "measured_farmed",
+        "scope": "养殖 · 25 月龄 · 网箱",
+        "site": "中国福建宁德地区 · 网箱",
+        "source": "陈慧, 林国文, 刘招坤, 陈武, 谢友佺, 王兴春. 网箱养殖大黄鱼生长特性的研究. 海洋科学, 2010, 34(11).",
+        "source_url": "http://qdhys.cnjournals.com/hykxen/ch/reader/view_abstract.aspx?file_no=20101101&flag=1",
+        "note": "与本项目场景完全对口（福建宁德网箱养殖大黄鱼）。原文摘要：W = 0.0195 L^2.9775 (R^2 = 0.9959)，b≈3 等速生长。⚠️ 原文写「体长变幅 20.5~320.0 mm」，但用 mm 代入算出 560 吨（荒谬），用 cm 代入得 590 g、与原文最大体重 555.5 g 吻合 —— 判定原文单位标注有误，实为 cm。"
+      }
+    ],
+    "斜带石斑鱼": [
+      {
+        "a": 0.0127,
+        "b": 3.0511,
+        "length_type": "total length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": null,
+        "length_range": "9.67 - 19.36 cm",
+        "r2": null,
+        "evidence": "measured_farmed",
+        "scope": "养殖 · 125 天 · 深水抗风浪网箱",
+        "site": "中国 · 深水抗风浪网箱",
+        "source": "何庆, 李鑫渲, 曲焕韬, 黎祖福. 深水抗风浪网箱斜带石斑鱼生长研究. 河北渔业, 2009, (9).",
+        "source_url": "https://www.xueshu.com/hbyy/200909/12915566.html",
+        "note": "研究对象就是深水抗风浪网箱养殖，与本项目场景一致。体重 15.2 → 102.8 g。体长类型原文写明为全长 TL。"
+      }
+    ],
     "卵形鲳鲹": [
       {
         "a": 0.0640,
@@ -16,11 +58,12 @@
         "n": null,
         "length_range": null,
         "r2": null,
-        "scope": "养殖 · 未成熟个体",
+        "evidence": "measured_farmed",
+        "scope": "养殖 · 未性成熟个体 · 离岸浮式网箱",
         "site": "中国海南岛东南沿海 · 深水浮式网箱",
         "source": "Guo Huayang, Ma Zhenhua, Jiang Shigui, Zhang Dianchang, Zhang Nan, Li Youning (2014). Length-weight relationship of oval pompano, Trachinotus ovatus (Linnaeus, 1758) (Pisces: Carangidae) cultured in open sea floating sea cages in South China Sea. Indian Journal of Fisheries, 61(1): 93-95.",
         "source_url": "https://epubs.icar.org.in/index.php/IJF/article/view/30269",
-        "note": "原文摘要另给出成熟个体 W = 0.1198 × L^2.5248。研究结论为负异速生长。本条与本项目场景（深水网箱）完全对口，优先于 FishBase。"
+        "note": "同一篇原文另给出成熟个体 W = 0.1198 × L^2.5248（同文献内的对照值）。结论为负异速生长。⚠️ 原文摘要未写明体长类型（TL/SL/FL），本表按 TL 处理并标为推断；单位 cm/g 由数值自洽性反算确认。"
       }
     ]
   }

@@ -101,7 +101,11 @@ def load_species_db():
         lst = overlay.get(r.get("species_cn"))
         if not lst:
             r["used_source"] = "FishBase"
-            r["used_note"] = "贝叶斯估计（FishBase 未提供该种专属实测值时可能掺入同科数据）"
+            r["evidence"] = "predicted"
+            r["evidence_cn"] = "贝叶斯预测"
+            r["used_note"] = ("FishBase 贝叶斯预测值，**不是实测**。"
+                              "FishBase 原文写明「based on LWR estimates for this species "
+                              "& (Sub)family-body」—— 该种实测数据不足时会掺入同亚科/科的其他鱼。")
             continue
         o = lst[0]
         # 原始值换算到 cm / g 口径（本库统一口径，见 data/README.md）
@@ -112,7 +116,16 @@ def load_species_db():
         r["source_ref"] = (o.get("source") or "原始文献").split(".")[0]
         r["source_url"] = o.get("source_url", "")
         r["used_source"] = "原始研究"
+        r["evidence"] = o.get("evidence", "measured_farmed")
+        r["evidence_cn"] = {"measured_farmed": "实测·养殖",
+                            "measured_wild": "实测·野生",
+                            "predicted": "贝叶斯预测",
+                            "predicted_no_data": "预测·零记录"}.get(r["evidence"], r["evidence"])
         r["used_note"] = o.get("note", "")
+        if o.get("n") is not None:
+            r["n"] = o["n"]
+        if o.get("r2") is not None:
+            r["r2"] = o["r2"]
         n_primary += 1
 
     SPECIES_DB = {"species": rows,
