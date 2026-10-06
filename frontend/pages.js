@@ -1427,6 +1427,12 @@
          全项目唯一一处硬编码参数原来藏在后端 `(avg_w / 0.0218) ** (1/3.02)`
          —— 没鱼种、没出处。现在参数连同出处一起显示在这里，答辩能当场翻。 */
       species: function () { this.tick; return API.species() || []; },
+      /* 有几个种的参数不是按全长拟合的 —— 页面上要显式警告，不能让人误用 */
+      diffLenType: function () {
+        return (this.species || []).filter(function (s) {
+          return s.length_type && s.length_type !== 'total length';
+        }).length;
+      },
       primaryCount: function () {
         const s = this.species;
         return s.filter(function (r) { return r.source && r.source !== 'FishBase'; }).length;
@@ -1520,6 +1526,10 @@
       '      生长估算用的是水产界标准幂函数 <b>W(g) = a × L(cm)<sup>b</sup></b>。',
       '      每条参数都有出处 —— <b>用前必须核对「体长类型」</b>：',
       '      全长 TL / 叉长 FL / 标准长 SL 之间能差 10~20%，口径不一致算出来的体重会系统性偏掉。',
+      '      <div v-if="diffLenType" style="margin-top:6px;color:#991B1B">',
+      '        🔴 表里有 <b>{{ diffLenType }}</b> 个种的参数是<b>按标准长 SL 拟合</b>的（标了「⚠ 口径不同」）——',
+      '        拿全长代入这些公式会算错，必须先换算或另找按 TL 拟合的参数。',
+      '      </div>',
       '    </div>',
       '    <div class="dt-wrap" style="max-height:320px">',
       '      <table class="dt">',
@@ -1533,7 +1543,12 @@
       '            <td class="small" style="font-style:italic">{{ s.species_latin }}</td>',
       '            <td class="mono">{{ s.lw_a }}</td>',
       '            <td class="mono">{{ s.lw_b }}</td>',
-      '            <td class="small">{{ lenTypeCn(s.length_type) }}</td>',
+      '            <td class="small">{{ lenTypeCn(s.length_type) }}',
+      '              <b v-if="s.length_type && s.length_type !== \'total length\'"',
+      '                 style="color:#991B1B" title="该参数按标准长/叉长拟合，不能直接代全长">',
+      '                ⚠ 口径不同',
+      '              </b>',
+      '            </td>',
       '            <td class="small" :style="{ color: s.used_source === \'原始研究\' ? \'#166534\' : \'#92400E\', fontWeight: s.used_source === \'原始研究\' ? 600 : 400 }">',
       '              {{ s.evidence_cn || \'—\' }}',
       '            </td>',
