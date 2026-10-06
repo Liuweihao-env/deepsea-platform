@@ -23,6 +23,9 @@ $DocsDir    = Join-Path $RepoRoot 'docs'
 $SourceRoot = Split-Path -Parent $RepoRoot
 
 # 要同步的文档（正本文件名 -> 保持同名）
+#   .md   —— 正本直接复制
+#   .docx —— 由 tools/build_frozen_docs.py 从 .md 生成，也给组员看；
+#            GitHub上传教程 第七节明确说 .docx 文档要传
 $DocNames = @(
     '统一数据接口文档-v1.0.md'
     '功能冻结清单-10-05.md'
@@ -34,6 +37,8 @@ $DocNames = @(
     '任务拆解-到10-16.md'
     '项目总体计划-发送版.md'
     '项目记录.md'
+    '统一数据接口文档-v1.0.docx'
+    '功能冻结清单-10-05.docx'
 )
 
 Write-Host ''

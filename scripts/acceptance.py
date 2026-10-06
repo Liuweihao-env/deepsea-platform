@@ -376,6 +376,50 @@ def check_enum_labels(base):
 
 
 # ======================================================================
+# 附加 3：脚本文件编码（通用规范 8.3）
+#   这两个坑本项目都实际踩过：
+#     · .ps1 丢了 BOM → Windows PowerShell 5.1 按 ANSI 读，中文乱码 + 语法报错
+#     · .bat 里有中文或 LF 行尾 → cmd 解析错位，REM 注释被当命令执行
+# ======================================================================
+def check_script_encoding():
+    problems = []
+    checked = 0
+
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        if ".git" in dirpath:
+            continue
+        for fn in filenames:
+            p = os.path.join(dirpath, fn)
+            rel = os.path.relpath(p, ROOT)
+            try:
+                with open(p, "rb") as f:
+                    data = f.read()
+            except Exception:                        # noqa: BLE001
+                continue
+
+            if fn.lower().endswith(".ps1"):
+                checked += 1
+                if not data.startswith(b"\xef\xbb\xbf"):
+                    problems.append("%s 缺 UTF-8 BOM（PS 5.1 会按 ANSI 读，中文必乱）" % rel)
+
+            elif fn.lower().endswith((".bat", ".cmd")):
+                checked += 1
+                nonascii = sum(1 for b in data if b > 127)
+                if nonascii:
+                    problems.append("%s 含 %d 个非 ASCII 字节（cmd 解析会错位）" % (rel, nonascii))
+                crlf = data.count(b"\r\n")
+                lf = data.count(b"\n") - crlf
+                if lf:
+                    problems.append("%s 有 %d 处裸 LF 行尾（应全部 CRLF）" % (rel, lf))
+
+    if not problems:
+        rec(7, "脚本文件编码合规（通用规范 8.3）", PASS,
+            "%d 个脚本全部合规：.ps1 带 UTF-8 BOM；.bat 纯 ASCII + CRLF" % checked)
+    else:
+        rec(7, "脚本文件编码合规（通用规范 8.3）", FAIL, "；".join(problems[:5]))
+
+
+# ======================================================================
 def free_port():
     """让系统给一个当前空闲的端口。
 
@@ -437,6 +481,7 @@ def main():
         check_4(base)
         check_extra(base)
         check_enum_labels(base)
+        check_script_encoding()
 
     finally:
         proc.terminate()
