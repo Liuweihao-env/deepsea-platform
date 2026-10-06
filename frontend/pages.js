@@ -138,6 +138,16 @@
         if (m < 1) return '刚刚';
         if (m < 60) return Math.round(m) + ' 分钟前';
         return (m / 60).toFixed(1) + ' 小时前';
+      },
+      /* 这一行浮标就是当前正在看的站点吗（用于高亮 + 「正在看」标记） */
+      isCurrentStation: function (s) {
+        const cur = API.sites().filter(function (x) { return x.site_id === this.site; }.bind(this))[0];
+        return !!(cur && cur.station_id === s.station_id);
+      },
+      /* 点浮标行直接切到该站点 —— 让「真实数据」一眼可及，不用去底部找下拉框 */
+      gotoStation: function (s) {
+        const hit = API.sites().filter(function (x) { return x.station_id === s.station_id; })[0];
+        if (hit) this.site = hit.site_id;
       }
     },
     mounted: function () {
@@ -160,22 +170,40 @@
       '  <!-- NDBC 直连面板：说明数据从哪来、缓存新不新、一键拉最新 -->',
       '  <div class="card" style="margin-bottom:12px">',
       '    <div class="card-title">数据来源 · NOAA NDBC 直连</div>',
-      '    <div class="small" style="margin-bottom:8px">',
-      '      当前站点：<b>{{ siteName() }}</b> —— {{ srcLabel }}',
+      '',
+      '    <!-- ⚠️ 这块提示是必须的：默认站点是「模拟养殖站点」，数据本来就是仿真；',
+      '         真实浮标数据要切站点才有。不提示的话用户会以为"直连没生效"。 -->',
+      '    <div class="hint" style="margin-bottom:10px"',
+      '         :style="isObs ? { background: \'#F0FDF4\', borderColor: \'#86EFAC\' } : { background: \'#FFFBEB\', borderColor: \'#FDE68A\' }">',
+      '      <div style="font-size:14px">',
+      '        当前站点：<b>{{ siteName() }}</b>',
+      '        <span v-if="isObs" style="color:#166534"> —— ✅ 正在显示 <b>NOAA NDBC 真实浮标实测数据</b></span>',
+      '        <span v-else style="color:#92400E"> —— ⚠️ 这是<b>模拟养殖站点，数据是仿真生成的</b></span>',
+      '      </div>',
+      '      <div v-if="!isObs" style="margin-top:6px">',
+      '        <b>想看真实浮标数据？</b>点下面任意一个浮标行，或把底部「站点」切到 <b>NDBC 观测站点</b>。',
+      '      </div>',
       '    </div>',
-      '    <div class="dt-wrap" style="max-height:200px">',
+      '',
+      '    <div class="dt-wrap" style="max-height:220px">',
       '      <table class="dt">',
-      '        <thead><tr><th>浮标</th><th>海域</th><th>缓存条数</th><th>数据到</th><th>抓取于</th></tr></thead>',
+      '        <thead><tr><th>浮标</th><th>海域</th><th>缓存条数</th><th>数据到</th><th>抓取于</th><th></th></tr></thead>',
       '        <tbody>',
-      '          <tr v-for="s in ndbcList" :key="s.station_id">',
+      '          <tr v-for="s in ndbcList" :key="s.station_id"',
+      '              :style="{ background: isCurrentStation(s) ? \'#EFF6FF\' : \'\', cursor: \'pointer\' }"',
+      '              @click="gotoStation(s)">',
       '            <td class="mono">{{ s.station_id }}</td>',
       '            <td class="small">{{ s.station.cn }}</td>',
       '            <td>{{ s.count }}</td>',
       '            <td class="small mono">{{ s.latest_ts_utc || \'—\' }} UTC</td>',
       '            <td class="small">{{ ageText(s.age_minutes) }}</td>',
+      '            <td class="small">',
+      '              <span v-if="isCurrentStation(s)" style="color:#166534;font-weight:600">正在看</span>',
+      '              <span v-else class="muted">点此切换 →</span>',
+      '            </td>',
       '          </tr>',
       '          <tr v-if="!ndbcList.length">',
-      '            <td colspan="5" class="muted small">',
+      '            <td colspan="6" class="muted small">',
       '              NDBC 状态需要后端 —— 请双击 <b>启动平台.bat</b> 打开。',
       '            </td>',
       '          </tr>',
