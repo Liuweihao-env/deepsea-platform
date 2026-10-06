@@ -31,8 +31,8 @@
     { group: '环境', owner: '刘伟豪', items: [
       { path: '/env/sea',    label: '海况', ready: true },
       { path: '/env/water',  label: '水质', ready: true },
-      { path: '/env/records',label: '原始数据明细', ready: false },
-      { path: '/env/simulator', label: '环境仿真控制', ready: false }
+      { path: '/env/records',label: '原始数据明细', ready: true },
+      { path: '/env/simulator', label: '环境仿真控制', ready: true }
     ]},
     { group: '结构安全', owner: '邓宇涵', items: [
       { path: '/struct/alarm',  label: '灾害分级预警', ready: true },

@@ -212,3 +212,27 @@ select, input[type=text], input[type=datetime-local] {
 }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 13px; }
 .kv .k { color: var(--c-muted); }
+
+/* ============================================================
+   环境板块 · 明细表格（模板 B）与确认弹窗（模板 D）
+   新增：2026-10-06，刘伟豪（环境板块）
+   ============================================================ */
+.dtable { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dtable th {
+  background: #F3F6FA; color: #374151; text-align: left;
+  padding: 8px 10px; border-bottom: 1px solid #E5E7EB;
+  position: sticky; top: 0; white-space: nowrap; z-index: 1;
+}
+.dtable td { padding: 6px 10px; border-bottom: 1px solid #F0F3F7; white-space: nowrap; }
+.dtable tr:hover td { background: #F8FAFD; }
+.dtable .t { color: #6B7280; }
+.dtable .empty { text-align: center; color: #6B7280; padding: 24px; }
+
+.modal-mask {
+  position: fixed; inset: 0; background: rgba(17, 24, 39, .45);
+  display: flex; align-items: center; justify-content: center; z-index: 100;
+}
+.modal {
+  background: #fff; border-radius: 8px; padding: 16px 20px;
+  width: 340px; max-width: 90vw; box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
+}

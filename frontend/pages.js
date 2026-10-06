@@ -1573,5 +1573,275 @@
     ].join('\n')
   };
 
+  /* ============================================================
+     环境 · 原始数据明细  /env/records    —— 模板 B（明细型）
+     筛选条：时间窗 + 站点；表格：秒级时间 / 站点 / 9 项指标 / 来源 / 质量
+     数据：/api/env（fast 快变量 + slow 慢变量合并展示，慢变量缺省显示 —）
+     ============================================================ */
+  P['/env/records'] = {
+    data: function () {
+      return { minutes: 60, site: 'site_01', series: null };
+    },
+    computed: {
+      fast: function () { return this.series ? this.series.fast : []; },
+      slowMap: function () {
+        /* 慢变量按 ts 建索引，合并进明细行（盐度/pH 30 秒一条，其余时间点显示 —） */
+        const m = {};
+        (this.series ? this.series.slow : []).forEach(function (r) { m[r.ts] = r; });
+        return m;
+      },
+      rows: function () {
+        const m = this.slowMap;
+        return this.fast.map(function (r) {
+          const s = m[r.ts] || {};
+          return {
+            ts: r.ts, site_id: r.site_id, source: r.source, quality: r.quality,
+            water_temp: r.water_temp, dissolved_oxygen: r.dissolved_oxygen,
+            salinity: s.salinity, ph: s.ph,
+            wave_height: r.wave_height, wind_speed: r.wind_speed,
+            current_speed: r.current_speed, air_temp: r.air_temp,
+            light_intensity: r.light_intensity
+          };
+        });
+      }
+    },
+    methods: {
+      load: function () {
+        const self = this;
+        API.resolve(API.env(this.site, this.minutes, {}), function (d) { self.series = d; });
+      },
+      fmtTime: function (ts) {
+        return new Date(ts).toLocaleString('zh-CN', { hour12: false });
+      },
+      fmtVal: function (v) {
+        return (v === null || v === undefined) ? '—' : v;
+      },
+      exportCsv: function () {
+        const head = ['时间', '站点', '水温(℃)', '溶解氧(mg/L)', '盐度(‰)', 'pH',
+                      '浪高(m)', '风速(m/s)', '流速(m/s)', '气温(℃)', '光照(lux)', '来源', '质量'];
+        const esc = function (s) { return '"' + String(s).replace(/"/g, '""') + '"'; };
+        const lines = [head.join(',')].concat(this.rows.map(function (r) {
+          return [r.ts, r.site_id, r.water_temp, r.dissolved_oxygen, r.salinity, r.ph,
+                  r.wave_height, r.wind_speed, r.current_speed, r.air_temp, r.light_intensity,
+                  r.source, r.quality].map(esc).join(',');
+        }));
+        const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = '环境原始数据_' + this.site + '_' + this.minutes + 'min.csv';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }
+    },
+    mounted: function () { this.load(); },
+    watch: {
+      minutes: function () { this.load(); },
+      site: function () { this.load(); }
+    },
+    template: [
+      '<div>',
+      '  <page-head title="环境 · 原始数据明细"',
+      '    desc="全部环境指标秒级明细。数据来源：公开浮标 + 仿真生成"',
+      '    :sources="[\'public\',\'simulated\']" />',
+      '',
+      '  <div class="opbar" style="margin:0 0 12px">',
+      '    <time-range v-model="minutes" />',
+      '    <span style="width:12px"></span>',
+      '    <span class="small muted">站点</span>',
+      '    <select v-model="site">',
+      '      <option v-for="s in API.sites()" :key="s.site_id" :value="s.site_id">{{ s.site_name }}</option>',
+      '    </select>',
+      '    <span style="flex:1"></span>',
+      '    <span class="small muted">共 {{ rows.length }} 条</span>',
+      '    <span style="width:8px"></span>',
+      '    <button @click="exportCsv">导出 CSV</button>',
+      '  </div>',
+      '',
+      '  <div class="card" style="padding:0;overflow:auto;max-height:calc(100vh - 320px)">',
+      '    <table class="dtable">',
+      '      <thead><tr>',
+      '        <th>时间</th><th>站点</th><th>水温(℃)</th><th>溶解氧(mg/L)</th><th>盐度(‰)</th><th>pH</th>',
+      '        <th>浪高(m)</th><th>风速(m/s)</th><th>流速(m/s)</th><th>气温(℃)</th><th>光照(lux)</th><th>来源</th><th>质量</th>',
+      '      </tr></thead>',
+      '      <tbody>',
+      '        <tr v-if="!rows.length"><td colspan="13" class="empty">暂无数据</td></tr>',
+      '        <tr v-for="r in rows" :key="r.ts">',
+      '          <td class="t">{{ fmtTime(r.ts) }}</td>',
+      '          <td>{{ r.site_id }}</td>',
+      '          <td>{{ fmtVal(r.water_temp) }}</td>',
+      '          <td>{{ fmtVal(r.dissolved_oxygen) }}</td>',
+      '          <td>{{ fmtVal(r.salinity) }}</td>',
+      '          <td>{{ fmtVal(r.ph) }}</td>',
+      '          <td>{{ fmtVal(r.wave_height) }}</td>',
+      '          <td>{{ fmtVal(r.wind_speed) }}</td>',
+      '          <td>{{ fmtVal(r.current_speed) }}</td>',
+      '          <td>{{ fmtVal(r.air_temp) }}</td>',
+      '          <td>{{ fmtVal(r.light_intensity) }}</td>',
+      '          <td><span class="tag" :class="\'tag-\' + r.source">{{ API.sourceText[r.source] || r.source }}</span></td>',
+      '          <td>{{ CN.quality(r.quality) }}</td>',
+      '        </tr>',
+      '      </tbody>',
+      '    </table>',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
+
+  /* ============================================================
+     环境 · 仿真控制  /env/simulator    —— 模板 D（控制型）
+     状态：sim_mode（内容模式）/ gen_status（运行状态）/ paused_sites（暂停站点）
+     操作：启动 / 暂停 / 恢复 / 停止 / 大风大浪切换（含二次确认）
+     大风大浪真实作用于 /api/env 数据；运行状态为前端演示仿真
+     （后端权威状态机见 backend/datasource/simulated/generator.py SimController，
+      控制接口由队长接入 /api/env/control 后前端改为真实调用）
+     ============================================================ */
+  P['/env/simulator'] = {
+    data: function () {
+      return {
+        simMode: 'normal',      // normal | storm（对齐接口文档 7.10）
+        genStatus: 'stopped',   // running | paused | stopped
+        pausedSites: [],        // 暂停站点列表（元素为 site_id）
+        pending: null,          // 待确认的操作 {label, cmd, args}
+        logs: [],               // 最近操作日志 {ts, text}
+        site: 'site_01',
+        minutes: 60,
+        series: null
+      };
+    },
+    computed: {
+      statusText: function () {
+        return { running: '运行中', paused: '已暂停', stopped: '已停止' }[this.genStatus] || this.genStatus;
+      },
+      modeText: function () {
+        return this.simMode === 'storm' ? '大风大浪' : '平常海况';
+      },
+      pausedText: function () {
+        return this.pausedSites.length ? this.pausedSites.join('、') : '无';
+      },
+      lastRow: function () {
+        const f = this.series ? this.series.fast : [];
+        return f.length ? f[f.length - 1] : null;
+      }
+    },
+    methods: {
+      loadData: function () {
+        const self = this;
+        API.resolve(API.env(this.site, this.minutes, { storm: this.simMode === 'storm' }),
+                    function (d) { self.series = d; });
+      },
+      ask: function (label, cmd, args) {
+        this.pending = { label: label, cmd: cmd, args: args || {} };
+      },
+      cancelAsk: function () { this.pending = null; },
+      confirm: function () {
+        if (!this.pending) return;
+        const p = this.pending;
+        this.pending = null;
+        this.applyCommand(p.cmd, p.args);
+      },
+      applyCommand: function (cmd, args) {
+        const t = Date.now();   // 时间戳毫秒（EventList 组件内部会格式化，不能传字符串）
+        if (cmd === 'start') {
+          this.genStatus = 'running';
+          this.logs.push({ ts: t, text: '启动仿真数据生成' });
+        } else if (cmd === 'stop') {
+          this.genStatus = 'stopped';
+          this.pausedSites = [];
+          this.logs.push({ ts: t, text: '停止仿真数据生成（保留现场）' });
+        } else if (cmd === 'pause') {
+          const sid = args.site || this.site;
+          if (this.pausedSites.indexOf(sid) < 0) this.pausedSites.push(sid);
+          this.genStatus = 'running';
+          this.logs.push({ ts: t, text: '暂停站点 ' + sid + '（其他站点不受影响）' });
+        } else if (cmd === 'resume') {
+          const sid = args.site || this.site;
+          this.pausedSites = this.pausedSites.filter(function (s) { return s !== sid; });
+          if (!this.pausedSites.length && this.genStatus === 'paused') this.genStatus = 'running';
+          this.logs.push({ ts: t, text: '恢复站点 ' + sid });
+        } else if (cmd === 'storm') {
+          this.simMode = this.simMode === 'storm' ? 'normal' : 'storm';
+          this.logs.push({ ts: t, text: this.simMode === 'storm' ? '切换为大风大浪（恶劣海况）' : '恢复平常海况' });
+          this.loadData();
+        }
+        this.logs = this.logs.slice(-20);
+      },
+      time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
+      fmt: function (v) { return (v === null || v === undefined) ? '—' : v; }
+    },
+    mounted: function () { this.loadData(); },
+    template: [
+      '<div>',
+      '  <page-head title="环境 · 仿真控制"',
+      '    desc="控制仿真数据生成器的启停与模式，只在演示与造故障时使用"',
+      '    :sources="[\'public\',\'simulated\']" />',
+      '',
+      '  <div class="split" style="margin-top:12px">',
+      '    <!-- 左：状态 + 操作 -->',
+      '    <div>',
+      '      <div class="card">',
+      '        <div class="card-title">生成器状态</div>',
+      '        <div class="grid-stats">',
+      '          <div class="stat">',
+      '            <div class="name"><span>内容模式</span></div>',
+      '            <div class="val"><span>{{ modeText }}</span></div>',
+      '          </div>',
+      '          <div class="stat">',
+      '            <div class="name"><span>运行状态</span></div>',
+      '            <div class="val"><span>{{ statusText }}</span></div>',
+      '          </div>',
+      '          <div class="stat">',
+      '            <div class="name"><span>暂停站点</span></div>',
+      '            <div class="val" style="font-size:16px"><span>{{ pausedText }}</span></div>',
+      '          </div>',
+      '        </div>',
+      '        <div class="small muted" style="margin-top:8px">',
+      '          最新水温：{{ lastRow ? fmt(lastRow.water_temp) + \' ℃\' : \'—\' }}　' +
+      '          最新浪高：{{ lastRow ? fmt(lastRow.wave_height) + \' m\' : \'—\' }}</div>',
+      '      </div>',
+      '',
+      '      <div class="card" style="margin-top:12px">',
+      '        <div class="card-title">控制操作（点击后需确认）</div>',
+      '        <div class="row" style="gap:8px;flex-wrap:wrap">',
+      '          <button class="primary" @click="ask(\'启动生成器\', \'start\')">启动</button>',
+      '          <button @click="ask(\'暂停站点 \' + site, \'pause\', { site: site })">暂停</button>',
+      '          <button @click="ask(\'恢复站点 \' + site, \'resume\', { site: site })">恢复</button>',
+      '          <button @click="ask(\'停止生成器\', \'stop\')">停止</button>',
+      '          <button :class="{ primary: simMode === \'storm\' }" @click="ask(simMode === \'storm\' ? \'恢复平常海况\' : \'触发大风大浪（造故障）\', \'storm\')">',
+      '            {{ simMode === \'storm\' ? \'恢复平常海况\' : \'触发大风大浪（造故障）\' }}',
+      '          </button>',
+      '        </div>',
+      '        <div class="row" style="gap:8px;margin-top:10px">',
+      '          <span class="small muted">站点</span>',
+      '          <select v-model="site" style="max-width:220px">',
+      '            <option v-for="s in API.sites()" :key="s.site_id" :value="s.site_id">{{ s.site_name }}</option>',
+      '          </select>',
+      '        </div>',
+      '      </div>',
+      '',
+      '      <!-- 二次确认弹窗（模板 D 硬要求：控制型页面必须有确认） -->',
+      '      <div v-if="pending" class="modal-mask" @click.self="cancelAsk">',
+      '        <div class="modal">',
+      '          <div class="card-title">确认操作</div>',
+      '          <p style="margin:10px 0">确定要执行「{{ pending.label }}」吗？</p>',
+      '          <div class="row" style="gap:8px;justify-content:flex-end">',
+      '            <button @click="cancelAsk">取消</button>',
+      '            <button class="primary" @click="confirm">确认</button>',
+      '          </div>',
+      '        </div>',
+      '      </div>',
+      '    </div>',
+      '',
+      '    <!-- 右：操作日志 -->',
+      '    <div>',
+      '      <div class="card">',
+      '        <div class="card-title">最近操作记录</div>',
+      '        <event-list :items="logs" empty-text="暂无操作记录" />',
+      '      </div>',
+      '    </div>',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
+
   global.PAGES = P;
 })(window);
