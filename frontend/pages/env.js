@@ -100,7 +100,7 @@
       return { site: 'site_01', picked: null, series: null,
                tick: 0, unsub: null, timer: null,
                refreshing: false, refreshMsg: '', refreshOk: null,
-               per: null, loadSeq: 0 };
+               per: null, loadSeq: 0, chart: null };
     },
     computed: {
       fast: function () { return this.series ? this.series.fast : []; },
@@ -134,12 +134,6 @@
         if (this.isObs) return 'NOAA NDBC 公开浮标实测（读本地缓存）';
         return '仿真生成（模拟养殖站点）';
       },
-      charts: function () {
-        return [
-          { name: '浪高', unit: 'm', data: this.fast.map(function (r) { return [r.ts, r.wave_height]; }) },
-          { name: '风速', unit: 'm/s', data: this.fast.map(function (r) { return [r.ts, r.wind_speed]; }) }
-        ];
-      },
       events: function () {
         /* 由真实数据算出的事件：越限即列为事件（不做假数据）。
            🔴 2026-10-06 浪高阈值对齐国标（GB/T 19721.2 / 海浪警报级别）：
@@ -164,6 +158,41 @@
           }
         });
         return out.slice(-20).reverse();
+      },
+      /* 浪高异常点（问题 2）：命中异常界定指标的点用圆点标记，颜色与指标表一致 */
+      waveDots: function () {
+        const out = [];
+        this.fast.forEach(function (r) {
+          const w = r.wave_height;
+          if (w == null) return;
+          let color = null;
+          if (w >= 9.0)      { color = '#991B1B'; }
+          else if (w >= 6.0) { color = '#EA580C'; }
+          else if (w >= 4.0) { color = '#D97706'; }
+          else if (w >= 2.5) { color = '#1D4ED8'; }
+          if (color) out.push({ coord: [r.ts, w], value: w, itemStyle: { color: color } });
+        });
+        return out;
+      },
+      /* 风速异常点：≥17.2 m/s（8 级及以上大风） */
+      windDots: function () {
+        const out = [];
+        this.fast.forEach(function (r) {
+          const w = r.wind_speed;
+          if (w == null) return;
+          if (w >= 17.2) out.push({ coord: [r.ts, w], value: w, itemStyle: { color: '#991B1B' } });
+        });
+        return out;
+      },
+      waveLines: function () {
+        return [
+          { yAxis: 2.5, name: '蓝色警报 2.5m', lineStyle: { color: '#1D4ED8', type: 'dashed', width: 1 } },
+          { yAxis: 4.0, name: '黄色警报 4.0m', lineStyle: { color: '#D97706', type: 'dashed', width: 1 } },
+          { yAxis: 9.0, name: '红色警报 9.0m', lineStyle: { color: '#991B1B', type: 'dashed', width: 1 } }
+        ];
+      },
+      windLines: function () {
+        return [{ yAxis: 17.2, name: '8 级大风 17.2m/s', lineStyle: { color: '#991B1B', type: 'dashed', width: 1 } }];
       }
     },
     methods: {
@@ -269,6 +298,67 @@
       gotoStation: function (s) {
         const hit = API.sites().filter(function (x) { return x.station_id === s.station_id; })[0];
         if (hit) this.site = hit.site_id;
+      },
+      /* 可交互时序（问题 2）：缩放 / 框选 / 异常点标记。
+         ⚠️ 公共 trend-chart 无 dataZoom / markPoint，这里在页面内自绘 ECharts 增强版；
+            后续若公共件补上这两项，可换回公共件保持全平台一致。 */
+      renderChart: function () {
+        const el = this.$refs.chartEl;
+        if (!el) return;
+        const E = global.echarts;
+        if (!E) return;
+        let inst = E.getInstanceByDom(el);
+        if (!inst) inst = E.init(el);
+        this.chart = inst;
+        const fast = this.fast;
+        if (!fast.length) {
+          inst.clear();
+          inst.setOption({
+            graphic: { type: 'text', left: 'center', top: 'middle',
+                       style: { text: '暂无数据', fill: '#6B7280', fontSize: 14 } },
+            xAxis: { show: false }, yAxis: { show: false }, series: []
+          }, true);
+          return;
+        }
+        const H = global.__ENV_HELPERS__;
+        inst.setOption({
+          grid: { left: 56, right: 20, top: 44, bottom: 44 },
+          tooltip: { trigger: 'axis' },
+          legend: { top: 0, textStyle: { fontSize: 12 } },
+          xAxis: {
+            type: 'time',
+            axisLabel: { fontSize: 11, formatter: function (v) { return H.fmtShort(v); } },
+            splitLine: { show: false }
+          },
+          yAxis: { type: 'value', scale: true, axisLabel: { fontSize: 11 },
+                   splitLine: { lineStyle: { color: '#EEF2F6' } } },
+          /* 缩放 / 框选：inside 滚轮缩放，slider 拖拽框选时间轴 */
+          dataZoom: [
+            { type: 'inside', start: 0, end: 100 },
+            { type: 'slider', height: 16, bottom: 0, start: 0, end: 100 }
+          ],
+          series: [
+            {
+              name: '浪高（m）', type: 'line', showSymbol: false, smooth: true,
+              lineStyle: { width: 1.6, color: '#2F5496' }, itemStyle: { color: '#2F5496' },
+              data: fast.map(function (r) { return [r.ts, r.wave_height]; }),
+              markLine: { silent: true, symbol: 'none',
+                label: { formatter: '{b}', fontSize: 10, position: 'insideEndTop' },
+                data: this.waveLines },
+              markPoint: { symbol: 'circle', symbolSize: 7, data: this.waveDots }
+            },
+            {
+              name: '风速（m/s）', type: 'line', showSymbol: false, smooth: true,
+              lineStyle: { width: 1.6, color: '#C2410C' }, itemStyle: { color: '#C2410C' },
+              data: fast.map(function (r) { return [r.ts, r.wind_speed]; }),
+              markLine: { silent: true, symbol: 'none',
+                label: { formatter: '{b}', fontSize: 10, position: 'insideEndTop' },
+                data: this.windLines },
+              markPoint: { symbol: 'circle', symbolSize: 7, data: this.windDots }
+            }
+          ]
+        }, true);
+        inst.resize();
       }
     },
     mounted: function () {
@@ -276,13 +366,17 @@
       this.ensurePer();
       this.unsub = API.subscribe(function () { self.tick++; });
       this.load();
+      this.$nextTick(function () { self.renderChart(); });
     },
     beforeUnmount: function () {
       if (this.timer) { clearInterval(this.timer); this.timer = null; }
       if (this.unsub) { this.unsub(); this.unsub = null; }
+      if (this.chart) { this.chart.dispose(); this.chart = null; }
     },
     watch: {
-      site: function () { this.load(); }
+      site: function () { this.load(); },
+      /* 数据一更新就重绘增强图（缩放 / 红点跟着最新数据走） */
+      fast: { handler: function () { this.renderChart(); }, deep: true }
     },
     template: [
       '<div>',
@@ -372,8 +466,12 @@
       '  </div>',
       '',
       '  <div class="split" style="margin-top:12px">',
-      '    <trend-chart title="浪高 / 风速 趋势" :series="charts"',
-      '                 :thresholds="[{value:2.5,label:\'蓝色警报 2.5 m\',color:\'#1D4ED8\'},{value:4.0,label:\'灾害性海浪 4.0 m\',color:\'#991B1B\'}]" />',
+      '    <div class="card">',
+      '      <div class="card-title">海况时序（可缩放 / 框选 · 异常点标记）',
+      '        <help-dot :info="{ level: \'间接支持\', text: \'滚轮缩放、拖拽底部滑条框选时间轴查看细节；曲线上圆点 = 命中「异常界定指标」的数据点，颜色与指标表一致。\' }" :label="\'操作说明\'" />',
+      '      </div>',
+      '      <div ref="chartEl" class="chart" style="height:340px"></div>',
+      '    </div>',
       '    <div class="card">',
       '      <div class="card-title">海况事件（由数据实时判定）</div>',
       '      <event-list :items="events" empty-text="本时段无越限事件" @pick="picked = $event" />',
@@ -388,11 +486,7 @@
       '  <!-- 异常界定指标：让人一眼看出「数据到什么程度会被标记/告警」（问题 3） -->',
       '  <div class="card" style="margin-top:12px">',
       '    <div class="card-title">异常界定指标（红点 / 事件标记依据）',
-      '      <help-dot level="supported" title="界定依据说明">',
-      '        浪高分级依据 GB/T 19721.2《海洋预报和警报发布 第 2 部分：海浪警报发布》的海浪警报级别；',
-      '        风速异常参考蒲福风级（≥17.2 m/s 为 8 级及以上大风）。',
-      '        触发「大风大浪」时，仿真将浪高抬至约 4.6 m、风速抬至约 19 m/s（风暴模式）。',
-      '      </help-dot>',
+      '      <help-dot :info="{ level: \'间接支持\', text: \'浪高分级依据 GB/T 19721.2《海洋预报和警报发布 第 2 部分：海浪警报发布》的海浪警报级别；风速异常参考蒲福风级（≥17.2 m/s 为 8 级及以上大风）。触发「大风大浪」时，仿真将浪高抬至约 4.6 m、风速抬至约 19 m/s（风暴模式）。\', source: \'GB/T 19721.2 ／ 蒲福风级\' }" :label="\'界定依据说明\'" />',
       '    </div>',
       '    <div class="dt-wrap">',
       '      <table class="dt">',
@@ -517,7 +611,7 @@
   PAGES['/env/water'] = {
     data: function () {
       return { site: 'site_01', picked: null, series: null,
-               per: null, loadSeq: 0,
+               per: null, loadSeq: 0, chart: null,
                show: { water_temp: true, dissolved_oxygen: true, light_intensity: false } };
     },
     computed: {
@@ -538,15 +632,24 @@
         if (this.isObs) return 'NOAA NDBC 公开浮标实测（读本地缓存）';
         return '仿真生成（模拟养殖站点）';
       },
-      charts: function () {
-        const s = this.show, out = [];
-        const add = function (name, unit, key) {
-          if (s[key]) out.push({ name: name, unit: unit, data: this.fast.map(function (r) { return [r.ts, r[key]]; }) });
-        }.bind(this);
-        add('水温', '℃', 'water_temp');
-        add('溶解氧', 'mg/L', 'dissolved_oxygen');
-        add('光照强度', 'lux', 'light_intensity');
+      /* 水温异常点（问题 2）：黄 ≥25.5（R-TEMP-02 偏高提示），红 ≥28.0（R-TEMP-01 水温上限告警） */
+      waterDots: function () {
+        const out = [];
+        this.fast.forEach(function (r) {
+          const w = r.water_temp;
+          if (w == null) return;
+          let color = null;
+          if (w >= 28.0)      { color = '#991B1B'; }
+          else if (w >= 25.5) { color = '#D97706'; }
+          if (color) out.push({ coord: [r.ts, w], value: w, itemStyle: { color: color } });
+        });
         return out;
+      },
+      waterLines: function () {
+        return [
+          { yAxis: 28.0, name: '水温上限 28.0℃', lineStyle: { color: '#991B1B', type: 'dashed', width: 1 } },
+          { yAxis: 25.5, name: '偏高提示 25.5℃', lineStyle: { color: '#D97706', type: 'dashed', width: 1 } }
+        ];
       },
       /* ★ 一条竖线：水温越限 → 出告警（判定规则在 API.ruleCheck，与后端同口径） */
       alarms: function () {
@@ -619,14 +722,94 @@
         });
         const csv = H.toCsv(['时间', '站点', '来源', '质量', '水温 (℃)', '溶解氧 (mg/L)', '光照 (lux)'], rows);
         downloadCsv('水质原始数据_' + this.site + '.csv', csv);
+      },
+      /* 可交互时序（问题 2）：缩放 / 框选 / 异常点标记；光照强度走右轴（量级差太大） */
+      renderChart: function () {
+        const el = this.$refs.chartEl;
+        if (!el) return;
+        const E = global.echarts;
+        if (!E) return;
+        let inst = E.getInstanceByDom(el);
+        if (!inst) inst = E.init(el);
+        this.chart = inst;
+        const fast = this.fast;
+        if (!fast.length) {
+          inst.clear();
+          inst.setOption({
+            graphic: { type: 'text', left: 'center', top: 'middle',
+                       style: { text: '暂无数据', fill: '#6B7280', fontSize: 14 } },
+            xAxis: { show: false }, yAxis: { show: false }, series: []
+          }, true);
+          return;
+        }
+        const H = global.__ENV_HELPERS__;
+        const s = this.show;
+        const series = [];
+        const pushS = function (name, unit, key, color, axis) {
+          if (!s[key]) return;
+          series.push({
+            name: name + '（' + unit + '）', type: 'line', showSymbol: false, smooth: true,
+            yAxisIndex: axis || 0,
+            lineStyle: { width: 1.6, color: color }, itemStyle: { color: color },
+            data: fast.map(function (r) { return [r.ts, r[key]]; })
+          });
+        };
+        pushS('水温', '℃', 'water_temp', '#2F5496', 0);
+        pushS('溶解氧', 'mg/L', 'dissolved_oxygen', '#166534', 0);
+        pushS('光照强度', 'lux', 'light_intensity', '#C2410C', 1);
+        const needAxis2 = !!s.light_intensity;
+        /* 阈值线 + 异常点只挂在水温曲线上（水温有界定规则） */
+        let idx = -1;
+        for (let i = 0; i < series.length; i++) {
+          if (series[i].name.indexOf('水温') >= 0) { idx = i; break; }
+        }
+        if (idx >= 0) {
+          series[idx].markLine = { silent: true, symbol: 'none',
+            label: { formatter: '{b}', fontSize: 10, position: 'insideEndTop' },
+            data: this.waterLines };
+          series[idx].markPoint = { symbol: 'circle', symbolSize: 7, data: this.waterDots };
+        }
+        inst.setOption({
+          grid: { left: 56, right: 20, top: 44, bottom: 44 },
+          tooltip: { trigger: 'axis' },
+          legend: { top: 0, textStyle: { fontSize: 12 } },
+          xAxis: {
+            type: 'time',
+            axisLabel: { fontSize: 11, formatter: function (v) { return H.fmtShort(v); } },
+            splitLine: { show: false }
+          },
+          yAxis: needAxis2
+            ? [
+                { type: 'value', scale: true, axisLabel: { fontSize: 11 },
+                  splitLine: { lineStyle: { color: '#EEF2F6' } } },
+                { type: 'value', scale: true, position: 'right', axisLabel: { fontSize: 11 },
+                  splitLine: { show: false } }
+              ]
+            : { type: 'value', scale: true, axisLabel: { fontSize: 11 },
+                splitLine: { lineStyle: { color: '#EEF2F6' } } },
+          dataZoom: [
+            { type: 'inside', start: 0, end: 100 },
+            { type: 'slider', height: 16, bottom: 0, start: 0, end: 100 }
+          ],
+          series: series
+        }, true);
+        inst.resize();
       }
     },
     mounted: function () {
+      const self = this;
       this.ensurePer();
       this.load();
+      this.$nextTick(function () { self.renderChart(); });
+    },
+    beforeUnmount: function () {
+      if (this.chart) { this.chart.dispose(); this.chart = null; }
     },
     watch: {
-      site: function () { this.load(); }
+      site: function () { this.load(); },
+      /* 数据一更新就重绘增强图（缩放 / 红点跟着最新数据走） */
+      fast: { handler: function () { this.renderChart(); }, deep: true },
+      show: { handler: function () { this.renderChart(); }, deep: true }
     },
     template: [
       '<div>',
@@ -672,8 +855,12 @@
       '',
       '  <div class="split" style="margin-top:12px">',
       '    <div>',
-      '      <trend-chart title="水质趋势（可勾选参数）" :series="charts"',
-      '                   :thresholds="[{value:28.0,label:\'水温上限 28.0 ℃（红色告警）\',color:\'#991B1B\'},{value:25.5,label:\'偏高提示 25.5 ℃\',color:\'#D97706\'}]" />',
+      '      <div class="card">',
+      '        <div class="card-title">水质时序（可缩放 / 框选 · 异常点标记）',
+      '          <help-dot :info="{ level: \'间接支持\', text: \'滚轮缩放、拖拽底部滑条框选时间轴查看细节；水温曲线上圆点 = 命中「异常界定指标」的数据点（黄 ≥25.5 偏高提示，红 ≥28.0 水温上限告警）。\' }" :label="\'操作说明\'" />',
+      '        </div>',
+      '        <div ref="chartEl" class="chart" style="height:340px"></div>',
+      '      </div>',
       '      <div class="card" style="margin-top:12px">',
       '        <span class="small muted">曲线显示：</span>',
       '        <label class="small" style="margin-left:10px"><input type="checkbox" v-model="show.water_temp"> 水温</label>',
@@ -694,11 +881,7 @@
       '  <!-- 异常界定指标（水质）：红点 / 告警标记依据 -->',
       '  <div class="card" style="margin-top:12px">',
       '    <div class="card-title">异常界定指标（红点 / 告警标记依据）',
-      '      <help-dot level="supported" title="界定依据说明">',
-      '        水温阈值与前端规则 R-TEMP-01 / R-TEMP-02 同口径（大黄鱼高告警线 28.0 ℃、高提示线 25.5 ℃）；',
-      '        不同网箱养不同鱼时，阈值按鱼种温度库自动取值（见管理板块）。',
-      '        溶解氧 / 盐度 / pH / 光照暂未配置界定规则，仅作监测展示。',
-      '      </help-dot>',
+      '      <help-dot :info="{ level: \'间接支持\', text: \'水温阈值与前端规则 R-TEMP-01 / R-TEMP-02 同口径（大黄鱼高告警线 28.0 ℃、高提示线 25.5 ℃）；不同网箱养不同鱼时，阈值按鱼种温度库自动取值（见管理板块）。溶解氧 / 盐度 / pH / 光照暂未配置界定规则，仅作监测展示。\', source: \'鱼种温度库 · 大黄鱼\' }" :label="\'界定依据说明\'" />',
       '    </div>',
       '    <div class="dt-wrap">',
       '      <table class="dt">',

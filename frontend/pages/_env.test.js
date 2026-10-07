@@ -98,6 +98,53 @@ section('共享纯函数');
   assert(H.pausedText(per) === 'site_02、site_03（共2个）', '恢复后只列仍暂停的站点');
 }
 
+section('问题2：时序增强（缩放/框选/红点）+ 异常界定指标');
+assert(sea.template.indexOf('ref="chartEl"') >= 0, '海况页有自绘时序容器 chartEl');
+assert(water.template.indexOf('ref="chartEl"') >= 0, '水质页有自绘时序容器 chartEl');
+assert(sea.template.indexOf('dataZoom') >= 0 || sea.methods.renderChart.toString().indexOf('dataZoom') >= 0,
+  '海况页时序支持 dataZoom（缩放/框选）');
+assert(sea.methods.renderChart.toString().indexOf('markPoint') >= 0, '海况页时序支持 markPoint（异常点）');
+assert(typeof sea.computed.waveDots === 'function' && typeof sea.computed.windDots === 'function',
+  '海况页有浪高/风速异常点计算');
+assert(typeof water.computed.waterDots === 'function' && typeof water.computed.waterLines === 'function',
+  '水质页有水温异常点/阈值线计算');
+assert(sea.watch.fast && sea.watch.fast.deep, '海况页数据更新自动重绘');
+assert(water.watch.fast && water.watch.fast.deep, '水质页数据更新自动重绘');
+
+/* 红点分级逻辑（直接调用 computed 函数验证） */
+{
+  const fast = [
+    { ts: 1, wave_height: 2.0, wind_speed: 10.0 },   /* 正常：不标 */
+    { ts: 2, wave_height: 2.5, wind_speed: 17.1 },   /* 浪高蓝标；风速不到 8 级 */
+    { ts: 3, wave_height: 4.0, wind_speed: 17.2 },   /* 浪高黄标；风速红标 */
+    { ts: 4, wave_height: 6.0, wind_speed: null },   /* 浪高橙标；风速空不标 */
+    { ts: 5, wave_height: 9.0, wind_speed: 20.0 },   /* 浪高红标；风速红标 */
+    { ts: 6, wave_height: null, wind_speed: 30.0 }   /* 浪高空不标；风速红标 */
+  ];
+  const dots = sea.computed.waveDots.call({ fast: fast });
+  const colors = dots.map(function (d) { return d.itemStyle.color; });
+  assert(colors.join(',') === '#1D4ED8,#D97706,#EA580C,#991B1B',
+    '浪高异常点按国标四色分级（蓝/黄/橙/红），正常与空值不标（实际：' + colors.join(',') + '）');
+  const wd = sea.computed.windDots.call({ fast: fast });
+  assert(wd.length === 3, '风速 ≥17.2 m/s 全部标红（含 null 跳过），实际 ' + wd.length + ' 个');
+  const wf = [
+    { ts: 1, water_temp: 25.4 }, { ts: 2, water_temp: 25.5 },
+    { ts: 3, water_temp: 28.0 }, { ts: 4, water_temp: null }
+  ];
+  const wt = water.computed.waterDots.call({ fast: wf });
+  const wc = wt.map(function (d) { return d.itemStyle.color; });
+  assert(wc.join(',') === '#D97706,#991B1B', '水温异常点：25.5 黄、28.0 红，空值跳过（实际：' + wc.join(',') + '）');
+  const wl = water.computed.waterLines.call({});
+  assert(wl.length === 2 && wl[0].yAxis === 28.0 && wl[1].yAxis === 25.5, '水温阈值线 28.0 / 25.5');
+}
+assert(sea.template.indexOf('异常界定指标') >= 0, '海况页含异常界定指标表');
+assert(water.template.indexOf('异常界定指标') >= 0, '水质页含异常界定指标表');
+assert(sea.template.indexOf('GB/T 19721.2') >= 0, '指标表标注浪高依据（国标）');
+assert(sea.template.indexOf('蒲福风级') >= 0, '指标表标注风速依据（蒲福风级）');
+assert(water.template.indexOf('R-TEMP-01') >= 0, '水质指标表标注规则 R-TEMP-01');
+assert(sea.template.indexOf('help-dot') >= 0 && sea.template.indexOf(':info=') >= 0,
+  'help-dot 使用正确的 :info 对象写法');
+
 section('验收第 6 条相关：模板 {{ }} 内无裸枚举字段（与 acceptance.py 同口径）');
 {
   /* 与 scripts/acceptance.py 的 WRAPPED 豁免规则保持一致：
