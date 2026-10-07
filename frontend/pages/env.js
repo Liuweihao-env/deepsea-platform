@@ -83,10 +83,16 @@
     return ids.length ? ids.join('、') + '（共' + ids.length + '个）' : '';
   }
 
+  /* 站点是否应该继续取数/刷新：已暂停 → 不刷新（冻结）；未建状态默认视为运行 */
+  function shouldRefresh(per, siteId) {
+    const p = per && per[siteId];
+    return !p || !p.paused;
+  }
+
   global.__ENV_HELPERS__ = {
     fmtTs: fmtTs, fmtShort: fmtShort, toCsv: toCsv, csvCell: csvCell,
     minutesBetween: minutesBetween, defaultPer: defaultPer,
-    buildPer: buildPer, pausedText: pausedText
+    buildPer: buildPer, pausedText: pausedText, shouldRefresh: shouldRefresh
   };
 
   /* ============================================================
@@ -367,6 +373,10 @@
       this.unsub = API.subscribe(function () { self.tick++; });
       this.load();
       this.$nextTick(function () { self.renderChart(); });
+      /* 轮询：只刷新「未暂停」的当前站点；暂停站点冻结（站点独立） */
+      this.timer = setInterval(function () {
+        if (global.__ENV_HELPERS__.shouldRefresh(self.per, self.site)) self.load();
+      }, 5000);
     },
     beforeUnmount: function () {
       if (this.timer) { clearInterval(this.timer); this.timer = null; }
@@ -374,7 +384,10 @@
       if (this.chart) { this.chart.dispose(); this.chart = null; }
     },
     watch: {
-      site: function () { this.load(); },
+      site: function () {
+        /* 切到已暂停站点：不刷新，保留其冻结的最后数据（站点独立） */
+        if (global.__ENV_HELPERS__.shouldRefresh(this.per, this.site)) this.load();
+      },
       /* 数据一更新就重绘增强图（缩放 / 红点跟着最新数据走） */
       fast: { handler: function () { this.renderChart(); }, deep: true }
     },
@@ -611,7 +624,7 @@
   PAGES['/env/water'] = {
     data: function () {
       return { site: 'site_01', picked: null, series: null,
-               per: null, loadSeq: 0, chart: null,
+               per: null, loadSeq: 0, chart: null, timer: null,
                show: { water_temp: true, dissolved_oxygen: true, light_intensity: false } };
     },
     computed: {
@@ -806,12 +819,20 @@
       this.ensurePer();
       this.load();
       this.$nextTick(function () { self.renderChart(); });
+      /* 轮询：只刷新「未暂停」的当前站点；暂停站点冻结（站点独立） */
+      this.timer = setInterval(function () {
+        if (global.__ENV_HELPERS__.shouldRefresh(self.per, self.site)) self.load();
+      }, 5000);
     },
     beforeUnmount: function () {
+      if (this.timer) { clearInterval(this.timer); this.timer = null; }
       if (this.chart) { this.chart.dispose(); this.chart = null; }
     },
     watch: {
-      site: function () { this.load(); },
+      site: function () {
+        /* 切到已暂停站点：不刷新，保留其冻结的最后数据（站点独立） */
+        if (global.__ENV_HELPERS__.shouldRefresh(this.per, this.site)) this.load();
+      },
       /* 数据一更新就重绘增强图（缩放 / 红点跟着最新数据走） */
       fast: { handler: function () { this.renderChart(); }, deep: true },
       show: { handler: function () { this.renderChart(); }, deep: true }

@@ -210,6 +210,31 @@ assert(water.template.indexOf('导出 CSV') >= 0, '水质页有导出 CSV 按钮
   assert(name2 === '水质原始数据_模拟养殖站点.csv', '水质导出文件名用中文站点名（实际：' + name2 + '）');
 }
 
+section('问题4：站点独立 + 切换（per-site 状态互不影响）');
+{
+  const per = H.buildPer(sandbox.API.sites());
+  assert(per.site_01 !== per.site_02, '每个站点是独立状态对象（互不引用）');
+  per.site_01.paused = true;
+  per.site_01.minutes = 1440;
+  assert(per.site_02.paused === false && per.site_02.minutes === 60,
+    '修改 site_01 不影响 site_02 / site_03 / site_04 的状态与时间窗');
+  assert(per.site_03.paused === false && per.site_04.paused === false, '其余站点保持运行中');
+}
+{
+  assert(H.shouldRefresh(null, 'site_01') === true, 'per 未初始化时默认刷新（运行）');
+  assert(H.shouldRefresh({ site_01: { paused: false } }, 'site_01') === true, '运行中站点刷新');
+  assert(H.shouldRefresh({ site_01: { paused: true } }, 'site_01') === false, '暂停站点不刷新（冻结）');
+  assert(H.shouldRefresh({ site_01: { paused: true } }, 'site_02') === true,
+    'site_01 暂停不影响 site_02 刷新');
+}
+assert(String(sea.mounted).indexOf('setInterval') >= 0 && String(sea.mounted).indexOf('5000') >= 0,
+  '海况页有 5 秒轮询');
+assert(String(water.mounted).indexOf('setInterval') >= 0 && String(water.mounted).indexOf('5000') >= 0,
+  '水质页有 5 秒轮询');
+assert(String(sea.watch.site).indexOf('shouldRefresh') >= 0, '海况页切换站点时跳过已暂停站点');
+assert(String(water.watch.site).indexOf('shouldRefresh') >= 0, '水质页切换站点时跳过已暂停站点');
+assert(sea.template.indexOf('pauseText') >= 0, '调试面板显示暂停聚合文本');
+
 section('验收第 6 条相关：模板 {{ }} 内无裸枚举字段（与 acceptance.py 同口径）');
 {
   /* 与 scripts/acceptance.py 的 WRAPPED 豁免规则保持一致：
