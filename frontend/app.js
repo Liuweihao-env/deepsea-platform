@@ -120,12 +120,30 @@
         if (p.indexOf('/mgmt') === 0) return 'mgmt';
         return 'global';
       },
-      /* 左侧菜单只显示当前板块 */
+      /* 左侧菜单只显示当前板块。
+         🔴 2026-10-06 改：`ready` 不再看菜单里的写死值，改成**按实际注册的路由自动判断** ——
+            只要某个组员的页面文件里注册了 PAGES['/fish/growth']，这一项就自动亮起来。
+            目的：组员加页面时**完全不用碰 app.js**（这是公共文件，多人改必冲突）。
+            菜单里 ready:false 的项仍然留着，作为「计划要做但还没做」的占位。 */
       sideGroups: function () {
         const k = this.tabKey;
         const want = { overview: '平台', fish: '鱼类', env: '环境',
-                       struct: '结构安全', ai: '智能', global: '跨板块' }[k];
-        return this.menu.filter(function (g) { return g.group === want; });
+                       struct: '结构安全', ai: '智能', global: '跨板块',
+                       mgmt: '管理' }[k];
+        /* ready 按**实际注册的路由**判断，不看菜单里的写死值 ——
+           这样组员只要注册了 PAGES['/fish/growth']，菜单项就自动从「·待建」变成可点。 */
+        const reg = window.PAGES || {};
+        return this.menu
+          .filter(function (g) { return g.group === want; })
+          .map(function (g) {
+            return {
+              group: g.group,
+              owner: g.owner,
+              items: g.items.map(function (it) {
+                return { path: it.path, label: it.label, ready: !!reg[it.path] };
+              })
+            };
+          });
       },
       /* 当前页面的组件 */
       page: function () {

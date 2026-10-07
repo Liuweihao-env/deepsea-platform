@@ -89,13 +89,18 @@ PAGES = [
 def check_1(base):
     # 页面是前端路由（hash），服务端只需保证外壳与全部脚本可达；
     # 真正"不白屏"由最后的浏览器人工清单确认。
+    #
+    # 2026-10-06 改：pages.js 已按板块拆成 pages/*.js（一人一个文件，避免多人冲突）。
+    # 这里改成**自动发现**：列目录下的页面文件、扫出里面注册的路由 ——
+    # 组员加了新页面，验收会自动认出来，不用改这个脚本（也就不会冲突）。
     ok, bad = 0, []
-    for name, rel in [("index.html", "/index.html"), ("app.css", "/app.css"),
-                      ("mock.js", "/mock.js"), ("api-remote.js", "/api-remote.js"),
-                      ("components.js", "/components.js"), ("pages.js", "/pages.js"),
-                      ("app.js", "/app.js"),
-                      ("vue.global.prod.js", "/vendor/vue.global.prod.js"),
-                      ("echarts.min.js", "/vendor/echarts.min.js")]:
+    shell = [("index.html", "/index.html"), ("app.css", "/app.css"),
+             ("mock.js", "/mock.js"), ("api-remote.js", "/api-remote.js"),
+             ("components.js", "/components.js"),
+             ("app.js", "/app.js"),
+             ("vue.global.prod.js", "/vendor/vue.global.prod.js"),
+             ("echarts.min.js", "/vendor/echarts.min.js")]
+    for name, rel in shell:
         try:
             st, _ = raw(base, rel)
             if st == 200:
@@ -105,16 +110,78 @@ def check_1(base):
         except Exception as e:                      # noqa: BLE001
             bad.append("%s(%s)" % (name, e))
 
-    # 13 个路由都要在 pages.js 里有定义
-    _, js = raw(base, "/pages.js")
-    missing = [n for n, p in PAGES if ("P['%s']" % p) not in js]
+    # 页面文件：直接读磁盘，列出 pages/ 下所有 .js
+    pages_dir = os.path.join(ROOT, "frontend", "pages")
+    # 跳过 _ 开头的文件：约定 `_` = 模板/草稿，不是真页面
+    files = sorted(f for f in os.listdir(pages_dir)
+                   if f.endswith(".js") and not f.startswith("_")) \
+        if os.path.isdir(pages_dir) else []
+    if not files:
+        bad.append("frontend/pages/ 下没有页面文件")
 
-    if ok == 9 and not missing:
-        rec(1, "17 个页面的资源与路由齐备", PASS,
-            "外壳 + 9 个静态资源全部 200；17 个路由在 pages.js 里都有定义")
+    # 每个页面文件都要能通过 HTTP 取到
+    js_all = ""
+    for f in files:
+        try:
+            st, body = raw(base, "/pages/" + f)
+            if st == 200:
+                ok += 1
+                js_all += body
+            else:
+                bad.append("pages/%s(HTTP %s)" % (f, st))
+        except Exception as e:                      # noqa: BLE001
+            bad.append("pages/%s(%s)" % (f, e))
+
+    # 自动扫出所有注册的路由
+    found = set(re.findall(r"PAGES\['([^']+)'\]\s*=", js_all))
+    # 预期的 13+4 个路由，必须都在
+    missing = [n for n, p in PAGES if p not in found]
+
+    # 页面自检：每个注册的路由都要有 template（否则页面打开是白的）
+    no_tpl = [p for p in found if ("PAGES['%s']" % p) in js_all and p not in _routes_with_template(js_all)]
+
+    if not bad and not missing:
+        rec(1, "%d 个页面的资源与路由齐备" % len(PAGES), PASS,
+            "外壳 + %d 个静态资源全部 200；pages/ 下 %d 个文件共注册 %d 条路由，"
+            "预期的 %d 个全部就位%s"
+            % (ok, len(files), len(found), len(PAGES),
+               ("；另有 %d 条新路由" % (len(found) - len(PAGES))) if len(found) > len(PAGES) else ""))
     else:
-        rec(1, "17 个页面的资源与路由齐备", FAIL,
-            "缺失资源 %s；缺失路由定义 %s" % (bad or "无", missing or "无"))
+        rec(1, "%d 个页面的资源与路由齐备" % len(PAGES), FAIL,
+            "缺失资源 %s；缺失路由 %s" % (bad or "无", missing or "无"))
+
+
+def read_pages(base):
+    """把所有页面文件（frontend/pages/*.js）的源码拼成一份返回。
+
+    2026-10-06：pages.js 拆成 pages/*.js 之后，原来读 "/pages.js" 的检查全部 404。
+    统一走这个函数 —— 检查逻辑还是把前端当一份源码看，不用逐个文件改。
+    """
+    d = os.path.join(ROOT, "frontend", "pages")
+    files = sorted(f for f in os.listdir(d) if f.endswith(".js")) if os.path.isdir(d) else []
+    out = []
+    for f in files:
+        try:
+            _, body = raw(base, "/pages/" + f)
+            out.append(body)
+        except Exception:                                   # noqa: BLE001
+            pass
+    return "\n".join(out)
+
+
+def _routes_with_template(js):
+    """扫出「注册了路由、并且带 template」的页面。
+
+    为什么要查 template：没有 template 的页面点进去就是白屏，
+    而白屏是最容易漏掉的一类问题（路由存在 ≠ 页面能看）。
+    """
+    out = set()
+    for m in re.finditer(r"PAGES\['([^']+)'\]\s*=\s*\{", js):
+        route = m.group(1)
+        tail = js[m.end():m.end() + 4000]
+        if re.search(r"\btemplate\s*:", tail):
+            out.add(route)
+    return out
 
 
 # ======================================================================
@@ -150,7 +217,7 @@ def check_2(base):
     rule_ok = ("R-TEMP-01" in mock) and ("water_temp >= 28" in mock)
 
     # ④ 越限页面的曲线卡挂了阈值参考线（图上能看出越限）
-    _, pages = raw(base, "/pages.js")
+    pages = read_pages(base)
     threshold_ok = ("28.0" in pages or "28" in pages) and ("水温上限" in pages) and ("#/trace" in pages)
 
     # ⑤ 告警可追溯：按编号能反查到「哪条数据触发的、命中哪条规则」
@@ -259,7 +326,7 @@ def check_4(base):
     src_ok = bool(srcs) and srcs <= allowed
 
     # ③ 前端每页都有来源标签组件（静态检查）
-    _, js = raw(base, "/pages.js")
+    js = read_pages(base)
     pages_with_tag = js.count("<page-head")
     tag_ok = pages_with_tag >= 13
 
@@ -296,7 +363,7 @@ def check_extra(base):
         problems.append("缺 light_intensity（裁定 6）")
     # 裁定 N2：灯具字段叫 light_dimming_pct，不叫 light_brightness
     devs = get(base, "/api/devices")
-    _, js = raw(base, "/pages.js")
+    js = read_pages(base)
     if "light_brightness" in js:
         problems.append("仍在用 light_brightness（应已改名 light_dimming_pct，裁定 N2）")
     if not any(dd.get("device_id") == "light_01" for dd in devs):
@@ -367,7 +434,7 @@ def check_enum_labels(base):
         return rec(6, "界面不出现裸英文枚举", FAIL,
                    "检查器自测未通过（样例 %s）—— 这道检查本身失效了，结果不可信" % bad)
 
-    _, js = raw(base, "/pages.js")
+    js = read_pages(base)
     _, comp = raw(base, "/components.js")
 
     problems = []
