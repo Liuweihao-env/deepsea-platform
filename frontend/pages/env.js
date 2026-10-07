@@ -258,7 +258,7 @@
                   r.wave_height, r.wind_speed, r.current_speed, r.air_temp];
         });
         const csv = H.toCsv(['时间', '站点', '来源', '质量', '浪高 (m)', '风速 (m/s)', '流速 (m/s)', '气温 (℃)'], rows);
-        downloadCsv('海况原始数据_' + this.site + '.csv', csv);
+        downloadCsv('海况原始数据_' + this.siteName() + '.csv', csv);
       },
       /* 显式拉取最新 —— 全平台唯一的联网动作 */
       doRefresh: function () {
@@ -517,7 +517,7 @@
       '',
       '  <!-- 原始数据：放在海况时序下方；可自定义时间窗、可导出；切观测站点即见公开历史数据 -->',
       '  <div class="card" style="margin-top:12px">',
-      '    <div class="card-title">原始数据（最近 {{ activePer.minutes }} 分钟窗口 · {{ fast.length }} 条）</div>',
+      '    <div class="card-title">原始数据（最近 {{ activePer.minutes }} 分钟 · {{ fast.length }} 条 · {{ isObs ? \'NOAA NDBC 公开历史数据\' : \'仿真数据\' }}）</div>',
       '    <div class="row" style="align-items:center">',
       '      <time-range :model-value="activePer.minutes" @update:model-value="onMinutes" />',
       '      <input type="number" min="5" max="1440" :value="activePer.minutes" @change="onCustomMin"',
@@ -685,6 +685,11 @@
                     function (d) { if (seq === self.loadSeq) self.series = d; });
       },
       setSite: function (sid) { this.site = sid; },
+      siteName: function () {
+        const sid = this.site;
+        const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
+        return s ? s.site_name : sid;
+      },
       time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
       fmtTs: function (ts) { return global.__ENV_HELPERS__.fmtTs(ts); },
       srcCn: function (src) { return global.__ENV_CN__.srcCn(src); },
@@ -721,7 +726,7 @@
                   r.water_temp, r.dissolved_oxygen, r.light_intensity];
         });
         const csv = H.toCsv(['时间', '站点', '来源', '质量', '水温 (℃)', '溶解氧 (mg/L)', '光照 (lux)'], rows);
-        downloadCsv('水质原始数据_' + this.site + '.csv', csv);
+        downloadCsv('水质原始数据_' + this.siteName() + '.csv', csv);
       },
       /* 可交互时序（问题 2）：缩放 / 框选 / 异常点标记；光照强度走右轴（量级差太大） */
       renderChart: function () {
@@ -915,7 +920,7 @@
       '',
       '  <!-- 原始数据：快变量 + 慢变量两张表；可自定义时间窗、可导出 -->',
       '  <div class="card" style="margin-top:12px">',
-      '    <div class="card-title">原始数据（最近 {{ activePer.minutes }} 分钟窗口）</div>',
+      '    <div class="card-title">原始数据（最近 {{ activePer.minutes }} 分钟 · {{ isObs ? \'NOAA NDBC 公开历史数据\' : \'仿真数据\' }}）</div>',
       '    <div class="row" style="align-items:center">',
       '      <time-range :model-value="activePer.minutes" @update:model-value="onMinutes" />',
       '      <input type="number" min="5" max="1440" :value="activePer.minutes" @change="onCustomMin"',

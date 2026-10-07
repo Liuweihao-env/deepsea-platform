@@ -24,6 +24,13 @@ sandbox.API = {
     ];
   }
 };
+/* 导出 CSV 需要的最小 DOM mock（downloadCsv 会创建 <a> 并点击） */
+sandbox.document = {
+  createElement: function () { return { click: function () {}, remove: function () {} }; },
+  body: { appendChild: function () {} }
+};
+sandbox.URL = { createObjectURL: function () { return 'blob:mock'; }, revokeObjectURL: function () {} };
+sandbox.Blob = function () {};
 vm.createContext(sandbox);
 vm.runInContext(code, sandbox, { filename: 'env.js' });
 
@@ -144,6 +151,64 @@ assert(sea.template.indexOf('蒲福风级') >= 0, '指标表标注风速依据�
 assert(water.template.indexOf('R-TEMP-01') >= 0, '水质指标表标注规则 R-TEMP-01');
 assert(sea.template.indexOf('help-dot') >= 0 && sea.template.indexOf(':info=') >= 0,
   'help-dot 使用正确的 :info 对象写法');
+
+section('问题3：原始数据区（时间窗 / CSV 导出 / 公开数据可见）');
+assert(sea.template.indexOf('<time-range') >= 0, '海况页有 time-range 时间窗');
+assert(sea.template.indexOf('自定义分钟数') >= 0, '海况页有自定义分钟输入');
+assert(sea.template.indexOf('导出 CSV') >= 0, '海况页有导出 CSV 按钮');
+assert(sea.template.indexOf('fmtTs(r.ts)') >= 0, '原始数据表时间用年/月/日格式（无字母混用）');
+assert(sea.template.indexOf('NOAA NDBC 公开历史数据') >= 0, '原始数据标题动态标注公开历史数据/仿真');
+assert(sea.template.indexOf('backend/api/env.py') >= 0, '精确历史日期接口的降级说明已展示');
+assert(water.template.indexOf('快变量') >= 0 && water.template.indexOf('慢变量（盐度 / pH）') >= 0,
+  '水质页原始数据分快变量/慢变量两张表');
+assert(water.template.indexOf('导出 CSV') >= 0, '水质页有导出 CSV 按钮');
+
+/* 功能级验证：mock DOM 捕获实际导出的 CSV 与文件名 */
+{
+  let capturedCsv = null, capturedName = null;
+  sandbox.Blob = function (parts) { capturedCsv = parts[0]; };
+  sandbox.URL.createObjectURL = function () { return 'blob:mock'; };
+  sandbox.URL.revokeObjectURL = function () {};
+  sandbox.document.createElement = function () {
+    const el = { click: function () {}, remove: function () {} };
+    Object.defineProperty(el, 'download', { set: function (v) { capturedName = v; } });
+    return el;
+  };
+  const seaInst = {
+    site: 'site_01',
+    fast: [{ ts: 1760000000000, site_id: 'site_01', source: 'simulated', quality: 'good',
+             wave_height: 1.5, wind_speed: 8.3, current_speed: 0.6, air_temp: 22.4 }]
+  };
+  seaInst.siteName = function () { return sea.methods.siteName.call(seaInst); };
+  seaInst.exportCsv = sea.methods.exportCsv;
+  seaInst.exportCsv();
+  assert(capturedCsv && capturedCsv.indexOf('\ufeff时间,站点,来源,质量,浪高 (m),风速 (m/s),流速 (m/s),气温 (℃)') === 0,
+    '海况导出 CSV 表头完整且带 UTF-8 BOM');
+  assert(capturedCsv && capturedCsv.indexOf('仿真数据') >= 0 && capturedCsv.indexOf('良好') >= 0,
+    '海况导出 CSV 来源/质量为中文（无裸英文）');
+  assert(capturedName === '海况原始数据_模拟养殖站点.csv',
+    '海况导出文件名用中文站点名（实际：' + capturedName + '）');
+}
+{
+  const wInst = {
+    site: 'site_01',
+    fast: [{ ts: 1760000000000, site_id: 'site_01', source: 'simulated', quality: 'good',
+             water_temp: 18.6, dissolved_oxygen: 9.2, light_intensity: 12000 }]
+  };
+  wInst.siteName = function () { return water.methods.siteName.call(wInst); };
+  wInst.exportCsv = water.methods.exportCsv;
+  let csv2 = null, name2 = null;
+  sandbox.Blob = function (parts) { csv2 = parts[0]; };
+  sandbox.document.createElement = function () {
+    const el = { click: function () {}, remove: function () {} };
+    Object.defineProperty(el, 'download', { set: function (v) { name2 = v; } });
+    return el;
+  };
+  wInst.exportCsv();
+  assert(csv2 && csv2.indexOf('\ufeff时间,站点,来源,质量,水温 (℃),溶解氧 (mg/L),光照 (lux)') === 0,
+    '水质导出 CSV 表头完整且带 UTF-8 BOM');
+  assert(name2 === '水质原始数据_模拟养殖站点.csv', '水质导出文件名用中文站点名（实际：' + name2 + '）');
+}
 
 section('验收第 6 条相关：模板 {{ }} 内无裸枚举字段（与 acceptance.py 同口径）');
 {
