@@ -135,6 +135,14 @@
       },
       /* 已暂停站点聚合文本（调试面板顶部红字） */
       pauseText: function () { return global.__ENV_HELPERS__.pausedText(this.per); },
+      /* 风暴细化（问题 5）：非「整体」时给出诚实降级提示（后端待挂载 api/env.py） */
+      stormNote: function () {
+        const p = this.per && this.per[this.site];
+        if (!p || !p.stormType || p.stormType === 'all') return '';
+        const mode = (p.stormType === 'wind') ? '仅风速异常' : '仅浪高异常';
+        return '细化模式（' + mode + '）需要后端扩展接口（backend/api/env.py 已提交，队长挂载后生效）；' +
+               '当前触发大风大浪仍按整体模式模拟。';
+      },
       /* 数据来源：观测站点实时读的是本地缓存，不是每次渲染去联网 */
       srcLabel: function () {
         if (this.isObs) return 'NOAA NDBC 公开浮标实测（读本地缓存）';
@@ -255,6 +263,11 @@
         if (!per) return;
         per.storm = !per.storm;
         if (sid === this.site) this.load();
+      },
+      /* 风暴细化选项（仅当前站点自己的选项，per-site 存储） */
+      setStormType: function (v) {
+        this.ensurePer();
+        this.activePer.stormType = v;
       },
       /* 原始数据导出 CSV（UTF-8 BOM，Excel 打开不乱码） */
       exportCsv: function () {
@@ -598,6 +611,19 @@
       '          </tr>',
       '        </tbody>',
       '      </table>',
+      '    </div>',
+      '    <!-- 大风大浪细化（问题 5）：整体 / 仅风速异常 / 仅浪高异常，按当前站点独立保存 -->',
+      '    <div class="row" style="margin-top:10px;align-items:center;flex-wrap:wrap">',
+      '      <span class="small muted">大风大浪细化（当前站点 {{ siteName() }}）：</span>',
+      '      <label class="small"><input type="radio" name="stormType"',
+      '             :checked="(per[site] && per[site].stormType) === \'all\'" @change="setStormType(\'all\')"> 整体大风大浪</label>',
+      '      <label class="small"><input type="radio" name="stormType"',
+      '             :checked="(per[site] && per[site].stormType) === \'wind\'" @change="setStormType(\'wind\')"> 仅风速异常</label>',
+      '      <label class="small"><input type="radio" name="stormType"',
+      '             :checked="(per[site] && per[site].stormType) === \'wave\'" @change="setStormType(\'wave\')"> 仅浪高异常</label>',
+      '    </div>',
+      '    <div v-if="stormNote" class="hint" style="margin-top:6px;background:#FFFBEB;border-color:#FDE68A">',
+      '      {{ stormNote }}',
       '    </div>',
       '  </div>',
       '',

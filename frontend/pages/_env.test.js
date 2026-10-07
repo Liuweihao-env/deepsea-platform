@@ -235,6 +235,28 @@ assert(String(sea.watch.site).indexOf('shouldRefresh') >= 0, '海况页切换站
 assert(String(water.watch.site).indexOf('shouldRefresh') >= 0, '水质页切换站点时跳过已暂停站点');
 assert(sea.template.indexOf('pauseText') >= 0, '调试面板显示暂停聚合文本');
 
+section('问题5：调试面板（暂停聚合 + 风暴细化 + 状态显示）');
+assert(sea.template.indexOf('调试面板 · 仿真控制') >= 0, '海况页调试面板标题');
+assert(sea.template.indexOf('仅风速异常') >= 0 && sea.template.indexOf('仅浪高异常') >= 0,
+  '海况页有风暴细化选项（整体/仅风速/仅浪高）');
+assert(sea.template.indexOf('stormNote') >= 0, '海况页显示细化降级提示');
+assert(typeof sea.methods.setStormType === 'function', '海况页 methods.setStormType 已定义');
+{
+  const note = sea.computed.stormNote;
+  assert(note.call({ per: null, site: 'site_01' }) === '', 'per 未初始化时无降级提示');
+  assert(note.call({ per: { site_01: { stormType: 'all' } }, site: 'site_01' }) === '',
+    '整体大风大浪无降级提示');
+  const w = note.call({ per: { site_01: { stormType: 'wind' } }, site: 'site_01' });
+  assert(w.indexOf('仅风速异常') >= 0 && w.indexOf('backend/api/env.py') >= 0,
+    '仅风速异常提示说明降级原因与挂载文件');
+  const v = note.call({ per: { site_01: { stormType: 'wave' } }, site: 'site_01' });
+  assert(v.indexOf('仅浪高异常') >= 0, '仅浪高异常提示');
+}
+assert(water.template.indexOf('触发水温骤升') >= 0 && water.template.indexOf('模拟设备离线') >= 0,
+  '水质页调试面板含水温骤升/设备离线');
+assert(sea.template.indexOf('暂停生成') >= 0 && water.template.indexOf('暂停生成') >= 0,
+  '两页调试面板含暂停生成按钮');
+
 section('验收第 6 条相关：模板 {{ }} 内无裸枚举字段（与 acceptance.py 同口径）');
 {
   /* 与 scripts/acceptance.py 的 WRAPPED 豁免规则保持一致：
