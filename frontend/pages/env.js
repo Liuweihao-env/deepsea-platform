@@ -21,16 +21,86 @@
      双击 验收检查.bat，8 项全过才能发 PR。全过不了就别发 —— 会把别人的页面一起弄坏。
 
    建立：2026-10-06（从 pages.js 拆出）
+   重构：2026-10-07（两页布局 = 站点切换 → 数值卡 → 时序 → 事件 → 异常界定指标 →
+                   原始数据 → 调试面板；站点按站点独立，互不影响）
    ============================================================ */
 (function (global) {
   'use strict';
   /* 自己初始化，不依赖文件加载顺序 —— 这样谁先谁后都不会出错 */
   const PAGES = global.PAGES || (global.PAGES = {});
 
+  /* ============================================================
+     共享纯函数（挂 global.__ENV_HELPERS__ 供页面与测试使用）
+     ============================================================ */
+  const pad = function (n) { return String(n).padStart(2, '0'); };
+
+  /* 时间显示统一为「年/月/日 时:分:秒」，不带字母（用户要求：不可字母和汉字混用） */
+  function fmtTs(ts) {
+    if (ts == null) return '—';
+    const d = new Date(ts);
+    return d.getFullYear() + '年' + pad(d.getMonth() + 1) + '月' + pad(d.getDate()) + '日 ' +
+           pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  }
+
+  /* 图表坐标轴短标签：MM-DD HH:mm（跨天也能看清日期） */
+  function fmtShort(ts) {
+    const d = new Date(ts);
+    return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' +
+           pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  /* CSV 单元格转义：含逗号 / 引号 / 换行时加引号并转义内部引号 */
+  function csvCell(v) {
+    const s = (v == null) ? '' : String(v);
+    if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+
+  /* 生成 CSV 文本（带 UTF-8 BOM，Excel 打开不乱码） */
+  function toCsv(headers, rows) {
+    return '\ufeff' + headers.map(csvCell).join(',') + '\n' +
+           rows.map(function (r) { return r.map(csvCell).join(','); }).join('\n');
+  }
+
+  /* 两个时间戳之间的分钟数（至少 1 分钟） */
+  function minutesBetween(aTs, bTs) {
+    return Math.max(1, Math.round(Math.abs((bTs || 0) - (aTs || 0)) / 60000));
+  }
+
+  /* 每个站点的独立状态（站点独立性：对一个站点的操作不影响其他站点） */
+  function defaultPer() {
+    return { minutes: 60, paused: false, storm: false, heat: false, offline: false, stormType: 'all' };
+  }
+  function buildPer(sites) {
+    const per = {};
+    (sites || []).forEach(function (s) { per[s.site_id] = defaultPer(); });
+    return per;
+  }
+
+  /* 已暂停站点聚合文本：site_01、site_03（共2个） */
+  function pausedText(per) {
+    const ids = Object.keys(per || {}).filter(function (k) { return per[k].paused; });
+    return ids.length ? ids.join('、') + '（共' + ids.length + '个）' : '';
+  }
+
+  global.__ENV_HELPERS__ = {
+    fmtTs: fmtTs, fmtShort: fmtShort, toCsv: toCsv, csvCell: csvCell,
+    minutesBetween: minutesBetween, defaultPer: defaultPer,
+    buildPer: buildPer, pausedText: pausedText
+  };
+
+  /* ============================================================
+     海况页 /env/sea
+     布局（自上而下）：
+       站点切换（顶部） → 数据来源（NDBC 直连） → 数值卡 → 时序 + 事件 →
+       异常界定指标 → 原始数据 → 调试面板（仿真控制）→ 底部操作条
+     ============================================================ */
   PAGES['/env/sea'] = {
     data: function () {
-      return { minutes: 60, site: 'site_01', storm: false, picked: null, series: null,
-               tick: 0, unsub: null, refreshing: false, refreshMsg: '', refreshOk: null };
+      return { site: 'site_01', picked: null, series: null,
+               tick: 0, unsub: null, timer: null,
+               refreshing: false, refreshMsg: '', refreshOk: null,
+               per: null, loadSeq: 0 };
     },
     computed: {
       fast: function () { return this.series ? this.series.fast : []; },
@@ -53,11 +123,15 @@
       ndbcAny: function () {
         return this.ndbcList.filter(function (s) { return s.has_cache; }).length;
       },
+      /* 当前站点的独立状态（默认给一个，防止模板取到 undefined） */
+      activePer: function () {
+        return (this.per && this.per[this.site]) || global.__ENV_HELPERS__.defaultPer();
+      },
+      /* 已暂停站点聚合文本（调试面板顶部红字） */
+      pauseText: function () { return global.__ENV_HELPERS__.pausedText(this.per); },
       /* 数据来源：观测站点实时读的是本地缓存，不是每次渲染去联网 */
       srcLabel: function () {
-        if (this.isObs) {
-          return 'NOAA NDBC 公开浮标实测（读本地缓存）';
-        }
+        if (this.isObs) return 'NOAA NDBC 公开浮标实测（读本地缓存）';
         return '仿真生成（模拟养殖站点）';
       },
       charts: function () {
@@ -70,7 +144,6 @@
         /* 由真实数据算出的事件：越限即列为事件（不做假数据）。
            🔴 2026-10-06 浪高阈值对齐国标（GB/T 19721.2 / 海浪警报级别）：
               蓝色 2.5~3.9 m / 黄色 4.0~5.9 / 橙色 6.0~8.9 / 红色 ≥9.0 m。
-              原来把 3.0 m 叫「红色」是错的 —— 国标里 3.0 m 连黄色都不到。
            ⚠️ 2026-10-06 教训：这段当时漏了 `const out = [];` 一行，
               结果 events 计算属性每次都抛 ReferenceError。
               **Vue 会把计算属性里的异常吞掉**，页面照常渲染、只是事件列表永远是空的 ——
@@ -82,9 +155,9 @@
           if (w == null) return;
           let lv = null, note = '';
           if (w >= 9.0)      { lv = 'red';    note = '红色警报级（≥9.0 m）'; }
-          else if (w >= 6.0) { lv = 'red';    note = '橙色警报级（≥6.0 m）'; }
-          else if (w >= 4.0) { lv = 'orange'; note = '黄色警报级 · 灾害性海浪（≥4.0 m）'; }
-          else if (w >= 2.5) { lv = 'yellow'; note = '蓝色警报级 · 国家海浪警报起始（≥2.5 m）'; }
+          else if (w >= 6.0) { lv = 'orange'; note = '橙色警报级（≥6.0 m）'; }
+          else if (w >= 4.0) { lv = 'yellow'; note = '黄色警报级 · 灾害性海浪（≥4.0 m）'; }
+          else if (w >= 2.5) { lv = 'blue';   note = '蓝色警报级 · 国家海浪警报起始（≥2.5 m）'; }
           if (lv) {
             out.push({ id: 'w' + r.ts, ts: r.ts, level: lv,
                        text: '浪高 ' + w + ' m —— ' + note });
@@ -94,10 +167,21 @@
       }
     },
     methods: {
+      /* 站点独立状态兜底：API.sites() 可能晚于 data() 返回，这里补齐 */
+      ensurePer: function () {
+        if (!this.per) this.per = {};
+        const H = global.__ENV_HELPERS__;
+        API.sites().forEach(function (s) {
+          if (!this.per[s.site_id]) this.per[s.site_id] = H.defaultPer();
+        }.bind(this));
+      },
       load: function () {
         const self = this;
-        API.resolve(API.env(this.site, this.minutes, { storm: this.storm }),
-                    function (d) { self.series = d; });
+        this.ensurePer();
+        const p = this.activePer;
+        const seq = ++this.loadSeq;
+        API.resolve(API.env(this.site, p.minutes, { storm: p.storm }),
+                    function (d) { if (seq === self.loadSeq) self.series = d; });
       },
       siteName: function () {
         const sid = this.site;
@@ -106,6 +190,46 @@
       },
       time: function (ts) {
         return new Date(ts).toLocaleString('zh-CN', { hour12: false });
+      },
+      fmtTs: function (ts) { return global.__ENV_HELPERS__.fmtTs(ts); },
+      /* 界面不许裸英文（硬规矩 3）：来源 / 质量统一转中文 */
+      srcCn: function (src) { return global.__ENV_CN__.srcCn(src); },
+      qCn: function (q) { return global.__ENV_CN__.qCn(q); },
+      /* 顶部站点切换 */
+      setSite: function (sid) { this.site = sid; },
+      /* 时间窗（公共件 / 自定义分钟数）—— 只改当前站点自己的窗口 */
+      onMinutes: function (v) {
+        this.ensurePer();
+        this.activePer.minutes = v;
+        this.load();
+      },
+      onCustomMin: function (e) {
+        this.ensurePer();
+        const v = parseInt(e.target.value, 10);
+        if (v >= 5 && v <= 1440) { this.activePer.minutes = v; this.load(); }
+      },
+      /* 调试面板：暂停 / 恢复 —— 只影响被操作的站点，其他站点不受任何影响 */
+      togglePause: function (sid) {
+        const per = this.per[sid];
+        if (!per) return;
+        per.paused = !per.paused;
+        if (sid === this.site && !per.paused) this.load();
+      },
+      toggleStorm: function (sid) {
+        const per = this.per[sid];
+        if (!per) return;
+        per.storm = !per.storm;
+        if (sid === this.site) this.load();
+      },
+      /* 原始数据导出 CSV（UTF-8 BOM，Excel 打开不乱码） */
+      exportCsv: function () {
+        const H = global.__ENV_HELPERS__;
+        const rows = this.fast.map(function (r) {
+          return [H.fmtTs(r.ts), r.site_id, srcCn(r.source), qCn(r.quality),
+                  r.wave_height, r.wind_speed, r.current_speed, r.air_temp];
+        });
+        const csv = H.toCsv(['时间', '站点', '来源', '质量', '浪高 (m)', '风速 (m/s)', '流速 (m/s)', '气温 (℃)'], rows);
+        downloadCsv('海况原始数据_' + this.site + '.csv', csv);
       },
       /* 显式拉取最新 —— 全平台唯一的联网动作 */
       doRefresh: function () {
@@ -149,20 +273,34 @@
     },
     mounted: function () {
       const self = this;
+      this.ensurePer();
       this.unsub = API.subscribe(function () { self.tick++; });
       this.load();
     },
-    beforeUnmount: function () { if (this.unsub) { this.unsub(); this.unsub = null; } },
+    beforeUnmount: function () {
+      if (this.timer) { clearInterval(this.timer); this.timer = null; }
+      if (this.unsub) { this.unsub(); this.unsub = null; }
+    },
     watch: {
-      minutes: function () { this.load(); },
-      site: function () { this.load(); },
-      storm: function () { this.load(); }
+      site: function () { this.load(); }
     },
     template: [
       '<div>',
       '  <page-head title="环境 · 海况"',
       '    desc="浪高 / 风速 / 流速 / 气温。观测站点为 NOAA NDBC 公开浮标实测，养殖站点为仿真生成"',
       '    :sources="isObs ? [\'public\'] : [\'simulated\']" />',
+      '',
+      '  <!-- 站点切换（顶部）：每个站点独立，切换互不影响 -->',
+      '  <div class="card" style="margin-bottom:12px">',
+      '    <div class="row" style="align-items:center;gap:8px">',
+      '      <span class="small muted">站点：</span>',
+      '      <button v-for="s in API.sites()" :key="s.site_id"',
+      '              :class="{ primary: site === s.site_id }" style="padding:3px 10px"',
+      '              @click="setSite(s.site_id)">{{ s.site_name }}</button>',
+      '      <span style="flex:1"></span>',
+      '      <span class="small" :style="{ color: isObs ? \'#166534\' : \'#92400E\' }">{{ srcLabel }}</span>',
+      '    </div>',
+      '  </div>',
       '',
       '  <!-- NDBC 直连面板：说明数据从哪来、缓存新不新、一键拉最新 -->',
       '  <div class="card" style="margin-bottom:12px">',
@@ -178,7 +316,7 @@
       '        <span v-else style="color:#92400E"> —— ⚠️ 这是<b>模拟养殖站点，数据是仿真生成的</b></span>',
       '      </div>',
       '      <div v-if="!isObs" style="margin-top:6px">',
-      '        <b>想看真实浮标数据？</b>点下面任意一个浮标行，或把底部「站点」切到 <b>NDBC 观测站点</b>。',
+      '        <b>想看真实浮标数据？</b>点下面任意一个浮标行，或点上方任意一个 <b>NDBC 观测站点</b>。',
       '      </div>',
       '    </div>',
       '',
@@ -247,25 +385,139 @@
       '    </div>',
       '  </div>',
       '',
+      '  <!-- 异常界定指标：让人一眼看出「数据到什么程度会被标记/告警」（问题 3） -->',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title">异常界定指标（红点 / 事件标记依据）',
+      '      <help-dot level="supported" title="界定依据说明">',
+      '        浪高分级依据 GB/T 19721.2《海洋预报和警报发布 第 2 部分：海浪警报发布》的海浪警报级别；',
+      '        风速异常参考蒲福风级（≥17.2 m/s 为 8 级及以上大风）。',
+      '        触发「大风大浪」时，仿真将浪高抬至约 4.6 m、风速抬至约 19 m/s（风暴模式）。',
+      '      </help-dot>',
+      '    </div>',
+      '    <div class="dt-wrap">',
+      '      <table class="dt">',
+      '        <thead><tr><th>指标</th><th>单位</th><th>正常参考</th><th>异常界定</th><th>依据</th></tr></thead>',
+      '        <tbody>',
+      '          <tr>',
+      '            <td class="small"><b>浪高</b></td><td class="small">m</td><td class="small">＜2.5</td>',
+      '            <td class="small"><span class="dot bg-blue"></span>≥2.5 蓝色 ／ <span class="dot bg-yellow"></span>≥4.0 黄色 ／ <span class="dot bg-orange"></span>≥6.0 橙色 ／ <span class="dot bg-red"></span>≥9.0 红色</td>',
+      '            <td class="small">GB/T 19721.2 海浪警报级别</td>',
+      '          </tr>',
+      '          <tr>',
+      '            <td class="small"><b>风速</b></td><td class="small">m/s</td><td class="small">＜17.2</td>',
+      '            <td class="small"><span class="dot bg-red"></span>≥17.2（8 级及以上大风）</td>',
+      '            <td class="small">蒲福风级</td>',
+      '          </tr>',
+      '          <tr>',
+      '            <td class="small"><b>海水流速</b></td><td class="small">m/s</td><td class="small">—</td>',
+      '            <td class="small muted">暂无界定规则</td><td class="small muted">—</td>',
+      '          </tr>',
+      '          <tr>',
+      '            <td class="small"><b>环境气温</b></td><td class="small">℃</td><td class="small">—</td>',
+      '            <td class="small muted">暂无界定规则</td><td class="small muted">—</td>',
+      '          </tr>',
+      '        </tbody>',
+      '      </table>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <!-- 原始数据：放在海况时序下方；可自定义时间窗、可导出；切观测站点即见公开历史数据 -->',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title">原始数据（最近 {{ activePer.minutes }} 分钟窗口 · {{ fast.length }} 条）</div>',
+      '    <div class="row" style="align-items:center">',
+      '      <time-range :model-value="activePer.minutes" @update:model-value="onMinutes" />',
+      '      <input type="number" min="5" max="1440" :value="activePer.minutes" @change="onCustomMin"',
+      '             class="mono" style="width:88px" />',
+      '      <span class="small muted">自定义分钟数（5–1440）</span>',
+      '      <span style="flex:1"></span>',
+      '      <button class="primary" @click="exportCsv">导出 CSV</button>',
+      '    </div>',
+      '    <div class="hint" style="margin-top:8px">',
+      '      时间显示为「年/月/日 时:分:秒」。切换「观测站点」后，本表即为 NOAA NDBC 公开历史实测数据；',
+      '      养殖站点为仿真数据。精确历史日期（年/月/日）区间查询接口已随 backend/api/env.py 提交，',
+      '      队长挂载后本区将支持按日期区间查看历史。',
+      '    </div>',
+      '    <div class="dt-wrap" style="margin-top:8px">',
+      '      <table class="dt">',
+      '        <thead><tr><th>时间</th><th>站点</th><th>来源</th><th>质量</th>',
+      '                <th>浪高 (m)</th><th>风速 (m/s)</th><th>流速 (m/s)</th><th>气温 (℃)</th></tr></thead>',
+      '        <tbody>',
+      '          <tr v-for="r in fast" :key="r.ts">',
+      '            <td class="mono small">{{ fmtTs(r.ts) }}</td>',
+      '            <td class="small">{{ r.site_id }}</td>',
+      '            <td class="small">{{ srcCn(r.source) }}</td>',
+      '            <td class="small">{{ qCn(r.quality) }}</td>',
+      '            <td class="mono">{{ r.wave_height == null ? \'—\' : r.wave_height }}</td>',
+      '            <td class="mono">{{ r.wind_speed == null ? \'—\' : r.wind_speed }}</td>',
+      '            <td class="mono">{{ r.current_speed == null ? \'—\' : r.current_speed }}</td>',
+      '            <td class="mono">{{ r.air_temp == null ? \'—\' : r.air_temp }}</td>',
+      '          </tr>',
+      '          <tr v-if="!fast.length"><td colspan="8" class="muted small">暂无数据</td></tr>',
+      '        </tbody>',
+      '      </table>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <!-- 调试面板（仿真控制）：放在页面最下方 -->',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title">调试面板 · 仿真控制</div>',
+      '    <div v-if="pauseText" class="hint" style="background:#FEF2F2;border-color:#FECACA">',
+      '      <b>已暂停生成：</b>{{ pauseText }}',
+      '    </div>',
+      '    <div class="dt-wrap">',
+      '      <table class="dt">',
+      '        <thead><tr><th>站点</th><th>类型</th><th>状态</th><th>当前模式</th><th>操作</th></tr></thead>',
+      '        <tbody>',
+      '          <tr v-for="s in API.sites()" :key="s.site_id">',
+      '            <td class="small"><b>{{ s.site_name }}</b> <span class="muted mono">{{ s.site_id }}</span></td>',
+      '            <td class="small">{{ s.kind === \'obs\' ? \'观测\' : \'养殖\' }}</td>',
+      '            <td class="small">',
+      '              <span :style="{ color: per[s.site_id] && per[s.site_id].paused ? \'#991B1B\' : \'#166534\' }">',
+      '                {{ per[s.site_id] && per[s.site_id].paused ? \'已暂停\' : \'运行中\' }}',
+      '              </span>',
+      '            </td>',
+      '            <td class="small">',
+      '              <span v-if="per[s.site_id] && per[s.site_id].storm" style="color:#991B1B">大风大浪</span>',
+      '              <span v-else class="muted">正常</span>',
+      '            </td>',
+      '            <td class="small">',
+      '              <button class="primary" style="padding:2px 8px" @click="togglePause(s.site_id)">',
+      '                {{ per[s.site_id] && per[s.site_id].paused ? \'恢复生成\' : \'暂停生成\' }}',
+      '              </button>',
+      '              <button style="padding:2px 8px;margin-left:6px" @click="toggleStorm(s.site_id)">',
+      '                {{ per[s.site_id] && per[s.site_id].storm ? \'恢复平常\' : \'触发大风大浪\' }}',
+      '              </button>',
+      '            </td>',
+      '          </tr>',
+      '        </tbody>',
+      '      </table>',
+      '    </div>',
+      '  </div>',
+      '',
       '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
-      '    <time-range v-model="minutes" />',
+      '    <time-range :model-value="activePer.minutes" @update:model-value="onMinutes" />',
       '    <span style="width:12px"></span>',
       '    <span class="small muted">站点</span>',
       '    <select v-model="site">',
       '      <option v-for="s in API.sites()" :key="s.site_id" :value="s.site_id">{{ s.site_name }}</option>',
       '    </select>',
       '    <span style="flex:1"></span>',
-      '    <button :class="{ primary: storm }" @click="storm = !storm">',
-      '      {{ storm ? \'恢复平常海况\' : \'触发大风大浪（造故障）\' }}',
-      '    </button>',
+      '    <span class="small muted">口径：{{ API.disclaimer }}</span>',
       '  </div>',
       '</div>'
     ].join('\n')
   };
 
+  /* ============================================================
+     水质页 /env/water
+     布局（自上而下）：
+       站点切换（顶部） → 告警横幅 → 数值卡（含光照强度） → 时序 + 事件 →
+       异常界定指标 → 原始数据（快变量 + 慢变量） → 调试面板（仿真控制）→ 底部操作条
+     ============================================================ */
   PAGES['/env/water'] = {
     data: function () {
-      return { minutes: 60, site: 'site_01', heat: false, offline: false, picked: null, series: null,
+      return { site: 'site_01', picked: null, series: null,
+               per: null, loadSeq: 0,
                show: { water_temp: true, dissolved_oxygen: true, light_intensity: false } };
     },
     computed: {
@@ -273,6 +525,19 @@
       slow: function () { return this.series ? this.series.slow : []; },
       last: function () { return this.fast.length ? this.fast[this.fast.length - 1] : {}; },
       lastSlow: function () { return this.slow.length ? this.slow[this.slow.length - 1] : {}; },
+      activePer: function () {
+        return (this.per && this.per[this.site]) || global.__ENV_HELPERS__.defaultPer();
+      },
+      pauseText: function () { return global.__ENV_HELPERS__.pausedText(this.per); },
+      isObs: function () {
+        const sid = this.site;
+        const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
+        return !!(s && s.kind === 'obs');
+      },
+      srcLabel: function () {
+        if (this.isObs) return 'NOAA NDBC 公开浮标实测（读本地缓存）';
+        return '仿真生成（模拟养殖站点）';
+      },
       charts: function () {
         const s = this.show, out = [];
         const add = function (name, unit, key) {
@@ -301,25 +566,85 @@
       topAlarm: function () { return this.alarms.length ? this.alarms[this.alarms.length - 1] : null; }
     },
     methods: {
+      ensurePer: function () {
+        if (!this.per) this.per = {};
+        const H = global.__ENV_HELPERS__;
+        API.sites().forEach(function (s) {
+          if (!this.per[s.site_id]) this.per[s.site_id] = H.defaultPer();
+        }.bind(this));
+      },
       load: function () {
         const self = this;
-        API.resolve(API.env(this.site, this.minutes, { heat: this.heat, offline: this.offline }),
-                    function (d) { self.series = d; });
+        this.ensurePer();
+        const p = this.activePer;
+        const seq = ++this.loadSeq;
+        API.resolve(API.env(this.site, p.minutes, { heat: p.heat, offline: p.offline }),
+                    function (d) { if (seq === self.loadSeq) self.series = d; });
       },
-      time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); }
+      setSite: function (sid) { this.site = sid; },
+      time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
+      fmtTs: function (ts) { return global.__ENV_HELPERS__.fmtTs(ts); },
+      srcCn: function (src) { return global.__ENV_CN__.srcCn(src); },
+      qCn: function (q) { return global.__ENV_CN__.qCn(q); },
+      togglePause: function (sid) {
+        const per = this.per[sid];
+        per.paused = !per.paused;
+        if (sid === this.site && !per.paused) this.load();
+      },
+      toggleHeat: function (sid) {
+        const per = this.per[sid];
+        per.heat = !per.heat;
+        if (sid === this.site) this.load();
+      },
+      toggleOffline: function (sid) {
+        const per = this.per[sid];
+        per.offline = !per.offline;
+        if (sid === this.site) this.load();
+      },
+      onMinutes: function (v) {
+        this.ensurePer();
+        this.activePer.minutes = v;
+        this.load();
+      },
+      onCustomMin: function (e) {
+        this.ensurePer();
+        const v = parseInt(e.target.value, 10);
+        if (v >= 5 && v <= 1440) { this.activePer.minutes = v; this.load(); }
+      },
+      exportCsv: function () {
+        const H = global.__ENV_HELPERS__;
+        const rows = this.fast.map(function (r) {
+          return [H.fmtTs(r.ts), r.site_id, srcCn(r.source), qCn(r.quality),
+                  r.water_temp, r.dissolved_oxygen, r.light_intensity];
+        });
+        const csv = H.toCsv(['时间', '站点', '来源', '质量', '水温 (℃)', '溶解氧 (mg/L)', '光照 (lux)'], rows);
+        downloadCsv('水质原始数据_' + this.site + '.csv', csv);
+      }
     },
-    mounted: function () { this.load(); },
+    mounted: function () {
+      this.ensurePer();
+      this.load();
+    },
     watch: {
-      minutes: function () { this.load(); },
-      site: function () { this.load(); },
-      heat: function () { this.load(); },
-      offline: function () { this.load(); }
+      site: function () { this.load(); }
     },
     template: [
       '<div>',
       '  <page-head title="环境 · 水质"',
       '    desc="水温 / 溶解氧 5 秒；盐度 / pH 30 秒慢变量；光照强度 5 秒"',
       '    :sources="[\'public\',\'simulated\']" />',
+      '',
+      '  <!-- 站点切换（顶部）：每个站点独立，切换互不影响 -->',
+      '  <div class="card" style="margin-bottom:12px">',
+      '    <div class="row" style="align-items:center;gap:8px">',
+      '      <span class="small muted">站点：</span>',
+      '      <button v-for="s in API.sites()" :key="s.site_id"',
+      '              :class="{ primary: site === s.site_id }" style="padding:3px 10px"',
+      '              @click="setSite(s.site_id)">{{ s.site_name }}</button>',
+      '      <span style="flex:1"></span>',
+      '      <span class="small" :style="{ color: isObs ? \'#166534\' : \'#92400E\' }">{{ srcLabel }}</span>',
+      '    </div>',
+      '  </div>',
       '',
       '  <!-- 一条竖线的可视化：命中规则时当场显示，点得开、看得见依据 -->',
       '  <div v-if="topAlarm" class="hint" style="margin-bottom:12px;background:#FEF2F2;border-color:#FECACA">',
@@ -348,7 +673,7 @@
       '  <div class="split" style="margin-top:12px">',
       '    <div>',
       '      <trend-chart title="水质趋势（可勾选参数）" :series="charts"',
-      '                   :thresholds="[{value:21.5,label:\'水温上限 21.5 ℃\',color:\'#991B1B\'}]" />',
+      '                   :thresholds="[{value:28.0,label:\'水温上限 28.0 ℃（红色告警）\',color:\'#991B1B\'},{value:25.5,label:\'偏高提示 25.5 ℃\',color:\'#D97706\'}]" />',
       '      <div class="card" style="margin-top:12px">',
       '        <span class="small muted">曲线显示：</span>',
       '        <label class="small" style="margin-left:10px"><input type="checkbox" v-model="show.water_temp"> 水温</label>',
@@ -366,29 +691,146 @@
       '    </div>',
       '  </div>',
       '',
+      '  <!-- 异常界定指标（水质）：红点 / 告警标记依据 -->',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title">异常界定指标（红点 / 告警标记依据）',
+      '      <help-dot level="supported" title="界定依据说明">',
+      '        水温阈值与前端规则 R-TEMP-01 / R-TEMP-02 同口径（大黄鱼高告警线 28.0 ℃、高提示线 25.5 ℃）；',
+      '        不同网箱养不同鱼时，阈值按鱼种温度库自动取值（见管理板块）。',
+      '        溶解氧 / 盐度 / pH / 光照暂未配置界定规则，仅作监测展示。',
+      '      </help-dot>',
+      '    </div>',
+      '    <div class="dt-wrap">',
+      '      <table class="dt">',
+      '        <thead><tr><th>指标</th><th>单位</th><th>正常参考</th><th>异常界定</th><th>依据</th></tr></thead>',
+      '        <tbody>',
+      '          <tr>',
+      '            <td class="small"><b>水温</b></td><td class="small">℃</td><td class="small">＜25.5</td>',
+      '            <td class="small"><span class="dot bg-yellow"></span>≥25.5 偏高提示（R-TEMP-02）／ <span class="dot bg-red"></span>≥28.0 水温上限告警（R-TEMP-01）</td>',
+      '            <td class="small">鱼种温度库 · 大黄鱼</td>',
+      '          </tr>',
+      '          <tr>',
+      '            <td class="small"><b>溶解氧</b></td><td class="small">mg/L</td><td class="small">—</td>',
+      '            <td class="small muted">暂无界定规则</td><td class="small muted">—</td>',
+      '          </tr>',
+      '          <tr>',
+      '            <td class="small"><b>盐度</b></td><td class="small">‰</td><td class="small">—</td>',
+      '            <td class="small muted">暂无界定规则</td><td class="small muted">—</td>',
+      '          </tr>',
+      '          <tr>',
+      '            <td class="small"><b>pH 值</b></td><td class="small">—</td><td class="small">—</td>',
+      '            <td class="small muted">暂无界定规则</td><td class="small muted">—</td>',
+      '          </tr>',
+      '          <tr>',
+      '            <td class="small"><b>光照强度</b></td><td class="small">lux</td><td class="small">—</td>',
+      '            <td class="small muted">暂无界定规则</td><td class="small muted">—</td>',
+      '          </tr>',
+      '        </tbody>',
+      '      </table>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <!-- 原始数据：快变量 + 慢变量两张表；可自定义时间窗、可导出 -->',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title">原始数据（最近 {{ activePer.minutes }} 分钟窗口）</div>',
+      '    <div class="row" style="align-items:center">',
+      '      <time-range :model-value="activePer.minutes" @update:model-value="onMinutes" />',
+      '      <input type="number" min="5" max="1440" :value="activePer.minutes" @change="onCustomMin"',
+      '             class="mono" style="width:88px" />',
+      '      <span class="small muted">自定义分钟数（5–1440）</span>',
+      '      <span style="flex:1"></span>',
+      '      <button class="primary" @click="exportCsv">导出 CSV</button>',
+      '    </div>',
+      '    <div class="hint" style="margin-top:8px">',
+      '      时间显示为「年/月/日 时:分:秒」。快变量（水温 / 溶解氧 / 光照）5 秒一条，',
+      '      慢变量（盐度 / pH）30 秒一条。切换「观测站点」后即为 NOAA NDBC 公开历史实测数据。',
+      '    </div>',
+      '    <div class="card-title" style="margin-top:10px;font-size:13px">快变量</div>',
+      '    <div class="dt-wrap">',
+      '      <table class="dt">',
+      '        <thead><tr><th>时间</th><th>站点</th><th>来源</th><th>质量</th>',
+      '                <th>水温 (℃)</th><th>溶解氧 (mg/L)</th><th>光照 (lux)</th></tr></thead>',
+      '        <tbody>',
+      '          <tr v-for="r in fast" :key="r.ts">',
+      '            <td class="mono small">{{ fmtTs(r.ts) }}</td>',
+      '            <td class="small">{{ r.site_id }}</td>',
+      '            <td class="small">{{ srcCn(r.source) }}</td>',
+      '            <td class="small">{{ qCn(r.quality) }}</td>',
+      '            <td class="mono">{{ r.water_temp == null ? \'—\' : r.water_temp }}</td>',
+      '            <td class="mono">{{ r.dissolved_oxygen == null ? \'—\' : r.dissolved_oxygen }}</td>',
+      '            <td class="mono">{{ r.light_intensity == null ? \'—\' : r.light_intensity }}</td>',
+      '          </tr>',
+      '          <tr v-if="!fast.length"><td colspan="7" class="muted small">暂无数据</td></tr>',
+      '        </tbody>',
+      '      </table>',
+      '    </div>',
+      '    <div class="card-title" style="margin-top:10px;font-size:13px">慢变量（盐度 / pH）</div>',
+      '    <div class="dt-wrap">',
+      '      <table class="dt">',
+      '        <thead><tr><th>时间</th><th>站点</th><th>质量</th><th>盐度 (‰)</th><th>pH 值</th></tr></thead>',
+      '        <tbody>',
+      '          <tr v-for="r in slow" :key="r.ts">',
+      '            <td class="mono small">{{ fmtTs(r.ts) }}</td>',
+      '            <td class="small">{{ r.site_id }}</td>',
+      '            <td class="small">{{ qCn(r.quality) }}</td>',
+      '            <td class="mono">{{ r.salinity == null ? \'—\' : r.salinity }}</td>',
+      '            <td class="mono">{{ r.ph == null ? \'—\' : r.ph }}</td>',
+      '          </tr>',
+      '          <tr v-if="!slow.length"><td colspan="5" class="muted small">暂无数据</td></tr>',
+      '        </tbody>',
+      '      </table>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <!-- 调试面板（仿真控制）：放在页面最下方 -->',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title">调试面板 · 仿真控制</div>',
+      '    <div v-if="pauseText" class="hint" style="background:#FEF2F2;border-color:#FECACA">',
+      '      <b>已暂停生成：</b>{{ pauseText }}',
+      '    </div>',
+      '    <div class="dt-wrap">',
+      '      <table class="dt">',
+      '        <thead><tr><th>站点</th><th>类型</th><th>状态</th><th>当前模式</th><th>操作</th></tr></thead>',
+      '        <tbody>',
+      '          <tr v-for="s in API.sites()" :key="s.site_id">',
+      '            <td class="small"><b>{{ s.site_name }}</b> <span class="muted mono">{{ s.site_id }}</span></td>',
+      '            <td class="small">{{ s.kind === \'obs\' ? \'观测\' : \'养殖\' }}</td>',
+      '            <td class="small">',
+      '              <span :style="{ color: per[s.site_id] && per[s.site_id].paused ? \'#991B1B\' : \'#166534\' }">',
+      '                {{ per[s.site_id] && per[s.site_id].paused ? \'已暂停\' : \'运行中\' }}',
+      '              </span>',
+      '            </td>',
+      '            <td class="small">',
+      '              <span v-if="per[s.site_id] && (per[s.site_id].heat || per[s.site_id].offline)" style="color:#991B1B">',
+      '                {{ per[s.site_id].heat ? \'水温骤升\' : \'设备离线\' }}',
+      '              </span>',
+      '              <span v-else class="muted">正常</span>',
+      '            </td>',
+      '            <td class="small">',
+      '              <button class="primary" style="padding:2px 8px" @click="togglePause(s.site_id)">',
+      '                {{ per[s.site_id] && per[s.site_id].paused ? \'恢复生成\' : \'暂停生成\' }}',
+      '              </button>',
+      '              <button style="padding:2px 8px;margin-left:6px" @click="toggleHeat(s.site_id)">',
+      '                {{ per[s.site_id] && per[s.site_id].heat ? \'恢复正常水温\' : \'触发水温骤升\' }}',
+      '              </button>',
+      '              <button style="padding:2px 8px;margin-left:6px" @click="toggleOffline(s.site_id)">',
+      '                {{ per[s.site_id] && per[s.site_id].offline ? \'恢复设备在线\' : \'模拟设备离线\' }}',
+      '              </button>',
+      '            </td>',
+      '          </tr>',
+      '        </tbody>',
+      '      </table>',
+      '    </div>',
+      '  </div>',
+      '',
       '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
-      '    <time-range v-model="minutes" />',
+      '    <time-range :model-value="activePer.minutes" @update:model-value="onMinutes" />',
       '    <span style="width:12px"></span>',
       '    <span class="small muted">站点</span>',
       '    <select v-model="site">',
       '      <option v-for="s in API.sites()" :key="s.site_id" :value="s.site_id">{{ s.site_name }}</option>',
       '    </select>',
       '    <span style="flex:1"></span>',
-      '    <button :class="{ primary: heat }" @click="heat = !heat">',
-      '      {{ heat ? \'恢复正常水温\' : \'触发水温骤升（造故障）\' }}',
-      '    </button>',
-      '    <button :class="{ primary: offline }" @click="offline = !offline">',
-      '      {{ offline ? \'恢复设备在线\' : \'模拟设备离线（造故障）\' }}',
-      '    </button>',
-      '    <!-- 就地反馈：效果显示在你点的地方，不用滚回页首去看 -->',
-      '    <span v-if="offline" class="small" style="color:#991B1B">',
-      '      已触发：设备离线 —— 上方 5 张数值卡应变「— / 设备离线」',
-      '    </span>',
-      '    <span v-else-if="heat" class="small" style="color:#991B1B">',
-      '      已触发：水温骤升 —— 当前水温 <b>{{ last.water_temp }}</b> ℃',
-      '      <span v-if="topAlarm">，命中「{{ topAlarm.hit.rule_name }}」</span>',
-      '    </span>',
-      '    <span style="width:12px"></span>',
       '    <span class="small muted">口径：{{ API.disclaimer }}</span>',
       '  </div>',
       '</div>'
@@ -396,7 +838,25 @@
   };
 
   /* ============================================================
-     其余 11 页：可点的结构化占位（10-09 前补齐为真页面）
+     两页共用的来源 / 质量中文映射（界面不许裸英文，硬规矩 3）
      ============================================================ */
+  function srcCn(src) {
+    return { simulated: '仿真数据', public: '公开数据', real: '真实数据', demo: '演示数据' }[src] || src || '—';
+  }
+  function qCn(q) {
+    return { good: '良好', stale: '超时未更新', suspect: '疑似异常' }[q] || q || '—';
+  }
+  function downloadCsv(name, csv) {
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+  }
+  /* 供模板与 methods 共用（页面作用域内可直接引用） */
+  global.__ENV_CN__ = { srcCn: srcCn, qCn: qCn, downloadCsv: downloadCsv };
 
 })(window);
