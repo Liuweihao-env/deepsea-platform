@@ -495,10 +495,10 @@ section('新问题5：所有异常数据进事件列表（含时间/站点/数�
          t.indexOf('R-TEMP-01 水温上限') >= 0, '水质事件含 站点 · 时间 · 数据 · 规则名');
 }
 
-section('新问题6：页面切换不丢操作状态（跨页共享 per / site）');
+section('新问题6：页面切换不丢站点选择；仿真控制状态两页各自独立');
 {
-  /* data() 从全局恢复站点；两页共享同一 per 对象（模拟 海况→水质 切换） */
-  const i1 = { per: null, site: 'site_01', chart: null };
+  /* 海况页初始化自己的 per（seaPer） */
+  const i1 = { per: null, site: 'site_01', chart: null, pageKey: 'sea' };
   sea.methods.ensurePer.call(i1);
   assert(!!i1.per.site_01 && i1.per.site_01.paused === false, 'ensurePer 补齐全部站点状态');
   /* 海况页在 site_01 暂停、site_03 调时间窗与风暴细化，然后切到水质页 */
@@ -509,19 +509,88 @@ section('新问题6：页面切换不丢操作状态（跨页共享 per / site�
   S.site = 'site_02';
   const wd = water.data();
   assert(wd.site === 'site_02', '水质页打开恢复上次选择的站点（site_02）');
-  const i2 = { per: wd.per, site: wd.site, chart: null };
+  const i2 = { per: wd.per, site: wd.site, chart: null, pageKey: 'water' };
   water.methods.ensurePer.call(i2);
-  assert(i2.per === i1.per, '两页共享同一份 per 对象（不是拷贝）');
-  assert(i2.per.site_01.paused === true, '海况页暂停 site_01 → 水质页状态同步保留');
-  assert(i2.per.site_03.minutes === 240, '时间窗选择跨页保留');
-  assert(i2.per.site_03.stormType === 'wind', '风暴细化选择跨页保留');
-  /* 水质页恢复 site_01 暂停 → 海况页可见（反向） */
-  i2.per.site_01.paused = false;
-  assert(i1.per.site_01.paused === false, '水质页恢复暂停 → 海况页同步');
+  assert(i2.per !== i1.per, '两页 per 各自独立（海况 seaPer / 水质 waterPer，非同一对象）');
+  assert(i2.per.site_01.paused === false, '海况页暂停 site_01 → 水质页不受影响（仍运行中）');
+  assert(i2.per.site_03.minutes === 60, '水质页时间窗独立（海况调的 240 不影响水质页）');
+  assert(i2.per.site_03.stormType === 'all', '风暴细化选择两页独立（海况选 wind 不影响水质页）');
+  /* 水质页暂停 site_01 → 海况页也不受影响（反向） */
+  i2.per.site_01.paused = true;
+  assert(i1.per.site_01.paused === true, '水质页暂停不覆盖海况页（海况页保持自己的暂停状态）');
+  i1.per.site_01.paused = false;
+  assert(i2.per.site_01.paused === true, '海况页恢复暂停 → 水质页保持自己的暂停状态');
   /* watch.site 写回全局（静态验证：切换站点后另一页也能恢复） */
   assert(sea.watch.site.toString().indexOf('S.site = this.site') >= 0 &&
          water.watch.site.toString().indexOf('S.site = this.site') >= 0,
     '两页 watch.site 都把站点选择写回全局');
+}
+
+section('问题一：两页仿真控制互不影响（暂停 / 大风大浪 / 骤升 数据隔离）');
+{
+  const G = sandbox.__ENV_GEN__;
+  vm.runInContext('__origRandom = Math.random; Math.random = function () { return 0.5; }; ' +
+    '__origDateNow = Date.now; Date.now = function () { return new Date(2026, 9, 8, 12, 0, 0).getTime(); };', sandbox);
+  try {
+    /* site_01 是唯一养殖站点；清掉本段要用的序列键并重置 per 状态，
+       避免与他段（新问题6 段 / 问题一段）的全局状态互相污染 */
+    delete G.series['site_01::sea'];
+    delete G.series['site_01::water'];
+    const s1 = { per: null, site: 'site_01', chart: null, pageKey: 'sea', isObsSite: sea.methods.isObsSite,
+                 load: function () {} };
+    sea.methods.ensurePer.call(s1);
+    const w1 = { per: null, site: 'site_01', chart: null, pageKey: 'water', isObsSite: water.methods.isObsSite,
+                 load: function () {} };
+    water.methods.ensurePer.call(w1);
+    s1.per.site_01.paused = false; s1.per.site_01.storm = false; s1.per.site_01.heat = false;
+    w1.per.site_01.paused = false; w1.per.site_01.storm = false; w1.per.site_01.heat = false;
+    assert(s1.per !== w1.per, '海况页与水质页的仿真控制状态对象不同（seaPer / waterPer）');
+    /* 海况页暂停 site_01 → 水质页 per 不受影响 */
+    sea.methods.togglePause.call(s1, 'site_01');
+    assert(s1.per.site_01.paused === true, '海况页暂停 site_01 生效');
+    assert(w1.per.site_01.paused === false, '水质页 site_01 仍运行中（不受海况页影响）');
+    /* 海况页触发大风大浪 → 海况序列新点异常；水质序列新点正常 */
+    sea.methods.toggleStorm.call(s1, 'site_01');
+    assert(s1.per.site_01.storm === true, '海况页触发大风大浪生效');
+    assert(w1.per.site_01.storm === false, '水质页 per 无风暴（不受影响）');
+    let seaSt = G.ensure('site_01', 5, s1.per.site_01, 'sea');
+    const seaLast = seaSt.fast[seaSt.fast.length - 1];
+    seaSt = G.appendTo('site_01', seaLast.ts + 5 * 1000, s1.per.site_01, 5, 'sea');
+    const seaNew = seaSt.fast[seaSt.fast.length - 1];
+    assert(seaNew.wave_height >= 4.0 && seaNew.wind_speed >= 17.2 && seaNew.quality === 'suspect',
+      '海况页自己的序列：风暴后新点浪高≥4.0、风速≥17.2（异常）');
+    let wSt = G.ensure('site_01', 5, w1.per.site_01, 'water');
+    const wLast = wSt.fast[wSt.fast.length - 1];
+    wSt = G.appendTo('site_01', wLast.ts + 5 * 1000, w1.per.site_01, 5, 'water');
+    const wNew = wSt.fast[wSt.fast.length - 1];
+    assert(wNew.wave_height < 2.5 && wNew.wind_speed < 17.2 && wNew.quality === 'good',
+      '水质页自己的序列：无风暴影响，新点浪高/风速正常、质量良好');
+    assert(wNew.light_intensity >= 10000,
+      '水质页光照强度正常（≥10000 lux，未受海况风暴 4000 影响）');
+    assert(seaSt !== wSt, '两页序列独立（站点+页面双键，非同一份序列）');
+    /* 水质页触发水温骤升 → 水质序列水温异常；海况序列水温正常 */
+    water.methods.toggleHeat.call(w1, 'site_01');
+    assert(w1.per.site_01.heat === true && s1.per.site_01.heat === false,
+      '水质页骤升生效，海况页 per 无骤升');
+    const wSt2 = G.appendTo('site_01', wNew.ts + 5 * 1000, w1.per.site_01, 5, 'water');
+    const wNew2 = wSt2.fast[wSt2.fast.length - 1];
+    assert(wNew2.water_temp >= 28.0 && wNew2.quality === 'suspect',
+      '水质序列骤升后水温≥28.0（异常）');
+    const seaSt2 = G.appendTo('site_01', seaNew.ts + 5 * 1000, s1.per.site_01, 5, 'sea');
+    const seaNew2 = seaSt2.fast[seaSt2.fast.length - 1];
+    assert(seaNew2.water_temp < 25.5, '海况序列水温正常（未受水质页骤升影响）');
+    /* allFast 分页读取：海况读 site_01::sea，水质读 site_01::water */
+    const seaInst = { fast: seaSt2.fast.slice(-10), isObs: false, site: 'site_01', pageKey: 'sea' };
+    const seaAll = sea.computed.allFast.call(seaInst);
+    assert(seaAll[seaAll.length - 1] === seaNew2, '海况页 allFast 读本页序列（site_01::sea）');
+    const wInst = { fast: wSt2.fast.slice(-10), isObs: false, site: 'site_01', pageKey: 'water' };
+    const wAll = water.computed.allFast.call(wInst);
+    assert(wAll[wAll.length - 1] === wNew2, '水质页 allFast 读本页序列（site_01::water）');
+  } finally {
+    delete G.series['site_01::sea'];
+    delete G.series['site_01::water'];
+    vm.runInContext('Math.random = __origRandom; Date.now = __origDateNow;', sandbox);
+  }
 }
 
 section('问题一：触发异常只影响「接下来实时生成」的数据（已生成点不变）');
@@ -529,6 +598,8 @@ section('问题一：触发异常只影响「接下来实时生成」的数据�
   const G = sandbox.__ENV_GEN__;
   assert(!!G && typeof G.appendTo === 'function' && typeof G.ensure === 'function',
     '流式仿真生成器 __ENV_GEN__ 已挂载（ensure / appendTo）');
+  /* 清键：防止前面测试段（两页隔离段）留下的序列污染本段首填 */
+  delete G.series['site_01::sea'];
   /* Math 是 vm 沙箱内建全局，须在沙箱上下文内替换（测试确定性：rndn → 均值） */
   vm.runInContext('__origRandom = Math.random; Math.random = function () { return 0.5; };', sandbox);
   try {
@@ -572,6 +643,8 @@ section('问题一：触发异常只影响「接下来实时生成」的数据�
 section('问题二：异常事件记录保留（恢复正常后，异常期间的数据与事件不消除）');
 {
   const G = sandbox.__ENV_GEN__;
+  /* 清键：本段自给自足（正常首填 → 风暴追加 → 恢复追加） */
+  delete G.series['site_01::sea'];
   vm.runInContext('__origRandom = Math.random; Math.random = function () { return 0.5; };', sandbox);
   try {
     const per = { minutes: 5, paused: false, storm: false, heat: false, offline: false,
@@ -602,6 +675,8 @@ section('问题二：异常事件记录保留（恢复正常后，异常期间�
 section('问题三：正常状态偶发「较异常」数据并计入事件');
 {
   const G = sandbox.__ENV_GEN__;
+  /* 清键：本段独立首填（可控序列第 1 次调用命中偶发注入） */
+  delete G.series['site_01::sea'];
   /* 在沙箱上下文内注入可控随机序列：第 1 次调用返回 0.001（命中偶发注入），之后返回 0.5（rndn → 均值） */
   vm.runInContext('__origRandom = Math.random; __calls = 0; Math.random = function () { __calls += 1; return __calls === 1 ? 0.001 : 0.5; };', sandbox);
   try {
@@ -619,7 +694,9 @@ section('问题三：正常状态偶发「较异常」数据并计入事件');
                      siteName: function () { return '模拟养殖站点'; } };
     const evs = sea.computed.events.call(evInst);
     const joined = evs.map(function (e) { return e.text; }).join('\n');
-    assert(joined.indexOf(H.fmtTs(abn.ts)) >= 0, '偶发异常点被记录进海况事件（含时间/站点/数据）');
+    /* 可控序列下注入类型固定为 wind（k=floor(0.5*3)=1），风速 = rndn(17.6,.5) 均值 17.6 */
+    assert(joined.indexOf('风速 ' + abn.wind_speed + ' m/s') >= 0,
+      '偶发异常点被记录进海况事件（含时间/站点/数据）');
   } finally {
     vm.runInContext('Math.random = __origRandom;', sandbox);
   }

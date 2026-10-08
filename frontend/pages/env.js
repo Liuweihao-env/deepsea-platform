@@ -186,33 +186,41 @@
                ph: offline ? null : +(abn ? rndn(8.5, .08) : rndn(8.1, .06)).toFixed(1) };
     }
 
-    /* 首填：站点序列为空时，从当前时刻回填「minutes 分钟」窗口（正常值 + 偶发异常） */
-    function ensure(siteId, minutes, per) {
-      let st = SERIES[siteId];
-      if (!st) { st = SERIES[siteId] = { fast: [], slow: [] }; }
+    /* 首填：站点序列为空时，从当前时刻回填「minutes 分钟」窗口（正常值 + 偶发异常）。
+       pageKey：'sea' / 'water' —— 序列按「站点 + 页面」双键隔离（问题一：两页仿真控制互不影响），
+       海况页只生成快变量，水质页生成快+慢变量。 */
+    function ensure(siteId, minutes, per, pageKey) {
+      const key = siteId + '::' + (pageKey || 'sea');
+      let st = SERIES[key];
+      if (!st) st = SERIES[key] = { fast: [], slow: [] };
       if (st.fast.length) return st;
       const now = Math.floor(Date.now() / STEP_FAST) * STEP_FAST;
       const winF = Math.max(2, Math.round((minutes || 60) * 60 * 1000 / STEP_FAST));
       let ts = now - (winF - 1) * STEP_FAST;
       while (ts <= now) { st.fast.push(genFast(siteId, ts, per)); ts += STEP_FAST; }
-      const winS = Math.max(2, Math.round((minutes || 60) * 60 * 1000 / STEP_SLOW));
-      let sts = now - (winS - 1) * STEP_SLOW;
-      while (sts <= now) { st.slow.push(genSlow(siteId, sts, per)); sts += STEP_SLOW; }
+      if (pageKey !== 'sea') {
+        const winS = Math.max(2, Math.round((minutes || 60) * 60 * 1000 / STEP_SLOW));
+        let sts = now - (winS - 1) * STEP_SLOW;
+        while (sts <= now) { st.slow.push(genSlow(siteId, sts, per)); sts += STEP_SLOW; }
+      }
       return st;
     }
 
     /* 追加：把序列推进到 nowTs。只生成「新」的点，已生成的点永远不改。
-       大间隔（暂停恢复 / 长时间挂起）→ 跳过空洞，从当前时刻前一步继续，不补造中间数据。 */
-    function appendTo(siteId, nowTs, per, minutes) {
-      const st = ensure(siteId, minutes, per);
+       大间隔（暂停恢复 / 长时间挂起）→ 跳过空洞，从当前时刻前一步继续，不补造中间数据。
+       两页序列独立推进：海况页的风暴/暂停只追加自己的序列，水质页按自己的控制状态追加。 */
+    function appendTo(siteId, nowTs, per, minutes, pageKey) {
+      const st = ensure(siteId, minutes, per, pageKey);
       let last = st.fast[st.fast.length - 1];
       let ts = last.ts + STEP_FAST;
       if (nowTs - last.ts > 3 * STEP_FAST) ts = Math.floor((nowTs - STEP_FAST) / STEP_FAST) * STEP_FAST;
       while (ts <= nowTs) { st.fast.push(genFast(siteId, ts, per)); ts += STEP_FAST; }
-      let sl = st.slow[st.slow.length - 1];
-      let sts = sl.ts + STEP_SLOW;
-      if (nowTs - sl.ts > 3 * STEP_SLOW) sts = Math.floor((nowTs - STEP_SLOW) / STEP_SLOW) * STEP_SLOW;
-      while (sts <= nowTs) { st.slow.push(genSlow(siteId, sts, per)); sts += STEP_SLOW; }
+      if (pageKey !== 'sea' && st.slow.length) {
+        let sl = st.slow[st.slow.length - 1];
+        let sts = sl.ts + STEP_SLOW;
+        if (nowTs - sl.ts > 3 * STEP_SLOW) sts = Math.floor((nowTs - STEP_SLOW) / STEP_SLOW) * STEP_SLOW;
+        while (sts <= nowTs) { st.slow.push(genSlow(siteId, sts, per)); sts += STEP_SLOW; }
+      }
       if (st.fast.length > MAX_FAST) st.fast.splice(0, st.fast.length - MAX_FAST);
       if (st.slow.length > MAX_SLOW) st.slow.splice(0, st.slow.length - MAX_SLOW);
       return st;
@@ -240,12 +248,13 @@
      ============================================================ */
   PAGES['/env/sea'] = {
     data: function () {
-      /* 问题六：per / site 存全局 __ENV_SESSION__，海况↔水质切换后操作状态与站点选择不丢 */
-      const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = { per: null, site: 'site_01' });
-      return { site: S.site || 'site_01', picked: null, series: null,
+      /* 问题六：站点选择存全局 __ENV_SESSION__，跨页切换后保留；
+         仿真控制状态（per）两页各自独立（问题一：海况↔水质互不影响） */
+      const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = { seaPer: null, waterPer: null, site: 'site_01' });
+      return { pageKey: 'sea', site: S.site || 'site_01', picked: null, series: null,
                tick: 0, unsub: null, timer: null,
                refreshing: false, refreshMsg: '', refreshOk: null,
-               per: S.per, loadSeq: 0, chart: null,
+               per: S.seaPer, loadSeq: 0, chart: null,
                /* 问题二：历史区间（真实站点公开数据可自定义时间查看更长远历史） */
                rangeMode: false, rangeSeries: null, rangeMsg: '',
                rangeStart: '', rangeEnd: '', ranges: {} };
@@ -258,7 +267,7 @@
         this.fast.length;
         const G = global.__ENV_GEN__;
         if (!this.isObs) {
-          const st = G && G.series && G.series[this.site];
+          const st = G && G.series && G.series[this.site + '::' + (this.pageKey || 'sea')];
           if (st && st.fast && st.fast.length) return st.fast;
         }
         return this.fast;
@@ -389,11 +398,13 @@
     },
     methods: {
       /* 站点独立状态兜底：API.sites() 可能晚于 data() 返回，这里补齐；
-         问题六：per 挂在全局 __ENV_SESSION__，跨页（海况/水质）共享同一份操作状态 */
+         问题一：仿真控制状态（per）按页面各自独立 —— 海况页用 seaPer，水质页用 waterPer，
+         对海况页的操作不会影响水质页（暂停/大风大浪/骤升都互不影响）；
+         站点选择（site）仍跨页共享，切换页面后保留 */
       ensurePer: function () {
-        const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = { per: null, site: 'site_01' });
-        if (!S.per) S.per = {};
-        this.per = S.per;
+        const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = { seaPer: null, waterPer: null, site: 'site_01' });
+        if (!S.seaPer) S.seaPer = {};
+        this.per = S.seaPer;
         const H = global.__ENV_HELPERS__;
         API.sites().forEach(function (s) {
           if (!this.per[s.site_id]) this.per[s.site_id] = H.defaultPer();
@@ -410,9 +421,10 @@
                       function (d) { if (seq === self.loadSeq) self.series = d; });
         } else {
           /* 养殖站点：流式仿真生成（问题一~三）——
-             触发大风大浪/水温骤升只影响「接下来实时生成」的点；已生成点永不变 */
+             触发大风大浪/水温骤升只影响「接下来实时生成」的点；已生成点永不变；
+             序列按「站点 + 页面」双键隔离，海况页的风暴/暂停不影响水质页数据 */
           const G = global.__ENV_GEN__;
-          const st = G.appendTo(this.site, Math.floor(Date.now() / 1000) * 1000, p, p.minutes);
+          const st = G.appendTo(this.site, Math.floor(Date.now() / 1000) * 1000, p, p.minutes, 'sea');
           if (seq === self.loadSeq) self.series = G.windowSlice(st, p.minutes);
         }
       },
@@ -957,10 +969,11 @@
      ============================================================ */
   PAGES['/env/water'] = {
     data: function () {
-      /* 问题六：per / site 存全局 __ENV_SESSION__，海况↔水质切换后操作状态与站点选择不丢 */
-      const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = { per: null, site: 'site_01' });
-      return { site: S.site || 'site_01', picked: null, series: null,
-               per: S.per, loadSeq: 0, chart: null, timer: null,
+      /* 问题六：站点选择存全局 __ENV_SESSION__，跨页切换后保留；
+         仿真控制状态（per）两页各自独立（问题一：海况↔水质互不影响） */
+      const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = { seaPer: null, waterPer: null, site: 'site_01' });
+      return { pageKey: 'water', site: S.site || 'site_01', picked: null, series: null,
+               per: S.waterPer, loadSeq: 0, chart: null, timer: null,
                show: { water_temp: true, dissolved_oxygen: true, light_intensity: false,
                        salinity: true },
                /* 问题二：历史区间（真实站点公开数据可自定义时间查看更长远历史） */
@@ -976,7 +989,7 @@
         this.fast.length;
         const G = global.__ENV_GEN__;
         if (!this.isObs) {
-          const st = G && G.series && G.series[this.site];
+          const st = G && G.series && G.series[this.site + '::' + (this.pageKey || 'sea')];
           if (st && st.fast && st.fast.length) return st.fast;
         }
         return this.fast;
@@ -1051,10 +1064,11 @@
     },
     methods: {
       ensurePer: function () {
-        /* 问题六：per 挂在全局 __ENV_SESSION__，跨页（海况/水质）共享同一份操作状态 */
-        const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = { per: null, site: 'site_01' });
-        if (!S.per) S.per = {};
-        this.per = S.per;
+        /* 问题一：仿真控制状态（per）按页面各自独立 —— 水质页用 waterPer，
+           海况页的大风大浪/暂停不影响水质页；站点选择（site）跨页共享 */
+        const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = { seaPer: null, waterPer: null, site: 'site_01' });
+        if (!S.waterPer) S.waterPer = {};
+        this.per = S.waterPer;
         const H = global.__ENV_HELPERS__;
         API.sites().forEach(function (s) {
           if (!this.per[s.site_id]) this.per[s.site_id] = H.defaultPer();
@@ -1071,9 +1085,10 @@
                       function (d) { if (seq === self.loadSeq) self.series = d; });
         } else {
           /* 养殖站点：流式仿真生成（问题一~三）——
-             触发水温骤升/设备离线只影响「接下来实时生成」的点；已生成点永不变 */
+             触发水温骤升/设备离线只影响「接下来实时生成」的点；已生成点永不变；
+             序列按「站点 + 页面」双键隔离，水质页的骤升/暂停不影响海况页数据 */
           const G = global.__ENV_GEN__;
-          const st = G.appendTo(this.site, Math.floor(Date.now() / 1000) * 1000, p, p.minutes);
+          const st = G.appendTo(this.site, Math.floor(Date.now() / 1000) * 1000, p, p.minutes, 'water');
           if (seq === self.loadSeq) self.series = G.windowSlice(st, p.minutes);
         }
       },
