@@ -173,28 +173,39 @@
       },
       events: function () {
         /* 由真实数据算出的事件：越限即列为事件（不做假数据）。
-           🔴 2026-10-06 浪高阈值对齐国标（GB/T 19721.2 / 海浪警报级别）：
-              蓝色 2.5~3.9 m / 黄色 4.0~5.9 / 橙色 6.0~8.9 / 红色 ≥9.0 m。
            ⚠️ 2026-10-06 教训：这段当时漏了 `const out = [];` 一行，
               结果 events 计算属性每次都抛 ReferenceError。
               **Vue 会把计算属性里的异常吞掉**，页面照常渲染、只是事件列表永远是空的 ——
               验收也照样过。所以「页面能打开」不等于「这段逻辑是对的」。
-              这类错只能靠浏览器控制台（Errors 数）和逐页人工看抓。 */
+              这类错只能靠浏览器控制台（Errors 数）和逐页人工看抓。
+           🔴 浪高阈值对齐国标（GB/T 19721.2 / 海浪警报级别）：
+              蓝色 2.5~3.9 m / 黄色 4.0~5.9 / 橙色 6.0~8.9 / 红色 ≥9.0 m。
+           ⚠️ 问题五：事件合并「浪高警报 + 风速 ≥17.2 m/s（8 级大风）」，
+              每条含 时间 / 站点 / 数据；真实站点（公开数据）异常同样列入。 */
+        const H = global.__ENV_HELPERS__;
+        const siteName = this.siteName();
         const out = [];
         this.fast.forEach(function (r) {
+          const t = siteName + ' · ' + H.fmtTs(r.ts);
           const w = r.wave_height;
-          if (w == null) return;
-          let lv = null, note = '';
-          if (w >= 9.0)      { lv = 'red';    note = '红色警报级（≥9.0 m）'; }
-          else if (w >= 6.0) { lv = 'orange'; note = '橙色警报级（≥6.0 m）'; }
-          else if (w >= 4.0) { lv = 'yellow'; note = '黄色警报级 · 灾害性海浪（≥4.0 m）'; }
-          else if (w >= 2.5) { lv = 'blue';   note = '蓝色警报级 · 国家海浪警报起始（≥2.5 m）'; }
-          if (lv) {
-            out.push({ id: 'w' + r.ts, ts: r.ts, level: lv,
-                       text: '浪高 ' + w + ' m —— ' + note });
+          if (w != null) {
+            let lv = null, note = '';
+            if (w >= 9.0)      { lv = 'red';    note = '红色警报级（≥9.0 m）'; }
+            else if (w >= 6.0) { lv = 'orange'; note = '橙色警报级（≥6.0 m）'; }
+            else if (w >= 4.0) { lv = 'yellow'; note = '黄色警报级 · 灾害性海浪（≥4.0 m）'; }
+            else if (w >= 2.5) { lv = 'blue';   note = '蓝色警报级 · 国家海浪警报起始（≥2.5 m）'; }
+            if (lv) {
+              out.push({ id: 'w' + r.ts, ts: r.ts, level: lv,
+                         text: t + ' · 浪高 ' + w + ' m —— ' + note });
+            }
+          }
+          const ws = r.wind_speed;
+          if (ws != null && ws >= 17.2) {
+            out.push({ id: 'wind' + r.ts, ts: r.ts, level: 'red',
+                       text: t + ' · 风速 ' + ws + ' m/s —— 8 级及以上大风（≥17.2 m/s，蒲福风级）' });
           }
         });
-        return out.slice(-20).reverse();
+        return out.sort(function (a, b) { return b.ts - a.ts; }).slice(0, 20);
       },
       /* 浪高异常点（问题 2）：命中异常界定指标的点用圆点标记，颜色与指标表一致 */
       waveDots: function () {
@@ -838,9 +849,13 @@
         return out;
       },
       events: function () {
+        /* 问题五：每条事件含 时间 / 站点 / 数据；真实站点（公开数据）异常同样列入 */
+        const H = global.__ENV_HELPERS__;
+        const siteName = this.siteName();
         return this.alarms.slice(-20).reverse().map(function (a) {
           return { id: a.id, ts: a.ts, level: a.level,
-                   text: '水温 ' + a.hit.trigger_value + ' ℃ 触发「' + a.hit.rule_name + '」' };
+                   text: siteName + ' · ' + H.fmtTs(a.ts) + ' · 水温 ' + a.hit.trigger_value +
+                         ' ℃ 触发「' + a.hit.rule_name + '」' };
         });
       },
       /* 问题三：原始数据表按「最新在最上面」显示（倒序）；历史区间模式显示查询结果 */

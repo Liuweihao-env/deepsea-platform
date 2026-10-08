@@ -22,6 +22,16 @@ sandbox.API = {
       { site_id: 'site_03', site_name: '阿拉斯加湾西部', kind: 'obs', station_id: '46001' },
       { site_id: 'site_04', site_name: '夏威夷西北', kind: 'obs', station_id: '51001' }
     ];
+  },
+  /* 水温规则（与后端同口径）：≥28 红（上限）、≥25.5 黄（提示） */
+  ruleCheck: function (r) {
+    if (r.water_temp != null && r.water_temp >= 28) {
+      return { risk_level: 'red', rule_name: 'R-TEMP-01 水温上限', trigger_value: r.water_temp };
+    }
+    if (r.water_temp != null && r.water_temp >= 25.5) {
+      return { risk_level: 'yellow', rule_name: 'R-TEMP-02 水温偏高提示', trigger_value: r.water_temp };
+    }
+    return null;
   }
 };
 /* 导出 CSV 需要的最小 DOM mock（downloadCsv 会创建 <a> 并点击） */
@@ -435,6 +445,39 @@ section('新问题4：水质时序补盐度 + 光照强度纵轴完整显示');
     '光照右轴固定量程 0–14000 lux 并带轴名，刻度完整显示');
   assert(rc.indexOf('grid: needAxis2') >= 0 && rc.indexOf('right: 58') >= 0,
     '右轴有轴名/标签时留足右侧空间（grid right 58），避免纵轴被裁');
+}
+
+section('新问题5：所有异常数据进事件列表（含时间/站点/数据，真实站点同列）');
+{
+  /* 海况：浪高警报 + 风速 ≥17.2 都进事件；每条含 站点名 · 时间 · 数据 */
+  const H = sandbox.__ENV_HELPERS__;
+  const fast = [
+    { ts: 1000, wave_height: 1.0, wind_speed: 8.0 },     /* 正常：不出事件 */
+    { ts: 2000, wave_height: 4.0, wind_speed: 17.2 },    /* 浪高黄 + 风速红 */
+    { ts: 3000, wave_height: null, wind_speed: 20.0 },   /* 风速红（浪高空） */
+    { ts: 4000, wave_height: 9.0, wind_speed: null }     /* 浪高红（风速空） */
+  ];
+  const inst = { fast: fast, siteName: function () { return '墨西哥湾中部'; } };
+  const evs = sea.computed.events.call(inst);
+  assert(evs.length === 4, '浪高警报 + 风速异常全部列为事件（实际 ' + evs.length + ' 条）');
+  assert(evs[0].ts === 4000 && evs[evs.length - 1].ts === 2000, '事件按时间降序（最新在上）');
+  const joined = evs.map(function (e) { return e.text; }).join('\n');
+  assert(joined.indexOf('墨西哥湾中部') >= 0, '事件包含站点名（真实站点公开数据异常同样列入）');
+  assert(joined.indexOf(H.fmtTs(4000)) >= 0, '事件包含时间');
+  assert(joined.indexOf('浪高 9 m') >= 0 && joined.indexOf('红色警报级') >= 0, '浪高事件含数据与分级');
+  assert(joined.indexOf('风速 17.2 m/s') >= 0 && joined.indexOf('8 级及以上大风') >= 0,
+    '风速 ≥17.2 事件含数据与依据');
+}
+{
+  /* 水质：水温越限事件含 站点 · 时间 · 数据 · 规则（真实站点同口径） */
+  const inst = { fast: [{ ts: 1, water_temp: 28.5 }, { ts: 2, water_temp: 20.0 }] };
+  inst.alarms = water.computed.alarms.call(inst);
+  inst.siteName = function () { return '阿拉斯加湾西部'; };
+  const evs = water.computed.events.call(inst);
+  assert(evs.length === 1, '仅水温越限出事件（实际 ' + evs.length + ' 条）');
+  const t = evs[0].text;
+  assert(t.indexOf('阿拉斯加湾西部') >= 0 && t.indexOf('水温 28.5 ℃') >= 0 &&
+         t.indexOf('R-TEMP-01 水温上限') >= 0, '水质事件含 站点 · 时间 · 数据 · 规则名');
 }
 
 section('验收第 6 条相关：模板 {{ }} 内无裸枚举字段（与 acceptance.py 同口径）');
