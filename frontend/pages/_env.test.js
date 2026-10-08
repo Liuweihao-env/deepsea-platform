@@ -734,6 +734,52 @@ section('问题四：环境板块不再需要「原始数据明细 / 环境仿�
     'env.js 源码无这两个页面的注册（导航入口在公共 app.js，属骨架范围，需 PR 时向队长说明移除）');
 }
 
+section('问题一：事件列表默认收起（展示 5 条），其余可点击展开');
+{
+  const fake = [];
+  for (let i = 1; i <= 8; i++) {
+    fake.push({ id: 'e' + i, ts: i, level: 'yellow', text: '事件 ' + i });
+  }
+  const instSea = { evOpen: false, events: fake };
+  const vis = sea.computed.visibleEvents.call(instSea);
+  assert(vis.length === 5, '海况页事件列表默认只展示前 5 条（实际 ' + vis.length + '）');
+  instSea.evOpen = true;
+  assert(sea.computed.visibleEvents.call(instSea).length === 8, '点击「展开全部」后显示全部事件（实际 8 条）');
+  const instWater = { evOpen: false, events: fake };
+  assert(water.computed.visibleEvents.call(instWater).length === 5, '水质页事件列表默认只展示前 5 条');
+  instWater.evOpen = true;
+  assert(water.computed.visibleEvents.call(instWater).length === 8, '水质页展开后显示全部事件');
+  assert(sea.template.indexOf('展开全部') >= 0 && sea.template.indexOf('events.length > 5') >= 0,
+    '海况页模板：事件超过 5 条时显示「展开全部（N 条）」按钮，可收起');
+  assert(water.template.indexOf('展开全部') >= 0 && water.template.indexOf('events.length > 5') >= 0,
+    '水质页模板：事件超过 5 条时显示「展开全部（N 条）」按钮，可收起');
+  assert(sea.template.indexOf('event-list') < 0 && water.template.indexOf('event-list') < 0,
+    '两页不再使用公共 event-list 全量渲染（改页面内自绘列表，支持收起/展开）');
+  const instFew = { evOpen: false, events: fake.slice(0, 3) };
+  const visFew = sea.computed.visibleEvents.call(instFew);
+  assert(visFew.length === 3, '事件不足 5 条时全部展示（不出现展开按钮）');
+  assert(sea.data.toString().indexOf('evOpen') >= 0 && water.data.toString().indexOf('evOpen') >= 0,
+    '两页 data 均有 evOpen 展开状态');
+}
+
+section('问题二：时序图异常点只标圆点、不显示数字');
+{
+  const seaChartSrc = sea.methods.renderChart.toString();
+  const watChartSrc = water.methods.renderChart.toString();
+  assert(seaChartSrc.indexOf("markPoint: { symbol: 'circle', symbolSize: 7, label: { show: false }, data: this.waveDots }") >= 0,
+    '海况页浪高异常点：只标圆点、label 关闭（不显示数字）');
+  assert(seaChartSrc.indexOf("markPoint: { symbol: 'circle', symbolSize: 7, label: { show: false }, data: this.windDots }") >= 0,
+    '海况页风速异常点：只标圆点、label 关闭（不显示数字）');
+  assert(watChartSrc.indexOf("series[idx].markPoint = { symbol: 'circle', symbolSize: 7, label: { show: false }, data: this.waterDots }") >= 0,
+    '水质页水温异常点：只标圆点、label 关闭（不显示数字）');
+  const wd = sea.computed.waveDots.call({ fast: [{ ts: 1, wave_height: 4.5 }, { ts: 2, wave_height: 1.2 }] });
+  assert(wd.length === 1 && wd[0].itemStyle.color === '#D97706',
+    '浪高异常点仍按颜色分级标记（黄 4.0+ → #D97706，不显示数值）');
+  const windDots = sea.computed.windDots.call({ fast: [{ ts: 1, wind_speed: 18.0 }, { ts: 2, wind_speed: 8.0 }] });
+  assert(windDots.length === 1 && windDots[0].itemStyle.color === '#991B1B',
+    '风速异常点只标红色圆点（≥17.2 八级大风）');
+}
+
 section('验收第 6 条相关：模板 {{ }} 内无裸枚举字段（与 acceptance.py 同口径）');
 {
   /* 与 scripts/acceptance.py 的 WRAPPED 豁免规则保持一致：

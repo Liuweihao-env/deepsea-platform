@@ -255,6 +255,7 @@
                tick: 0, unsub: null, timer: null,
                refreshing: false, refreshMsg: '', refreshOk: null,
                per: S.seaPer, loadSeq: 0, chart: null,
+               evOpen: false,
                /* 问题二：历史区间（真实站点公开数据可自定义时间查看更长远历史） */
                rangeMode: false, rangeSeries: null, rangeMsg: '',
                rangeStart: '', rangeEnd: '', ranges: {} };
@@ -360,6 +361,11 @@
         });
         return out.sort(function (a, b) { return b.ts - a.ts; }).slice(0, 20);
       },
+      /* 问题一：事件列表默认收起 —— 只展示前 5 条（与时序图上下长度相当），
+         其余收起，点击「展开全部」查看；再次点击「收起」折叠。 */
+      visibleEvents: function () {
+        return this.evOpen ? this.events : this.events.slice(0, 5);
+      },
       /* 浪高异常点（问题 2）：命中异常界定指标的点用圆点标记，颜色与指标表一致 */
       waveDots: function () {
         const out = [];
@@ -433,6 +439,8 @@
         const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
         return s ? s.site_name : sid;
       },
+      /* 问题一：事件列表行内圆点颜色类（与公共 event-list 一致：bg-蓝/黄/橙/红） */
+      lvClass: function (lv) { return 'bg-' + (lv || 'blue'); },
       /* 问题一：观测站点（真实公开数据）不参与任何仿真控制 */
       isObsSite: function (sid) {
         const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
@@ -649,7 +657,8 @@
               markLine: { silent: true, symbol: 'none',
                 label: { formatter: '{b}', fontSize: 10, position: 'insideEndTop' },
                 data: this.waveLines },
-              markPoint: { symbol: 'circle', symbolSize: 7, data: this.waveDots }
+              /* 问题二：异常点只标圆点（颜色分级），不显示数字，图上保持干净 */
+              markPoint: { symbol: 'circle', symbolSize: 7, label: { show: false }, data: this.waveDots }
             },
             {
               name: '风速（m/s）', type: 'line', showSymbol: false, smooth: true,
@@ -658,7 +667,8 @@
               markLine: { silent: true, symbol: 'none',
                 label: { formatter: '{b}', fontSize: 10, position: 'insideEndTop' },
                 data: this.windLines },
-              markPoint: { symbol: 'circle', symbolSize: 7, data: this.windDots }
+              /* 问题二：异常点只标圆点（红色），不显示数字 */
+              markPoint: { symbol: 'circle', symbolSize: 7, label: { show: false }, data: this.windDots }
             }
           ]
         }, true);
@@ -803,7 +813,17 @@
       '    </div>',
       '    <div class="card">',
       '      <div class="card-title">海况事件（由数据实时判定）</div>',
-      '      <event-list :items="events" empty-text="本时段无越限事件" @pick="picked = $event" />',
+      '      <div class="events">',
+      '        <div v-if="!events.length" class="empty">本时段无越限事件</div>',
+      '        <div v-for="it in visibleEvents" :key="it.id" class="row-item" @click="picked = it">',
+      '          <span class="t">{{ time(it.ts) }}</span>',
+      '          <span class="dot" :class="lvClass(it.level)"></span>',
+      '          <span class="d">{{ it.text }}</span>',
+      '        </div>',
+      '        <button v-if="events.length > 5" class="small" style="margin-top:6px" @click="evOpen = !evOpen">',
+      '          {{ evOpen ? \'收起\' : \'展开全部（\' + events.length + \' 条）\' }}',
+      '        </button>',
+      '      </div>',
       '      ',
       '      <div v-if="picked" class="hint" style="margin-top:10px">',
       '        <b>已选事件</b><br>{{ picked.text }}<br>',
@@ -974,6 +994,7 @@
       const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = { seaPer: null, waterPer: null, site: 'site_01' });
       return { pageKey: 'water', site: S.site || 'site_01', picked: null, series: null,
                per: S.waterPer, loadSeq: 0, chart: null, timer: null,
+               evOpen: false,
                show: { water_temp: true, dissolved_oxygen: true, light_intensity: false,
                        salinity: true },
                /* 问题二：历史区间（真实站点公开数据可自定义时间查看更长远历史） */
@@ -1048,6 +1069,11 @@
                          ' ℃ 触发「' + a.hit.rule_name + '」' };
         });
       },
+      /* 问题一：事件列表默认收起 —— 只展示前 5 条（与时序图上下长度相当），
+         其余收起，点击「展开全部」查看；再次点击「收起」折叠。 */
+      visibleEvents: function () {
+        return this.evOpen ? this.events : this.events.slice(0, 5);
+      },
       /* 问题三：原始数据表按「最新在最上面」显示（倒序）；历史区间模式显示查询结果 */
       rawRows: function () {
         const src = this.rangeMode ? (this.rangeSeries || []) : this.fast;
@@ -1098,6 +1124,8 @@
         const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
         return s ? s.site_name : sid;
       },
+      /* 问题一：事件列表行内圆点颜色类（与公共 event-list 一致：bg-蓝/黄/橙/红） */
+      lvClass: function (lv) { return 'bg-' + (lv || 'blue'); },
       /* 问题一：观测站点（真实公开数据）不参与任何仿真控制 */
       isObsSite: function (sid) {
         const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
@@ -1257,7 +1285,8 @@
           series[idx].markLine = { silent: true, symbol: 'none',
             label: { formatter: '{b}', fontSize: 10, position: 'insideEndTop' },
             data: this.waterLines };
-          series[idx].markPoint = { symbol: 'circle', symbolSize: 7, data: this.waterDots };
+          /* 问题二：异常点只标圆点（黄/红分级），不显示数字，图上保持干净 */
+          series[idx].markPoint = { symbol: 'circle', symbolSize: 7, label: { show: false }, data: this.waterDots };
         }
         inst.setOption({
           /* 问题四：右轴有标签/轴名时留足右侧空间，避免「纵轴显示不全」 */
@@ -1392,7 +1421,17 @@
       '    </div>',
       '    <div class="card">',
       '      <div class="card-title">水质事件 / 告警（由规则实时判定）</div>',
-      '      <event-list :items="events" empty-text="本时段无越限事件" @pick="picked = $event" />',
+      '      <div class="events">',
+      '        <div v-if="!events.length" class="empty">本时段无越限事件</div>',
+      '        <div v-for="it in visibleEvents" :key="it.id" class="row-item" @click="picked = it">',
+      '          <span class="t">{{ time(it.ts) }}</span>',
+      '          <span class="dot" :class="lvClass(it.level)"></span>',
+      '          <span class="d">{{ it.text }}</span>',
+      '        </div>',
+      '        <button v-if="events.length > 5" class="small" style="margin-top:6px" @click="evOpen = !evOpen">',
+      '          {{ evOpen ? \'收起\' : \'展开全部（\' + events.length + \' 条）\' }}',
+      '        </button>',
+      '      </div>',
       '      <div v-if="picked" class="hint" style="margin-top:10px">',
       '        <b>已选</b><br>{{ picked.text }}<br>',
       '        <span class="small">时间：{{ time(picked.ts) }}</span>',
