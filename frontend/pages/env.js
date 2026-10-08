@@ -231,6 +231,11 @@
         const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
         return s ? s.site_name : sid;
       },
+      /* 问题一：观测站点（真实公开数据）不参与任何仿真控制 */
+      isObsSite: function (sid) {
+        const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
+        return !!(s && s.kind === 'obs');
+      },
       time: function (ts) {
         return new Date(ts).toLocaleString('zh-CN', { hour12: false });
       },
@@ -251,14 +256,18 @@
         const v = parseInt(e.target.value, 10);
         if (v >= 5 && v <= 1440) { this.activePer.minutes = v; this.load(); }
       },
-      /* 调试面板：暂停 / 恢复 —— 只影响被操作的站点，其他站点不受任何影响 */
+      /* 调试面板：暂停 / 恢复 —— 只影响被操作的站点，其他站点不受任何影响；
+         真实站点（公开数据）不可暂停（问题一） */
       togglePause: function (sid) {
+        if (this.isObsSite(sid)) return;
         const per = this.per[sid];
         if (!per) return;
         per.paused = !per.paused;
         if (sid === this.site && !per.paused) this.load();
       },
+      /* 真实站点不可模拟大风大浪（问题一） */
       toggleStorm: function (sid) {
+        if (this.isObsSite(sid)) return;
         const per = this.per[sid];
         if (!per) return;
         per.storm = !per.storm;
@@ -592,28 +601,34 @@
       '            <td class="small"><b>{{ s.site_name }}</b> <span class="muted mono">{{ s.site_id }}</span></td>',
       '            <td class="small">{{ s.kind === \'obs\' ? \'观测\' : \'养殖\' }}</td>',
       '            <td class="small">',
-      '              <span :style="{ color: per && per[s.site_id] && per[s.site_id].paused ? \'#991B1B\' : \'#166534\' }">',
+      '              <!-- 问题一：真实站点是公开数据，不参与仿真，不存在暂停生成 -->',
+      '              <span v-if="s.kind === \'obs\'" style="color:#166534">公开数据</span>',
+      '              <span v-else :style="{ color: per && per[s.site_id] && per[s.site_id].paused ? \'#991B1B\' : \'#166534\' }">',
       '                {{ per && per[s.site_id] && per[s.site_id].paused ? \'已暂停\' : \'运行中\' }}',
       '              </span>',
       '            </td>',
       '            <td class="small">',
-      '              <span v-if="per && per[s.site_id] && per[s.site_id].storm" style="color:#991B1B">大风大浪</span>',
+      '              <span v-if="s.kind === \'obs\'" class="muted">实时实测（不可模拟）</span>',
+      '              <span v-else-if="per && per[s.site_id] && per[s.site_id].storm" style="color:#991B1B">大风大浪</span>',
       '              <span v-else class="muted">正常</span>',
       '            </td>',
       '            <td class="small">',
-      '              <button class="primary" style="padding:2px 8px" @click="togglePause(s.site_id)">',
-      '                {{ per && per[s.site_id] && per[s.site_id].paused ? \'恢复生成\' : \'暂停生成\' }}',
-      '              </button>',
-      '              <button style="padding:2px 8px;margin-left:6px" @click="toggleStorm(s.site_id)">',
-      '                {{ per && per[s.site_id] && per[s.site_id].storm ? \'恢复平常\' : \'触发大风大浪\' }}',
-      '              </button>',
+      '              <span v-if="s.kind === \'obs\'" class="muted small">—（公开数据不参与仿真控制）</span>',
+      '              <template v-else>',
+      '                <button class="primary" style="padding:2px 8px" @click="togglePause(s.site_id)">',
+      '                  {{ per && per[s.site_id] && per[s.site_id].paused ? \'恢复生成\' : \'暂停生成\' }}',
+      '                </button>',
+      '                <button style="padding:2px 8px;margin-left:6px" @click="toggleStorm(s.site_id)">',
+      '                  {{ per && per[s.site_id] && per[s.site_id].storm ? \'恢复平常\' : \'触发大风大浪\' }}',
+      '                </button>',
+      '              </template>',
       '            </td>',
       '          </tr>',
       '        </tbody>',
       '      </table>',
       '    </div>',
-      '    <!-- 大风大浪细化（问题 5）：整体 / 仅风速异常 / 仅浪高异常，按当前站点独立保存 -->',
-      '    <div class="row" style="margin-top:10px;align-items:center;flex-wrap:wrap">',
+      '    <!-- 大风大浪细化：仅养殖站点（真实站点公开数据不可模拟，问题一） -->',
+      '    <div v-if="!isObs" class="row" style="margin-top:10px;align-items:center;flex-wrap:wrap">',
       '      <span class="small muted">大风大浪细化（当前站点 {{ siteName() }}）：</span>',
       '      <label class="small"><input type="radio" name="stormType"',
       '             :checked="(per && per[site] && per[site].stormType) === \'all\'" @change="setStormType(\'all\')"> 整体大风大浪</label>',
@@ -729,21 +744,30 @@
         const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
         return s ? s.site_name : sid;
       },
+      /* 问题一：观测站点（真实公开数据）不参与任何仿真控制 */
+      isObsSite: function (sid) {
+        const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
+        return !!(s && s.kind === 'obs');
+      },
       time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
       fmtTs: function (ts) { return global.__ENV_HELPERS__.fmtTs(ts); },
       srcCn: function (src) { return global.__ENV_CN__.srcCn(src); },
       qCn: function (q) { return global.__ENV_CN__.qCn(q); },
+      /* 问题一：真实站点不可暂停 / 不可模拟 */
       togglePause: function (sid) {
+        if (this.isObsSite(sid)) return;
         const per = this.per[sid];
         per.paused = !per.paused;
         if (sid === this.site && !per.paused) this.load();
       },
       toggleHeat: function (sid) {
+        if (this.isObsSite(sid)) return;
         const per = this.per[sid];
         per.heat = !per.heat;
         if (sid === this.site) this.load();
       },
       toggleOffline: function (sid) {
+        if (this.isObsSite(sid)) return;
         const per = this.per[sid];
         per.offline = !per.offline;
         if (sid === this.site) this.load();
@@ -1031,26 +1055,32 @@
       '            <td class="small"><b>{{ s.site_name }}</b> <span class="muted mono">{{ s.site_id }}</span></td>',
       '            <td class="small">{{ s.kind === \'obs\' ? \'观测\' : \'养殖\' }}</td>',
       '            <td class="small">',
-      '              <span :style="{ color: per && per[s.site_id] && per[s.site_id].paused ? \'#991B1B\' : \'#166534\' }">',
+      '              <!-- 问题一：真实站点是公开数据，不参与仿真，不存在暂停生成 -->',
+      '              <span v-if="s.kind === \'obs\'" style="color:#166534">公开数据</span>',
+      '              <span v-else :style="{ color: per && per[s.site_id] && per[s.site_id].paused ? \'#991B1B\' : \'#166534\' }">',
       '                {{ per && per[s.site_id] && per[s.site_id].paused ? \'已暂停\' : \'运行中\' }}',
       '              </span>',
       '            </td>',
       '            <td class="small">',
-      '              <span v-if="per && per[s.site_id] && (per[s.site_id].heat || per[s.site_id].offline)" style="color:#991B1B">',
+      '              <span v-if="s.kind === \'obs\'" class="muted">实时实测（不可模拟）</span>',
+      '              <span v-else-if="per && per[s.site_id] && (per[s.site_id].heat || per[s.site_id].offline)" style="color:#991B1B">',
       '                {{ per[s.site_id].heat ? \'水温骤升\' : \'设备离线\' }}',
       '              </span>',
       '              <span v-else class="muted">正常</span>',
       '            </td>',
       '            <td class="small">',
-      '              <button class="primary" style="padding:2px 8px" @click="togglePause(s.site_id)">',
-      '                {{ per && per[s.site_id] && per[s.site_id].paused ? \'恢复生成\' : \'暂停生成\' }}',
-      '              </button>',
-      '              <button style="padding:2px 8px;margin-left:6px" @click="toggleHeat(s.site_id)">',
-      '                {{ per && per[s.site_id] && per[s.site_id].heat ? \'恢复正常水温\' : \'触发水温骤升\' }}',
-      '              </button>',
-      '              <button style="padding:2px 8px;margin-left:6px" @click="toggleOffline(s.site_id)">',
-      '                {{ per && per[s.site_id] && per[s.site_id].offline ? \'恢复设备在线\' : \'模拟设备离线\' }}',
-      '              </button>',
+      '              <span v-if="s.kind === \'obs\'" class="muted small">—（公开数据不参与仿真控制）</span>',
+      '              <template v-else>',
+      '                <button class="primary" style="padding:2px 8px" @click="togglePause(s.site_id)">',
+      '                  {{ per && per[s.site_id] && per[s.site_id].paused ? \'恢复生成\' : \'暂停生成\' }}',
+      '                </button>',
+      '                <button style="padding:2px 8px;margin-left:6px" @click="toggleHeat(s.site_id)">',
+      '                  {{ per && per[s.site_id] && per[s.site_id].heat ? \'恢复正常水温\' : \'触发水温骤升\' }}',
+      '                </button>',
+      '                <button style="padding:2px 8px;margin-left:6px" @click="toggleOffline(s.site_id)">',
+      '                  {{ per && per[s.site_id] && per[s.site_id].offline ? \'恢复设备在线\' : \'模拟设备离线\' }}',
+      '                </button>',
+      '              </template>',
       '            </td>',
       '          </tr>',
       '        </tbody>',

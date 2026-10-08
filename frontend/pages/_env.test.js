@@ -257,6 +257,35 @@ assert(water.template.indexOf('触发水温骤升') >= 0 && water.template.index
 assert(sea.template.indexOf('暂停生成') >= 0 && water.template.indexOf('暂停生成') >= 0,
   '两页调试面板含暂停生成按钮');
 
+section('新问题1：真实站点（公开数据）不参与仿真控制');
+{
+  assert(sea.template.indexOf('公开数据不参与仿真控制') >= 0, '海况调试面板：观测站点无暂停/风暴操作按钮');
+  assert(sea.template.indexOf('实时实测（不可模拟）') >= 0, '海况调试面板：观测站点模式为实时实测');
+  assert(water.template.indexOf('公开数据不参与仿真控制') >= 0, '水质调试面板：观测站点无暂停/骤升/离线按钮');
+  assert(water.template.indexOf('实时实测（不可模拟）') >= 0, '水质调试面板：观测站点模式为实时实测');
+  const stormZone = sea.template.slice(sea.template.indexOf('大风大浪细化'));
+  assert(stormZone.indexOf('v-if="!isObs"') >= 0, '风暴细化选项仅养殖站点显示（观测站点不可模拟）');
+  assert(typeof sea.methods.isObsSite === 'function' && typeof water.methods.isObsSite === 'function',
+    '两页都有 isObsSite 判断方法');
+}
+{
+  const noop = function () {};
+  const per = { site_01: { paused: false, storm: false, heat: false, offline: false },
+                site_02: { paused: false, storm: false, heat: false, offline: false },
+                site_03: { paused: false, storm: false, heat: false, offline: false } };
+  const seaInst = { site: 'site_01', per: per, load: noop, isObsSite: sea.methods.isObsSite };
+  sea.methods.togglePause.call(seaInst, 'site_02');
+  sea.methods.toggleStorm.call(seaInst, 'site_03');
+  assert(per.site_02.paused === false, '真实站点 site_02 不可暂停');
+  assert(per.site_03.storm === false, '真实站点 site_03 不可模拟大风大浪');
+  sea.methods.togglePause.call(seaInst, 'site_01');
+  assert(per.site_01.paused === true, '养殖站点 site_01 可正常暂停');
+  const waterInst = { site: 'site_01', per: per, load: noop, isObsSite: water.methods.isObsSite };
+  water.methods.toggleHeat.call(waterInst, 'site_02');
+  water.methods.toggleOffline.call(waterInst, 'site_02');
+  assert(per.site_02.heat === false && per.site_02.offline === false, '真实站点不可触发骤升/离线');
+}
+
 section('问题6：per 空值安全（首渲染不抛错 —— 修复 Cannot read properties of null (reading site_01)）');
 {
   const re = /(?<!per && )per\[(site|s\.site_id)\] &&/g;
