@@ -785,7 +785,8 @@
     data: function () {
       return { site: 'site_01', picked: null, series: null,
                per: null, loadSeq: 0, chart: null, timer: null,
-               show: { water_temp: true, dissolved_oxygen: true, light_intensity: false },
+               show: { water_temp: true, dissolved_oxygen: true, light_intensity: false,
+                       salinity: true },
                /* 问题二：历史区间（真实站点公开数据可自定义时间查看更长远历史） */
                rangeMode: false, rangeSeries: null, rangeMsg: '',
                rangeStart: '', rangeEnd: '', ranges: {} };
@@ -982,7 +983,8 @@
         this.rangeMsg = '';
         this.load();
       },
-      /* 可交互时序（问题 2）：缩放 / 框选 / 异常点标记；光照强度走右轴（量级差太大） */
+      /* 可交互时序（问题 2）：缩放 / 框选 / 异常点标记；光照强度走右轴（量级差太大）；
+         问题四：盐度（慢变量）补入时序；光照右轴固定量程使纵轴刻度完整显示 */
       renderChart: function () {
         const el = this.$refs.chartEl;
         if (!el) return;
@@ -1016,6 +1018,14 @@
         pushS('水温', '℃', 'water_temp', '#2F5496', 0);
         pushS('溶解氧', 'mg/L', 'dissolved_oxygen', '#166534', 0);
         pushS('光照强度', 'lux', 'light_intensity', '#C2410C', 1);
+        /* 问题四：盐度（慢变量 30 秒一条）补入时序，与水温/溶解氧同轴（量级相近） */
+        if (s.salinity) {
+          series.push({
+            name: '盐度（‰）', type: 'line', showSymbol: false, smooth: true, yAxisIndex: 0,
+            lineStyle: { width: 1.6, color: '#7C3AED' }, itemStyle: { color: '#7C3AED' },
+            data: this.slow.map(function (r) { return [r.ts, r.salinity]; })
+          });
+        }
         const needAxis2 = !!s.light_intensity;
         /* 阈值线 + 异常点只挂在水温曲线上（水温有界定规则） */
         let idx = -1;
@@ -1029,7 +1039,10 @@
           series[idx].markPoint = { symbol: 'circle', symbolSize: 7, data: this.waterDots };
         }
         inst.setOption({
-          grid: { left: 56, right: 20, top: 44, bottom: 44 },
+          /* 问题四：右轴有标签/轴名时留足右侧空间，避免「纵轴显示不全」 */
+          grid: needAxis2
+            ? { left: 56, right: 58, top: 44, bottom: 44 }
+            : { left: 56, right: 20, top: 44, bottom: 44 },
           tooltip: { trigger: 'axis' },
           legend: { top: 0, textStyle: { fontSize: 12 } },
           xAxis: {
@@ -1041,7 +1054,9 @@
             ? [
                 { type: 'value', scale: true, axisLabel: { fontSize: 11 },
                   splitLine: { lineStyle: { color: '#EEF2F6' } } },
-                { type: 'value', scale: true, position: 'right', axisLabel: { fontSize: 11 },
+                /* 光照强度固定量程 0–14000 lux：白天峰值 ~12000，刻度 0/3500/7000/10500/14000 完整可见 */
+                { type: 'value', position: 'right', min: 0, max: 14000, name: '光照(lux)',
+                  nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 },
                   splitLine: { show: false } }
               ]
             : { type: 'value', scale: true, axisLabel: { fontSize: 11 },
@@ -1148,6 +1163,7 @@
       '        <label class="small" style="margin-left:10px"><input type="checkbox" v-model="show.water_temp"> 水温</label>',
       '        <label class="small" style="margin-left:10px"><input type="checkbox" v-model="show.dissolved_oxygen"> 溶解氧</label>',
       '        <label class="small" style="margin-left:10px"><input type="checkbox" v-model="show.light_intensity"> 光照强度</label>',
+      '        <label class="small" style="margin-left:10px"><input type="checkbox" v-model="show.salinity"> 盐度</label>',
       '      </div>',
       '    </div>',
       '    <div class="card">',

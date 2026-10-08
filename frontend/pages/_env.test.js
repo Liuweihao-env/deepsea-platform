@@ -423,6 +423,20 @@ section('新问题3：原始数据最新在最上面（倒序显示，导出保�
     'CSV 按时间正序导出（最早在前），页面显示为最新在上');
 }
 
+section('新问题4：水质时序补盐度 + 光照强度纵轴完整显示');
+{
+  const wData = water.data();
+  assert(wData.show.salinity === true, '水质页默认显示盐度曲线开关（salinity=true）');
+  assert(water.template.indexOf('v-model="show.salinity"') >= 0, '模板有盐度曲线 checkbox');
+  const rc = water.methods.renderChart.toString();
+  assert(rc.indexOf('盐度（‰）') >= 0, '时序图新增盐度曲线');
+  assert(rc.indexOf('this.slow.map') >= 0, '盐度曲线数据来自慢变量（30 秒一条）');
+  assert(rc.indexOf('max: 14000') >= 0 && rc.indexOf('光照(lux)') >= 0,
+    '光照右轴固定量程 0–14000 lux 并带轴名，刻度完整显示');
+  assert(rc.indexOf('grid: needAxis2') >= 0 && rc.indexOf('right: 58') >= 0,
+    '右轴有轴名/标签时留足右侧空间（grid right 58），避免纵轴被裁');
+}
+
 section('验收第 6 条相关：模板 {{ }} 内无裸枚举字段（与 acceptance.py 同口径）');
 {
   /* 与 scripts/acceptance.py 的 WRAPPED 豁免规则保持一致：
