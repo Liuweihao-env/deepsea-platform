@@ -341,10 +341,19 @@ section('新问题2：真实站点自定义时间历史 + 数据时间范围');
 /* 成功 / 失败路径：mock fetch（Promise），异步断言 */
 {
   const inst = { site: 'site_02', rangeStart: '2026-09-01T00:00', rangeEnd: '2026-09-02T00:00',
-                 rangeMode: false, rangeSeries: null, rangeMsg: '' };
-  let calledUrl = '';
+                 rangeMode: false, rangeSeries: null, rangeMsg: '', ranges: {},
+                 loadRanges: sea.methods.loadRanges };
+  let firstUrl = '', calledUrl = '';
   sandbox.fetch = function (url) {
+    if (!firstUrl) firstUrl = url;
     calledUrl = url;
+    if (url.indexOf('/api/env/ndbc-ranges') >= 0) {
+      return Promise.resolve({ ok: true, json: function () {
+        return Promise.resolve({ ranges: [
+          { station_id: '42001', first_ts_utc: '2026-08-25 00:10', latest_ts_utc: '2026-10-08 03:30' }
+        ] });
+      } });
+    }
     return Promise.resolve({ ok: true, json: function () {
       return Promise.resolve({ count: 2, records: [
         { ts: 1700000000000, site_id: 'site_02', source: 'public' },
@@ -354,10 +363,14 @@ section('新问题2：真实站点自定义时间历史 + 数据时间范围');
   };
   sea.methods.queryRange.call(inst);
   await new Promise(function (r) { setTimeout(r, 0); });
-  assert(calledUrl.indexOf('/api/env/historical?site_id=site_02&start_ts=') === 0,
-    'queryRange 请求 historical 接口（含站点与起止时间戳）');
+  await new Promise(function (r) { setTimeout(r, 0); });
+  assert(firstUrl.indexOf('/api/env/historical?site_id=site_02&start_ts=') === 0,
+    'queryRange 先请求 historical 接口（含站点与起止时间戳）');
   assert(inst.rangeMode === true && inst.rangeSeries.length === 2, '查询成功后进入历史区间模式并保存数据');
   assert(inst.rangeMsg.indexOf('已加载 2 条公开历史数据') >= 0, '成功提示含条数与区间');
+  assert(inst.ranges['42001'] && inst.ranges['42001'].first_ts_utc === '2026-08-25 00:10',
+    '查询历史成功后惰性请求 ndbc-ranges，数据时间范围变精确');
+  assert(calledUrl.indexOf('/api/env/ndbc-ranges') >= 0, '成功路径会请求精确范围接口（不产生未挂载 404）');
   /* 失败降级（接口未挂载） */
   const failInst = { site: 'site_02', rangeStart: '2026-09-01T00:00', rangeEnd: '2026-09-02T00:00',
                      rangeMode: false, rangeSeries: null, rangeMsg: '' };

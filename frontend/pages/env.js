@@ -352,7 +352,9 @@
           self.load();
         });
       },
-      /* 问题二：NDBC 数据时间范围（挂载 api/env.py 后精确；未挂载时估算并诚实标注） */
+      /* 问题二：NDBC 数据时间范围（挂载 api/env.py 后精确；未挂载时估算并诚实标注）。
+         注意：不在 mount 时请求 ndbc-ranges（未挂载会 404 并产生浏览器 console error），
+         改为「查询历史」成功（证明后端已挂载）后再请求精确范围。 */
       ndbcRangeText: function (s) {
         const r = this.ranges && this.ranges[s.station_id];
         if (r && r.first_ts_utc && r.latest_ts_utc) {
@@ -398,6 +400,8 @@
               const recs = d.records;
               self.rangeSeries = recs;
               self.rangeMode = true;
+              /* 后端已挂载（查询成功）→ 顺带取精确「数据时间范围」 */
+              self.loadRanges();
               self.rangeMsg = '已加载 ' + d.count + ' 条公开历史数据（' +
                 global.__ENV_HELPERS__.fmtTs(recs[0].ts) + ' ~ ' +
                 global.__ENV_HELPERS__.fmtTs(recs[recs.length - 1].ts) + '）';
@@ -502,14 +506,14 @@
       const self = this;
       const H = global.__ENV_HELPERS__;
       this.ensurePer();
-      /* 问题二：历史区间输入默认 最近 1 天 */
+      /* 问题二：历史区间输入默认 最近 1 天（ndbc-ranges 不在此请求——未挂载会 404 产生 console error，
+         改为查询历史成功后惰性请求，见 queryRange） */
       if (!this.rangeStart) {
         const en = new Date();
         const st = new Date(en.getTime() - 24 * 3600 * 1000);
         this.rangeStart = H.localInput(st);
         this.rangeEnd = H.localInput(en);
       }
-      this.loadRanges();
       this.unsub = API.subscribe(function () { self.tick++; });
       this.load();
       this.$nextTick(function () { self.renderChart(); });
@@ -1102,14 +1106,14 @@
       const self = this;
       const H = global.__ENV_HELPERS__;
       this.ensurePer();
-      /* 问题二：历史区间输入默认 最近 1 天 */
+      /* 问题二：历史区间输入默认 最近 1 天（ndbc-ranges 不在此请求——未挂载会 404 产生 console error，
+         改为查询历史成功后惰性请求，见 queryRange） */
       if (!this.rangeStart) {
         const en = new Date();
         const st = new Date(en.getTime() - 24 * 3600 * 1000);
         this.rangeStart = H.localInput(st);
         this.rangeEnd = H.localInput(en);
       }
-      this.loadRanges();
       this.load();
       this.$nextTick(function () { self.renderChart(); });
       /* 轮询：只刷新「未暂停」的当前站点；暂停站点冻结（站点独立）；
