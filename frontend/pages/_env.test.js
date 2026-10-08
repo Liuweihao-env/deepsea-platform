@@ -379,6 +379,50 @@ section('新问题2：真实站点自定义时间历史 + 数据时间范围');
   assert(none === '2026-10-08 03:30', '仅有 latest 时显示原值');
 }
 
+section('新问题3：原始数据最新在最上面（倒序显示，导出保持正序）');
+{
+  assert(sea.template.indexOf('v-for="r in rawRows"') >= 0, '海况原始数据表使用 rawRows（倒序）');
+  assert(water.template.indexOf('v-for="r in rawRows"') >= 0, '水质快变量表使用 rawRows（倒序）');
+  assert(water.template.indexOf('v-for="r in slowRows"') >= 0, '水质慢变量表使用 slowRows（倒序）');
+  assert(sea.template.indexOf('最新在上') >= 0 && water.template.indexOf('最新在上') >= 0,
+    '两页原始数据区说明「最新在上」');
+}
+{
+  const inst = { rangeMode: false, rangeSeries: null, fast: [{ ts: 1 }, { ts: 2 }, { ts: 3 }] };
+  const rr = sea.computed.rawRows.call(inst);
+  assert(rr[0].ts === 3 && rr[2].ts === 1, '实时窗口：最新数据排最上面（倒序），数量不变');
+  const inst2 = { rangeMode: true, rangeSeries: [{ ts: 10 }, { ts: 20 }], fast: [{ ts: 1 }] };
+  const rr2 = sea.computed.rawRows.call(inst2);
+  assert(rr2[0].ts === 20 && rr2[1].ts === 10, '历史区间：最新数据排最上面');
+  const sr = water.computed.slowRows.call({ slow: [{ ts: 1 }, { ts: 2 }, { ts: 3 }] });
+  assert(sr[0].ts === 3 && sr[2].ts === 1, '慢变量表倒序显示');
+  assert(sea.methods.exportCsv.toString().indexOf('rangeMode ? (this.rangeSeries || []) : this.fast') >= 0,
+    '导出 CSV 使用正序数据源（页面倒序、导出正序）');
+}
+/* CSV 实际导出内容按时间正序（模拟站点 + 真实站点同规则） */
+{
+  let capturedCsv = null;
+  sandbox.Blob = function (parts) { capturedCsv = parts[0]; };
+  sandbox.URL.createObjectURL = function () { return 'blob:mock'; };
+  sandbox.URL.revokeObjectURL = function () {};
+  sandbox.document.createElement = function () {
+    const el = { click: function () {}, remove: function () {} };
+    Object.defineProperty(el, 'download', { set: function () {} });
+    return el;
+  };
+  const inst = { site: 'site_01', rangeMode: false, rangeSeries: null,
+                 fast: [{ ts: 1000, site_id: 'site_01', source: 'simulated', quality: 'good',
+                          wave_height: 1.0, wind_speed: 5.0, current_speed: 0.3, air_temp: 20.0 },
+                        { ts: 2000, site_id: 'site_01', source: 'simulated', quality: 'good',
+                          wave_height: 1.5, wind_speed: 8.0, current_speed: 0.5, air_temp: 21.0 }] };
+  inst.siteName = function () { return '模拟养殖站点'; };
+  inst.exportCsv = sea.methods.exportCsv;
+  inst.exportCsv();
+  const H = sandbox.__ENV_HELPERS__;
+  assert(capturedCsv.indexOf(H.fmtTs(1000)) < capturedCsv.indexOf(H.fmtTs(2000)),
+    'CSV 按时间正序导出（最早在前），页面显示为最新在上');
+}
+
 section('验收第 6 条相关：模板 {{ }} 内无裸枚举字段（与 acceptance.py 同口径）');
 {
   /* 与 scripts/acceptance.py 的 WRAPPED 豁免规则保持一致：
