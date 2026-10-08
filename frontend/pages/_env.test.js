@@ -257,6 +257,21 @@ assert(water.template.indexOf('触发水温骤升') >= 0 && water.template.index
 assert(sea.template.indexOf('暂停生成') >= 0 && water.template.indexOf('暂停生成') >= 0,
   '两页调试面板含暂停生成按钮');
 
+section('问题6：per 空值安全（首渲染不抛错 —— 修复 Cannot read properties of null (reading site_01)）');
+{
+  const re = /(?<!per && )per\[(site|s\.site_id)\] &&/g;
+  const hits1 = sea.template.match(re);
+  assert(!hits1, '海况模板所有 per[...] 读取都有 per && 空值防护（无裸读）');
+  const hits2 = water.template.match(re);
+  assert(!hits2, '水质模板所有 per[...] 读取都有 per && 空值防护（无裸读）');
+  assert(sea.template.indexOf('per && per[site] && per[site].stormType') >= 0,
+    '风暴细化 radio 有 per 空值防护');
+  assert(sea.template.indexOf('per && per[s.site_id] && per[s.site_id].paused') >= 0,
+    '调试面板状态/按钮有 per 空值防护');
+  assert(water.template.indexOf('per && per[s.site_id] && (per[s.site_id].heat') >= 0,
+    '水质调试面板骤升/离线有 per 空值防护');
+}
+
 section('验收第 6 条相关：模板 {{ }} 内无裸枚举字段（与 acceptance.py 同口径）');
 {
   /* 与 scripts/acceptance.py 的 WRAPPED 豁免规则保持一致：
