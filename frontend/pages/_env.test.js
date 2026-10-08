@@ -645,6 +645,13 @@ section('问题二：异常事件记录保留（恢复正常后，异常期间�
   const G = sandbox.__ENV_GEN__;
   /* 清键：本段自给自足（正常首填 → 风暴追加 → 恢复追加） */
   delete G.series['site_01::sea'];
+  /* 回归断言：events/alarms 必须显式依赖 this.fast.length ——
+     若只经 allFast（computed 返回同一数组引用），Vue 不通知下游，
+     事件/告警列表会停留在旧数据（2026-10-08 浏览器实测踩坑） */
+  assert(sea.computed.events.toString().indexOf('this.fast.length') >= 0,
+    '海况 events 显式依赖 fast.length（series 更新时事件列表实时重算）');
+  assert(water.computed.alarms.toString().indexOf('this.fast.length') >= 0,
+    '水质 alarms 显式依赖 fast.length（series 更新时告警列表实时重算）');
   vm.runInContext('__origRandom = Math.random; Math.random = function () { return 0.5; };', sandbox);
   try {
     const per = { minutes: 5, paused: false, storm: false, heat: false, offline: false,

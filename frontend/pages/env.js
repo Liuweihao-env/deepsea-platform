@@ -337,9 +337,19 @@
               每条含 时间 / 站点 / 数据；真实站点（公开数据）异常同样列入。 */
         const H = global.__ENV_HELPERS__;
         const siteName = this.siteName();
+        const G = global.__ENV_GEN__;
+        /* ⚠️ 依赖与数据源：显式读 this.fast.length（series 每次更新都触发重算），
+           再取全量序列计算 —— 不能只经 allFast：computed 返回同一个数组引用时
+           Vue 认为值未变，不会通知下游，事件列表就会停留在旧数据（2026-10-08 实测踩坑）。 */
+        this.fast.length;
+        let src = this.fast;
+        if (!this.isObs) {
+          const st = G && G.series && G.series[this.site + '::' + (this.pageKey || 'sea')];
+          if (st && st.fast && st.fast.length) src = st.fast;
+        }
         const out = [];
         /* 问题二：基于全量序列计算事件 —— 模拟异常期间生成的点保留在序列里，事件记录不消除 */
-        this.allFast.forEach(function (r) {
+        src.forEach(function (r) {
           const t = siteName + ' · ' + H.fmtTs(r.ts);
           const w = r.wave_height;
           if (w != null) {
@@ -1050,10 +1060,19 @@
         ];
       },
       /* ★ 一条竖线：水温越限 → 出告警（判定规则在 API.ruleCheck，与后端同口径）。
-         问题二：基于全量序列判定 —— 模拟异常期间生成的点保留，告警记录不消除 */
+         问题二：基于全量序列判定 —— 模拟异常期间生成的点保留，告警记录不消除。
+         ⚠️ 显式读 this.fast.length 建立响应式依赖（不能只经 allFast：computed 返回
+         同一数组引用时 Vue 不通知下游，告警列表会停留在旧数据）。 */
       alarms: function () {
+        this.fast.length;
+        const G = global.__ENV_GEN__;
+        let src = this.fast;
+        if (!this.isObs) {
+          const st = G && G.series && G.series[this.site + '::' + (this.pageKey || 'water')];
+          if (st && st.fast && st.fast.length) src = st.fast;
+        }
         const out = [];
-        this.allFast.forEach(function (r) {
+        src.forEach(function (r) {
           const hit = API.ruleCheck(r);
           if (hit) out.push({ id: 'a' + r.ts, ts: r.ts, level: hit.risk_level, hit: hit, row: r });
         });
