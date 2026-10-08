@@ -15,6 +15,7 @@ const sandbox = { console: console };
 sandbox.window = sandbox;
 sandbox.PAGES = {};
 sandbox.API = {
+  resolve: function (v, cb) { cb(v); },
   sites: function () {
     return [
       { site_id: 'site_01', site_name: '模拟养殖站点', kind: 'farm' },
@@ -259,14 +260,14 @@ assert(sea.template.indexOf('stormNote') >= 0, '海况页显示细化降级提�
 assert(typeof sea.methods.setStormType === 'function', '海况页 methods.setStormType 已定义');
 {
   const note = sea.computed.stormNote;
-  assert(note.call({ per: null, site: 'site_01' }) === '', 'per 未初始化时无降级提示');
+  assert(note.call({ per: null, site: 'site_01' }) === '', 'per 未初始化时无细化提示');
   assert(note.call({ per: { site_01: { stormType: 'all' } }, site: 'site_01' }) === '',
-    '整体大风大浪无降级提示');
+    '整体大风大浪无细化提示');
   const w = note.call({ per: { site_01: { stormType: 'wind' } }, site: 'site_01' });
-  assert(w.indexOf('仅风速异常') >= 0 && w.indexOf('backend/api/env.py') >= 0,
-    '仅风速异常提示说明降级原因与挂载文件');
+  assert(w.indexOf('仅风速异常') >= 0 && w.indexOf('已生效') >= 0,
+    '仅风速异常提示说明细化模式已生效（前端流式生成器直接实现，无需后端挂载）');
   const v = note.call({ per: { site_01: { stormType: 'wave' } }, site: 'site_01' });
-  assert(v.indexOf('仅浪高异常') >= 0, '仅浪高异常提示');
+  assert(v.indexOf('仅浪高异常') >= 0 && v.indexOf('已生效') >= 0, '仅浪高异常细化提示');
 }
 assert(water.template.indexOf('触发水温骤升') >= 0 && water.template.indexOf('模拟设备离线') >= 0,
   '水质页调试面板含水温骤升/设备离线');
@@ -470,7 +471,7 @@ section('新问题5：所有异常数据进事件列表（含时间/站点/数�
     { ts: 3000, wave_height: null, wind_speed: 20.0 },   /* 风速红（浪高空） */
     { ts: 4000, wave_height: 9.0, wind_speed: null }     /* 浪高红（风速空） */
   ];
-  const inst = { fast: fast, siteName: function () { return '墨西哥湾中部'; } };
+  const inst = { fast: fast, allFast: fast, siteName: function () { return '墨西哥湾中部'; } };
   const evs = sea.computed.events.call(inst);
   assert(evs.length === 4, '浪高警报 + 风速异常全部列为事件（实际 ' + evs.length + ' 条）');
   assert(evs[0].ts === 4000 && evs[evs.length - 1].ts === 2000, '事件按时间降序（最新在上）');
@@ -483,7 +484,8 @@ section('新问题5：所有异常数据进事件列表（含时间/站点/数�
 }
 {
   /* 水质：水温越限事件含 站点 · 时间 · 数据 · 规则（真实站点同口径） */
-  const inst = { fast: [{ ts: 1, water_temp: 28.5 }, { ts: 2, water_temp: 20.0 }] };
+  const inst = { fast: [{ ts: 1, water_temp: 28.5 }, { ts: 2, water_temp: 20.0 }],
+                 allFast: [{ ts: 1, water_temp: 28.5 }, { ts: 2, water_temp: 20.0 }] };
   inst.alarms = water.computed.alarms.call(inst);
   inst.siteName = function () { return '阿拉斯加湾西部'; };
   const evs = water.computed.events.call(inst);
@@ -520,6 +522,139 @@ section('新问题6：页面切换不丢操作状态（跨页共享 per / site�
   assert(sea.watch.site.toString().indexOf('S.site = this.site') >= 0 &&
          water.watch.site.toString().indexOf('S.site = this.site') >= 0,
     '两页 watch.site 都把站点选择写回全局');
+}
+
+section('问题一：触发异常只影响「接下来实时生成」的数据（已生成点不变）');
+{
+  const G = sandbox.__ENV_GEN__;
+  assert(!!G && typeof G.appendTo === 'function' && typeof G.ensure === 'function',
+    '流式仿真生成器 __ENV_GEN__ 已挂载（ensure / appendTo）');
+  /* Math 是 vm 沙箱内建全局，须在沙箱上下文内替换（测试确定性：rndn → 均值） */
+  vm.runInContext('__origRandom = Math.random; Math.random = function () { return 0.5; };', sandbox);
+  try {
+    const per = { minutes: 5, paused: false, storm: false, heat: false, offline: false,
+                  stormType: 'all', heatSince: null };
+    const st = G.ensure('site_01', 5, per);            /* 首填 5 分钟窗口：正常值 */
+    const beforeLen = st.fast.length;
+    const before0 = st.fast[0];
+    const lastNormal = st.fast[beforeLen - 1];
+    assert(lastNormal.wave_height < 2.5 && lastNormal.wind_speed < 17.2 &&
+           lastNormal.quality === 'good', '正常状态下生成的点：浪高/风速正常、质量良好');
+    /* 触发大风大浪 → 追加下一个 5 秒生成的点 */
+    per.storm = true;
+    G.appendTo('site_01', lastNormal.ts + 5 * 1000, per, 5);
+    const abn = st.fast[st.fast.length - 1];
+    assert(abn.wave_height >= 4.0 && abn.wind_speed >= 17.2 && abn.quality === 'suspect',
+      '触发大风大浪后：接下来生成的点浪高≥4.0（黄标）且风速≥17.2（8级大风），质量疑似异常');
+    assert(st.fast.length === beforeLen + 1, '触发只追加新点，没有重生成历史窗口');
+    assert(st.fast[0] === before0 && st.fast[beforeLen - 1] === lastNormal,
+      '已生成的点未被改写（对象引用不变：首点与最后一个正常点都保持原对象）');
+    /* 触发水温骤升 → 追加点直接到目标 30.5℃ */
+    per.storm = false;
+    per.heat = true; per.heatSince = Date.now();
+    G.appendTo('site_01', abn.ts + 5 * 1000, per, 5);
+    const h = st.fast[st.fast.length - 1];
+    assert(h.water_temp >= 28.0 && h.quality === 'suspect',
+      '触发水温骤升：接下来生成的点水温≥28.0（上限），质量疑似异常');
+    /* 恢复（风暴关 / 骤升关）→ 新点回正常，异常期间的点保留 */
+    per.heat = false; per.heatSince = null;
+    G.appendTo('site_01', h.ts + 5 * 1000, per, 5);
+    const norm = st.fast[st.fast.length - 1];
+    assert(norm.wave_height < 2.5 && norm.water_temp < 25.5 && norm.quality === 'good',
+      '恢复正常后：接下来生成的点回正常值，质量良好');
+    assert(st.fast[st.fast.length - 2] === h && st.fast[beforeLen] === abn,
+      '异常期间生成的点永久保留（对象引用不变，未随恢复被重写）');
+  } finally {
+    vm.runInContext('Math.random = __origRandom;', sandbox);
+  }
+}
+
+section('问题二：异常事件记录保留（恢复正常后，异常期间的数据与事件不消除）');
+{
+  const G = sandbox.__ENV_GEN__;
+  vm.runInContext('__origRandom = Math.random; Math.random = function () { return 0.5; };', sandbox);
+  try {
+    const per = { minutes: 5, paused: false, storm: false, heat: false, offline: false,
+                  stormType: 'all', heatSince: null };
+    const st = G.ensure('site_01', 5, per);
+    const lastNormal = st.fast[st.fast.length - 1];
+    per.storm = true;
+    G.appendTo('site_01', lastNormal.ts + 5 * 1000, per, 5);
+    const abn = st.fast[st.fast.length - 1];
+    per.storm = false;
+    G.appendTo('site_01', abn.ts + 5 * 1000, per, 5);
+    const norm = st.fast[st.fast.length - 1];
+    assert(norm.wave_height < 2.5, '恢复后新生成点浪高回正常');
+    /* 事件基于全量序列（allFast）—— 异常点仍在序列 → 事件仍列出 */
+    const evInst = { fast: st.fast.slice(-10), allFast: st.fast, isObs: false, site: 'site_01',
+                     siteName: function () { return '模拟养殖站点'; } };
+    const evs = sea.computed.events.call(evInst);
+    const joined = evs.map(function (e) { return e.text; }).join('\n');
+    assert(joined.indexOf('浪高 ' + abn.wave_height + ' m') >= 0,
+      '恢复正常后，异常期间生成的浪高事件仍存在于事件列表（不消除）');
+    assert(joined.indexOf('风速 ' + abn.wind_speed + ' m/s') >= 0,
+      '恢复正常后，异常期间生成的风速事件仍存在于事件列表（不消除）');
+  } finally {
+    vm.runInContext('Math.random = __origRandom;', sandbox);
+  }
+}
+
+section('问题三：正常状态偶发「较异常」数据并计入事件');
+{
+  const G = sandbox.__ENV_GEN__;
+  /* 在沙箱上下文内注入可控随机序列：第 1 次调用返回 0.001（命中偶发注入），之后返回 0.5（rndn → 均值） */
+  vm.runInContext('__origRandom = Math.random; __calls = 0; Math.random = function () { __calls += 1; return __calls === 1 ? 0.001 : 0.5; };', sandbox);
+  try {
+    const per = { minutes: 5, paused: false, storm: false, heat: false, offline: false,
+                  stormType: 'all', heatSince: null };
+    const st = G.ensure('site_01', 5, per);
+    const H = sandbox.__ENV_HELPERS__;
+    const abn = st.fast.filter(function (r) { return r.quality === 'suspect'; })[0];
+    assert(!!abn, '正常模式下出现了质量「疑似异常」的点（偶发注入）');
+    assert(!!abn && ((abn.wave_height != null && abn.wave_height >= 2.5) ||
+                     (abn.wind_speed != null && abn.wind_speed >= 17.2) ||
+                     (abn.water_temp != null && abn.water_temp >= 25.5)),
+      '偶发异常点命中异常界定指标（浪高≥2.5 蓝标 / 风速≥17.2 / 水温≥25.5 黄标）');
+    const evInst = { fast: st.fast, allFast: st.fast, isObs: false, site: 'site_01',
+                     siteName: function () { return '模拟养殖站点'; } };
+    const evs = sea.computed.events.call(evInst);
+    const joined = evs.map(function (e) { return e.text; }).join('\n');
+    assert(joined.indexOf(H.fmtTs(abn.ts)) >= 0, '偶发异常点被记录进海况事件（含时间/站点/数据）');
+  } finally {
+    vm.runInContext('Math.random = __origRandom;', sandbox);
+  }
+}
+
+section('问题一补充：两页 load() 对养殖站点流式生成、对观测站点走公开接口');
+{
+  let apiEnvCalled = 0;
+  const origEnv = sandbox.API.env;
+  sandbox.API.env = function () { apiEnvCalled++; return { fast: [{ ts: 1, source: 'public' }], slow: [] }; };
+  try {
+    const obsInst = { site: 'site_02', ensurePer: function () {}, activePer: { minutes: 60 },
+                      loadSeq: 0, isObsSite: sea.methods.isObsSite };
+    sea.methods.load.call(obsInst);
+    assert(apiEnvCalled === 1, '观测站点（site_02）仍走 API.env 公开数据接口');
+    const farmInst = { site: 'site_01', ensurePer: function () {}, activePer: { minutes: 60 },
+                       loadSeq: 0, isObsSite: sea.methods.isObsSite };
+    sea.methods.load.call(farmInst);
+    assert(apiEnvCalled === 1, '养殖站点（site_01）不再调用 API.env（改由前端流式生成器生成）');
+    assert(!!farmInst.series && farmInst.series.fast.length >= 2, '养殖站点 load 后拿到流式生成的窗口数据');
+    const wfarm = { site: 'site_01', ensurePer: function () {}, activePer: { minutes: 60 },
+                    loadSeq: 0, isObsSite: water.methods.isObsSite };
+    water.methods.load.call(wfarm);
+    assert(!!wfarm.series && wfarm.series.slow.length >= 2, '水质页养殖站点拿到含慢变量（盐度/pH）的窗口数据');
+  } finally {
+    sandbox.API.env = origEnv;
+  }
+}
+
+section('问题四：环境板块不再需要「原始数据明细 / 环境仿真控制」独立页面');
+{
+  assert(!sandbox.PAGES['/env/records'] && !sandbox.PAGES['/env/simulator'],
+    'env.js 未注册 /env/records 与 /env/simulator 页面（功能已并入海况/水质两页）');
+  assert(code.indexOf("PAGES['/env/records']") < 0 && code.indexOf("PAGES['/env/simulator']") < 0,
+    'env.js 源码无这两个页面的注册（导航入口在公共 app.js，属骨架范围，需 PR 时向队长说明移除）');
 }
 
 section('验收第 6 条相关：模板 {{ }} 内无裸枚举字段（与 acceptance.py 同口径）');

@@ -48,6 +48,23 @@ backend/api/env.py —— 环境板块后端扩展（供 server.py 挂载，不�
   - 观测站点历史来自 data/ndbc_cache/ndbc_<station>.json（随仓库走，断网可用），
     字段只含 NDBC 提供的四要素（浪高/风速/气温/水温），其余为 None ——
     与平台「观测站点不测水质」口径一致，不许用仿真值充数。
+
+【2026-10-08 追加说明（PR 需向队长说明的越权项）】
+  1. 问题一~三（模拟站点触发异常只影响「接下来实时生成」的数据、已生成点不变、
+     正常状态偶发较异常数据并计入事件）：因 server.py 的 /api/env 是整窗重生成
+     （每次请求把历史窗口重新算一遍，触发异常会把已生成数据改写），
+     契约禁止修改 server.py，故该三项改由 frontend/pages/env.js 内置的
+     流式仿真生成器（__ENV_GEN__）实现：每个点生成一次后永不再改，
+     站点序列缓存在全局 __ENV_SERIES__，按真实时间轴逐步追加。
+     若队长希望仿真生成统一回到后端，需在 server.py 中把 /api/env 改为
+     「按时间轴追加、已生成点不可变」的流式实现，前端 load() 已预留分流
+     （观测站点走 API.env / 养殖站点走 __ENV_GEN__），届时可在 env.js 内切换。
+  2. 问题四（删除「原始数据明细」/env/records 与「环境仿真控制」/env/simulator）：
+     这两个菜单项注册在 frontend/app.js 的 MENU（骨架文件，契约明确由骨架维护、
+     他人不要改），且 env.js 从未注册对应页面。删除导航项需要改 app.js，
+     属越权范围，本分支未改动。若队长确认删除，请移除 app.js 中
+     { path: '/env/records', label: '原始数据明细', ready: false } 与
+     { path: '/env/simulator', label: '环境仿真控制', ready: false } 两项。
 """
 
 import json

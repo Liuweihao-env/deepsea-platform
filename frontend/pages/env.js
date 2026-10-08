@@ -67,9 +67,11 @@
     return Math.max(1, Math.round(Math.abs((bTs || 0) - (aTs || 0)) / 60000));
   }
 
-  /* 每个站点的独立状态（站点独立性：对一个站点的操作不影响其他站点） */
+  /* 每个站点的独立状态（站点独立性：对一个站点的操作不影响其他站点）
+     heatSince：水温骤升的触发时刻（问题一：触发后「接下来实时生成」的点才异常） */
   function defaultPer() {
-    return { minutes: 60, paused: false, storm: false, heat: false, offline: false, stormType: 'all' };
+    return { minutes: 60, paused: false, storm: false, heat: false, offline: false,
+             stormType: 'all', heatSince: null };
   }
   function buildPer(sites) {
     const per = {};
@@ -104,6 +106,133 @@
   };
 
   /* ============================================================
+     模拟养殖站点：流式仿真数据生成器（问题一 ~ 问题三）
+     ============================================================
+     为什么不用 API.env（mock / server 整窗重生成）？
+       整窗重生成 = 每次 load 都把「历史窗口」重新算一遍：
+       触发大风大浪 / 水温骤升时，已生成的数据会被整体改写为异常，
+       恢复后又全部变回正常 —— 事件记录也随之消失。
+       用户要求：
+         问题一：触发异常只影响「接下来实时生成」的点，已生成的点不变；
+         问题二：异常期间生成的点永久保留（恢复后不重写），事件记录不消除；
+         问题三：正常状态下也偶发「较异常」数据并计入事件。
+       所以这里把生成改成「追加式」：每个点生成一次后永不再改；
+       站点序列缓存在全局 __ENV_SERIES__（跨页面切换保留，配合问题六），
+       生成器按真实时间轴逐步追加新点，新点的值由「当时」的仿真控制状态决定。
+     数值口径与 mock.js envSeries 一致（同基线 / 同噪声幅度），仅把「整窗」换成「追加」。
+     ============================================================ */
+  (function (global) {
+    'use strict';
+    const STEP_FAST = 5 * 1000;       /* 快变量 5 秒一条（与 mock.js 同口径） */
+    const STEP_SLOW = 30 * 1000;      /* 慢变量 30 秒一条 */
+    const MAX_FAST = 50000;           /* ≈ 2.9 天 @5s（滚动上限，超出的最旧点移出，事件以窗口内为准） */
+    const MAX_SLOW = 20000;
+    /* 问题三：正常状态偶发异常概率 —— 每 140 个点 ≈ 11.7 分钟一次「较异常」（蓝/黄级） */
+    const PROB_ABN = 1 / 140;
+    const PROB_ABN_SLOW = 1 / 500;    /* 慢变量偶发（盐度跳变），≈ 每 4 小时一次 */
+    const SERIES = global.__ENV_SERIES__ || (global.__ENV_SERIES__ = {});
+    const rnd = function () { return global.Math.random(); };
+    const rndn = function (mean, sd) { return mean + (rnd() + rnd() + rnd() - 1.5) * 2 * sd; };
+
+    function genFast(siteId, ts, per) {
+      const h = new Date(ts).getHours() + new Date(ts).getMinutes() / 60;
+      const diurnal = Math.sin((h - 6) / 24 * 2 * Math.PI);      /* 昼夜变化 */
+      const storm = !!per.storm, heat = !!per.heat, offline = !!per.offline;
+      const stormType = per.stormType || 'all';
+      /* 风暴细化（问题五）：all=风浪都异常；wind=仅风速；wave=仅浪高 */
+      const waveStorm = storm && (stormType === 'all' || stormType === 'wave');
+      const windStorm = storm && (stormType === 'all' || stormType === 'wind');
+      /* 问题三：正常状态下偶发一次「较异常」（蓝/黄级，非灾难），并计入事件 */
+      let abn = null;
+      if (!storm && !heat && !offline && rnd() < PROB_ABN) {
+        const k = Math.floor(rnd() * 3);
+        abn = k === 0 ? 'wave' : (k === 1 ? 'wind' : 'water');
+      }
+      const baseWater = 18.6 + diurnal * 1.8;
+      const wave = offline ? null : +(
+        abn === 'wave' ? rndn(3.2, .4)       /* 蓝 2.5~4.0 / 黄 4.0+ 边缘 */
+        : waveStorm ? rndn(4.6, .55)        /* 大风大浪：≥4.0 黄色警报级 */
+        : rndn(1.4, .25)).toFixed(1);
+      const wind = offline ? null : +(
+        abn === 'wind' ? rndn(17.6, .5)     /* ≥17.2 → 8 级大风 */
+        : windStorm ? rndn(19, 2.5)
+        : rndn(8.3, 1.2)).toFixed(1);
+      /* 问题一：触发水温骤升 → 接下来生成的点直接抬到目标 30.5℃（≥28.0 上限，事件可记录）；
+         恢复正常 → 新点回昼夜基线。已生成的点永不被改写。 */
+      const water = offline ? null : +(
+        heat ? rndn(30.5, .3)
+        : baseWater + (abn === 'water' ? rndn(2.1, .2) : 0) + rndn(0, .15)).toFixed(1);
+      const air = offline ? null : +(
+        22.4 + diurnal * 3.2 + rndn(0, .4) +
+        (water == null ? 0 : (water - baseWater) * .6)).toFixed(1);
+      const light = offline ? null : +Math.max(0,
+        (storm ? 4000 : 12000) * Math.max(0, Math.sin((h - 6) / 12 * Math.PI)) + rndn(0, 400)).toFixed(0);
+      const current = offline ? null : +rndn(storm ? 1.4 : .6, .12).toFixed(1);
+      const doxy = offline ? null : +(
+        9.2 - (water == null ? 0 : water - 18.6) * .45 + rndn(0, .12)).toFixed(1);
+      const quality = offline ? 'stale' : (abn || storm || heat ? 'suspect' : 'good');
+      return { ts: ts, site_id: siteId, source: 'simulated', quality: quality,
+               wave_height: wave, wind_speed: wind, current_speed: current,
+               air_temp: air, water_temp: water,
+               dissolved_oxygen: doxy, light_intensity: light };
+    }
+
+    function genSlow(siteId, ts, per) {
+      const offline = !!per.offline;
+      const abn = !offline && rnd() < PROB_ABN_SLOW;
+      return { ts: ts, site_id: siteId,
+               quality: offline ? 'stale' : (abn ? 'suspect' : 'good'),
+               salinity: offline ? null : +(abn ? rndn(33.0, .25) : rndn(32.1, .15)).toFixed(1),
+               ph: offline ? null : +(abn ? rndn(8.5, .08) : rndn(8.1, .06)).toFixed(1) };
+    }
+
+    /* 首填：站点序列为空时，从当前时刻回填「minutes 分钟」窗口（正常值 + 偶发异常） */
+    function ensure(siteId, minutes, per) {
+      let st = SERIES[siteId];
+      if (!st) { st = SERIES[siteId] = { fast: [], slow: [] }; }
+      if (st.fast.length) return st;
+      const now = Math.floor(Date.now() / STEP_FAST) * STEP_FAST;
+      const winF = Math.max(2, Math.round((minutes || 60) * 60 * 1000 / STEP_FAST));
+      let ts = now - (winF - 1) * STEP_FAST;
+      while (ts <= now) { st.fast.push(genFast(siteId, ts, per)); ts += STEP_FAST; }
+      const winS = Math.max(2, Math.round((minutes || 60) * 60 * 1000 / STEP_SLOW));
+      let sts = now - (winS - 1) * STEP_SLOW;
+      while (sts <= now) { st.slow.push(genSlow(siteId, sts, per)); sts += STEP_SLOW; }
+      return st;
+    }
+
+    /* 追加：把序列推进到 nowTs。只生成「新」的点，已生成的点永远不改。
+       大间隔（暂停恢复 / 长时间挂起）→ 跳过空洞，从当前时刻前一步继续，不补造中间数据。 */
+    function appendTo(siteId, nowTs, per, minutes) {
+      const st = ensure(siteId, minutes, per);
+      let last = st.fast[st.fast.length - 1];
+      let ts = last.ts + STEP_FAST;
+      if (nowTs - last.ts > 3 * STEP_FAST) ts = Math.floor((nowTs - STEP_FAST) / STEP_FAST) * STEP_FAST;
+      while (ts <= nowTs) { st.fast.push(genFast(siteId, ts, per)); ts += STEP_FAST; }
+      let sl = st.slow[st.slow.length - 1];
+      let sts = sl.ts + STEP_SLOW;
+      if (nowTs - sl.ts > 3 * STEP_SLOW) sts = Math.floor((nowTs - STEP_SLOW) / STEP_SLOW) * STEP_SLOW;
+      while (sts <= nowTs) { st.slow.push(genSlow(siteId, sts, per)); sts += STEP_SLOW; }
+      if (st.fast.length > MAX_FAST) st.fast.splice(0, st.fast.length - MAX_FAST);
+      if (st.slow.length > MAX_SLOW) st.slow.splice(0, st.slow.length - MAX_SLOW);
+      return st;
+    }
+
+    /* 按分钟窗口截取展示序列（页面图表 / 原始数据区用；存储保留全量） */
+    function windowSlice(st, minutes) {
+      const winF = Math.max(2, Math.round((minutes || 60) * 60 * 1000 / STEP_FAST));
+      const winS = Math.max(2, Math.round((minutes || 60) * 60 * 1000 / STEP_SLOW));
+      return { fast: st.fast.slice(-winF), slow: st.slow.slice(-winS) };
+    }
+
+    global.__ENV_GEN__ = { STEP_FAST: STEP_FAST, STEP_SLOW: STEP_SLOW,
+                           PROB_ABN: PROB_ABN,
+                           series: SERIES,
+                           ensure: ensure, appendTo: appendTo, windowSlice: windowSlice,
+                           genFast: genFast, genSlow: genSlow };
+  })(window);
+
+  /* ============================================================
      海况页 /env/sea
      布局（自上而下）：
        站点切换（顶部） → 数据来源（NDBC 直连） → 数值卡 → 时序 + 事件 →
@@ -123,6 +252,17 @@
     },
     computed: {
       fast: function () { return this.series ? this.series.fast : []; },
+      /* 问题二：事件数据源 —— 养殖站点用「全量生成序列」（异常记录不因窗口滑动而消失）；
+         观测站点（公开数据）用后端返回窗口。读 this.fast 建立依赖，fast 更新时重算。 */
+      allFast: function () {
+        this.fast.length;
+        const G = global.__ENV_GEN__;
+        if (!this.isObs) {
+          const st = G && G.series && G.series[this.site];
+          if (st && st.fast && st.fast.length) return st.fast;
+        }
+        return this.fast;
+      },
       /* 「当前值」：观测站点用后端挑好的「四字段齐全的那条」，
          养殖站点直接用最后一条。卡片上的 ts 就是这条记录的真实观测时间。 */
       last: function () {
@@ -148,13 +288,14 @@
       },
       /* 已暂停站点聚合文本（调试面板顶部红字） */
       pauseText: function () { return global.__ENV_HELPERS__.pausedText(this.per); },
-      /* 风暴细化（问题 5）：非「整体」时给出诚实降级提示（后端待挂载 api/env.py） */
+      /* 风暴细化（问题 5）：wind / wave 由前端流式生成器直接生效（问题一~三改造后），
+         触发后「接下来实时生成」的点按细化模式模拟异常 */
       stormNote: function () {
         const p = this.per && this.per[this.site];
         if (!p || !p.stormType || p.stormType === 'all') return '';
         const mode = (p.stormType === 'wind') ? '仅风速异常' : '仅浪高异常';
-        return '细化模式（' + mode + '）需要后端扩展接口（backend/api/env.py 已提交，队长挂载后生效）；' +
-               '当前触发大风大浪仍按整体模式模拟。';
+        return '细化模式（' + mode + '）已生效：触发大风大浪后，后续实时生成的数据将模拟该异常；' +
+               '恢复后新数据回正常，已生成数据不变。';
       },
       /* 问题三：原始数据表按「最新在最上面」显示（倒序）；历史区间模式显示查询结果 */
       rawRows: function () {
@@ -187,7 +328,8 @@
         const H = global.__ENV_HELPERS__;
         const siteName = this.siteName();
         const out = [];
-        this.fast.forEach(function (r) {
+        /* 问题二：基于全量序列计算事件 —— 模拟异常期间生成的点保留在序列里，事件记录不消除 */
+        this.allFast.forEach(function (r) {
           const t = siteName + ' · ' + H.fmtTs(r.ts);
           const w = r.wave_height;
           if (w != null) {
@@ -262,8 +404,17 @@
         this.ensurePer();
         const p = this.activePer;
         const seq = ++this.loadSeq;
-        API.resolve(API.env(this.site, p.minutes, { storm: p.storm }),
-                    function (d) { if (seq === self.loadSeq) self.series = d; });
+        if (this.isObsSite(this.site)) {
+          /* 观测站点：公开实测数据，不可模拟（问题一），原取数路径保持 */
+          API.resolve(API.env(this.site, p.minutes, {}),
+                      function (d) { if (seq === self.loadSeq) self.series = d; });
+        } else {
+          /* 养殖站点：流式仿真生成（问题一~三）——
+             触发大风大浪/水温骤升只影响「接下来实时生成」的点；已生成点永不变 */
+          const G = global.__ENV_GEN__;
+          const st = G.appendTo(this.site, Math.floor(Date.now() / 1000) * 1000, p, p.minutes);
+          if (seq === self.loadSeq) self.series = G.windowSlice(st, p.minutes);
+        }
       },
       siteName: function () {
         const sid = this.site;
@@ -819,6 +970,17 @@
     computed: {
       fast: function () { return this.series ? this.series.fast : []; },
       slow: function () { return this.series ? this.series.slow : []; },
+      /* 问题二：事件数据源 —— 养殖站点用「全量生成序列」（异常记录不因窗口滑动而消失）；
+         观测站点（公开数据）用后端返回窗口。读 this.fast 建立依赖，fast 更新时重算。 */
+      allFast: function () {
+        this.fast.length;
+        const G = global.__ENV_GEN__;
+        if (!this.isObs) {
+          const st = G && G.series && G.series[this.site];
+          if (st && st.fast && st.fast.length) return st.fast;
+        }
+        return this.fast;
+      },
       last: function () { return this.fast.length ? this.fast[this.fast.length - 1] : {}; },
       lastSlow: function () { return this.slow.length ? this.slow[this.slow.length - 1] : {}; },
       activePer: function () {
@@ -853,10 +1015,11 @@
           { yAxis: 25.5, name: '偏高提示 25.5℃', lineStyle: { color: '#D97706', type: 'dashed', width: 1 } }
         ];
       },
-      /* ★ 一条竖线：水温越限 → 出告警（判定规则在 API.ruleCheck，与后端同口径） */
+      /* ★ 一条竖线：水温越限 → 出告警（判定规则在 API.ruleCheck，与后端同口径）。
+         问题二：基于全量序列判定 —— 模拟异常期间生成的点保留，告警记录不消除 */
       alarms: function () {
         const out = [];
-        this.fast.forEach(function (r) {
+        this.allFast.forEach(function (r) {
           const hit = API.ruleCheck(r);
           if (hit) out.push({ id: 'a' + r.ts, ts: r.ts, level: hit.risk_level, hit: hit, row: r });
         });
@@ -902,8 +1065,17 @@
         this.ensurePer();
         const p = this.activePer;
         const seq = ++this.loadSeq;
-        API.resolve(API.env(this.site, p.minutes, { heat: p.heat, offline: p.offline }),
-                    function (d) { if (seq === self.loadSeq) self.series = d; });
+        if (this.isObsSite(this.site)) {
+          /* 观测站点：公开实测数据，不可模拟（问题一），原取数路径保持 */
+          API.resolve(API.env(this.site, p.minutes, {}),
+                      function (d) { if (seq === self.loadSeq) self.series = d; });
+        } else {
+          /* 养殖站点：流式仿真生成（问题一~三）——
+             触发水温骤升/设备离线只影响「接下来实时生成」的点；已生成点永不变 */
+          const G = global.__ENV_GEN__;
+          const st = G.appendTo(this.site, Math.floor(Date.now() / 1000) * 1000, p, p.minutes);
+          if (seq === self.loadSeq) self.series = G.windowSlice(st, p.minutes);
+        }
       },
       setSite: function (sid) { this.site = sid; },
       siteName: function () {
@@ -927,10 +1099,12 @@
         per.paused = !per.paused;
         if (sid === this.site && !per.paused) this.load();
       },
+      /* 问题一：触发水温骤升只影响「接下来实时生成」的点（记录触发时刻，恢复后新点回正常） */
       toggleHeat: function (sid) {
         if (this.isObsSite(sid)) return;
         const per = this.per[sid];
         per.heat = !per.heat;
+        per.heatSince = per.heat ? Date.now() : null;
         if (sid === this.site) this.load();
       },
       toggleOffline: function (sid) {
