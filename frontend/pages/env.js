@@ -89,10 +89,18 @@
     return !p || !p.paused;
   }
 
+  /* datetime-local 输入框的本地时间格式 "YYYY-MM-DDTHH:mm"（显示为 年/月/日 时:分） */
+  function localInput(d) {
+    const p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+           'T' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
   global.__ENV_HELPERS__ = {
     fmtTs: fmtTs, fmtShort: fmtShort, toCsv: toCsv, csvCell: csvCell,
     minutesBetween: minutesBetween, defaultPer: defaultPer,
-    buildPer: buildPer, pausedText: pausedText, shouldRefresh: shouldRefresh
+    buildPer: buildPer, pausedText: pausedText, shouldRefresh: shouldRefresh,
+    localInput: localInput
   };
 
   /* ============================================================
@@ -106,7 +114,10 @@
       return { site: 'site_01', picked: null, series: null,
                tick: 0, unsub: null, timer: null,
                refreshing: false, refreshMsg: '', refreshOk: null,
-               per: null, loadSeq: 0, chart: null };
+               per: null, loadSeq: 0, chart: null,
+               /* 问题二：历史区间（真实站点公开数据可自定义时间查看更长远历史） */
+               rangeMode: false, rangeSeries: null, rangeMsg: '',
+               rangeStart: '', rangeEnd: '', ranges: {} };
     },
     computed: {
       fast: function () { return this.series ? this.series.fast : []; },
@@ -142,6 +153,18 @@
         const mode = (p.stormType === 'wind') ? '仅风速异常' : '仅浪高异常';
         return '细化模式（' + mode + '）需要后端扩展接口（backend/api/env.py 已提交，队长挂载后生效）；' +
                '当前触发大风大浪仍按整体模式模拟。';
+      },
+      /* 问题三：原始数据表按「最新在最上面」显示（倒序）；历史区间模式显示查询结果 */
+      rawRows: function () {
+        const src = this.rangeMode ? (this.rangeSeries || []) : this.fast;
+        return src.slice().reverse();
+      },
+      /* 原始数据标题：实时窗口 / 历史区间 动态标注 */
+      rawTitle: function () {
+        const n = this.rawRows.length;
+        const tag = this.isObs ? 'NOAA NDBC 公开历史数据' : '仿真数据';
+        if (this.rangeMode) return '原始数据（历史区间 · ' + n + ' 条 · ' + tag + '）';
+        return '原始数据（最近 ' + this.activePer.minutes + ' 分钟 · ' + n + ' 条 · ' + tag + '）';
       },
       /* 数据来源：观测站点实时读的是本地缓存，不是每次渲染去联网 */
       srcLabel: function () {
@@ -278,10 +301,12 @@
         this.ensurePer();
         this.activePer.stormType = v;
       },
-      /* 原始数据导出 CSV（UTF-8 BOM，Excel 打开不乱码） */
+      /* 原始数据导出 CSV（UTF-8 BOM，Excel 打开不乱码）；
+         问题三：页面按「最新在上」显示，导出保持时间正序（历史区间则导出查询结果） */
       exportCsv: function () {
         const H = global.__ENV_HELPERS__;
-        const rows = this.fast.map(function (r) {
+        const src = this.rangeMode ? (this.rangeSeries || []) : this.fast;
+        const rows = src.map(function (r) {
           return [H.fmtTs(r.ts), r.site_id, srcCn(r.source), qCn(r.quality),
                   r.wave_height, r.wind_speed, r.current_speed, r.air_temp];
         });
@@ -310,6 +335,74 @@
           }
           self.load();
         });
+      },
+      /* 问题二：NDBC 数据时间范围（挂载 api/env.py 后精确；未挂载时估算并诚实标注） */
+      ndbcRangeText: function (s) {
+        const r = this.ranges && this.ranges[s.station_id];
+        if (r && r.first_ts_utc && r.latest_ts_utc) {
+          return r.first_ts_utc + ' ~ ' + r.latest_ts_utc + ' UTC';
+        }
+        if (s.latest_ts && s.count) {
+          const first = s.latest_ts - (s.count - 1) * 10 * 60 * 1000;
+          const H = global.__ENV_HELPERS__;
+          return '≈' + H.fmtTs(first) + ' ~ ' + H.fmtTs(s.latest_ts) + ' UTC（估算，挂载 api/env.py 后精确）';
+        }
+        return s.latest_ts_utc || '—';
+      },
+      loadRanges: function () {
+        const self = this;
+        if (typeof fetch !== 'function') return;
+        fetch('/api/env/ndbc-ranges')
+          .then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+          .then(function (d) {
+            const map = {};
+            (d.ranges || []).forEach(function (x) { map[x.station_id] = x; });
+            self.ranges = map;
+          })
+          .catch(function () { /* 未挂载：ndbcRangeText 用估算并标注 */ });
+      },
+      /* 问题二：真实站点按自定义起止时间查询公开历史（后端 /api/env/historical，随 api/env.py 挂载） */
+      queryRange: function () {
+        const self = this;
+        const st = Date.parse(this.rangeStart);
+        const en = Date.parse(this.rangeEnd);
+        if (!st || !en || en <= st) {
+          this.rangeMsg = '请选择有效的起止时间（结束时间需晚于开始时间）';
+          return;
+        }
+        if (typeof fetch !== 'function') {
+          this.rangeMsg = '当前环境不支持联网查询（本地静态演示）——历史区间接口需队长挂载 backend/api/env.py 后可用';
+          return;
+        }
+        this.rangeMsg = '正在查询历史区间…';
+        fetch('/api/env/historical?site_id=' + this.site + '&start_ts=' + st + '&end_ts=' + en)
+          .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+          .then(function (d) {
+            if (d.count > 0) {
+              const recs = d.records;
+              self.rangeSeries = recs;
+              self.rangeMode = true;
+              self.rangeMsg = '已加载 ' + d.count + ' 条公开历史数据（' +
+                global.__ENV_HELPERS__.fmtTs(recs[0].ts) + ' ~ ' +
+                global.__ENV_HELPERS__.fmtTs(recs[recs.length - 1].ts) + '）';
+            } else {
+              self.rangeMode = false;
+              self.rangeSeries = null;
+              self.rangeMsg = '该时间区间内无数据（真实站点数据范围有限，见「数据时间范围」列）';
+            }
+          })
+          .catch(function (e) {
+            self.rangeMode = false;
+            self.rangeMsg = '历史区间接口不可用（' + e.message + '）——需队长在 server.py 挂载 backend/api/env.py 后生效（已在 PR 说明）；' +
+                           '当前可按「自定义分钟数」查看尾部窗口。';
+          });
+      },
+      /* 退出历史区间，回到实时尾部窗口 */
+      exitRange: function () {
+        this.rangeMode = false;
+        this.rangeSeries = null;
+        this.rangeMsg = '';
+        this.load();
       },
       ageText: function (m) {
         if (m == null) return '—';
@@ -391,12 +484,23 @@
     },
     mounted: function () {
       const self = this;
+      const H = global.__ENV_HELPERS__;
       this.ensurePer();
+      /* 问题二：历史区间输入默认 最近 1 天 */
+      if (!this.rangeStart) {
+        const en = new Date();
+        const st = new Date(en.getTime() - 24 * 3600 * 1000);
+        this.rangeStart = H.localInput(st);
+        this.rangeEnd = H.localInput(en);
+      }
+      this.loadRanges();
       this.unsub = API.subscribe(function () { self.tick++; });
       this.load();
       this.$nextTick(function () { self.renderChart(); });
-      /* 轮询：只刷新「未暂停」的当前站点；暂停站点冻结（站点独立） */
+      /* 轮询：只刷新「未暂停」的当前站点；暂停站点冻结（站点独立）；
+         历史区间模式下保持查询结果，不被实时窗口覆盖（问题二） */
       this.timer = setInterval(function () {
+        if (self.rangeMode) return;
         if (global.__ENV_HELPERS__.shouldRefresh(self.per, self.site)) self.load();
       }, 5000);
     },
@@ -407,6 +511,10 @@
     },
     watch: {
       site: function () {
+        /* 切站点：退出历史区间模式，回到该站点实时窗口（问题二） */
+        this.rangeMode = false;
+        this.rangeSeries = null;
+        this.rangeMsg = '';
         /* 切到已暂停站点：不刷新，保留其冻结的最后数据（站点独立） */
         if (global.__ENV_HELPERS__.shouldRefresh(this.per, this.site)) this.load();
       },
@@ -451,7 +559,7 @@
       '',
       '    <div class="dt-wrap" style="max-height:220px">',
       '      <table class="dt">',
-      '        <thead><tr><th>浮标</th><th>海域</th><th>缓存条数</th><th>数据到</th><th>抓取于</th><th></th></tr></thead>',
+      '        <thead><tr><th>浮标</th><th>海域</th><th>缓存条数</th><th>数据时间范围</th><th>抓取于</th><th></th></tr></thead>',
       '        <tbody>',
       '          <tr v-for="s in ndbcList" :key="s.station_id"',
       '              :style="{ background: isCurrentStation(s) ? \'#EFF6FF\' : \'\', cursor: \'pointer\' }"',
@@ -459,7 +567,7 @@
       '            <td class="mono">{{ s.station_id }}</td>',
       '            <td class="small">{{ s.station.cn }}</td>',
       '            <td>{{ s.count }}</td>',
-      '            <td class="small mono">{{ s.latest_ts_utc || \'—\' }} UTC</td>',
+      '            <td class="small mono">{{ ndbcRangeText(s) }}</td>',
       '            <td class="small">{{ ageText(s.age_minutes) }}</td>',
       '            <td class="small">',
       '              <span v-if="isCurrentStation(s)" style="color:#166534;font-weight:600">正在看</span>',
@@ -552,7 +660,7 @@
       '',
       '  <!-- 原始数据：放在海况时序下方；可自定义时间窗、可导出；切观测站点即见公开历史数据 -->',
       '  <div class="card" style="margin-top:12px">',
-      '    <div class="card-title">原始数据（最近 {{ activePer.minutes }} 分钟 · {{ fast.length }} 条 · {{ isObs ? \'NOAA NDBC 公开历史数据\' : \'仿真数据\' }}）</div>',
+      '    <div class="card-title">{{ rawTitle }}</div>',
       '    <div class="row" style="align-items:center">',
       '      <time-range :model-value="activePer.minutes" @update:model-value="onMinutes" />',
       '      <input type="number" min="5" max="1440" :value="activePer.minutes" @change="onCustomMin"',
@@ -561,17 +669,28 @@
       '      <span style="flex:1"></span>',
       '      <button class="primary" @click="exportCsv">导出 CSV</button>',
       '    </div>',
+      '    <!-- 问题二：真实站点公开数据支持自定义起止时间（年/月/日 时:分）查看更长远历史 -->',
+      '    <div v-if="isObs" class="row" style="align-items:center;margin-top:8px;flex-wrap:wrap">',
+      '      <span class="small muted">历史区间（真实站点公开数据）：</span>',
+      '      <input type="datetime-local" v-model="rangeStart" class="mono" style="padding:2px 6px" />',
+      '      <span class="small muted"> ~ </span>',
+      '      <input type="datetime-local" v-model="rangeEnd" class="mono" style="padding:2px 6px" />',
+      '      <button class="primary" style="padding:3px 10px" @click="queryRange">查询历史</button>',
+      '      <button style="padding:3px 10px" @click="exitRange">返回实时</button>',
+      '    </div>',
+      '    <div v-if="rangeMsg" class="hint" style="margin-top:8px">{{ rangeMsg }}</div>',
       '    <div class="hint" style="margin-top:8px">',
-      '      时间显示为「年/月/日 时:分:秒」。切换「观测站点」后，本表即为 NOAA NDBC 公开历史实测数据；',
-      '      养殖站点为仿真数据。精确历史日期（年/月/日）区间查询接口已随 backend/api/env.py 提交，',
-      '      队长挂载后本区将支持按日期区间查看历史。',
+      '      时间显示为「年/月/日 时:分:秒」，原始数据表按<b>最新在上</b>排列（导出 CSV 保持时间正序）。',
+      '      切换「观测站点」后，本表即为 NOAA NDBC 公开历史实测数据；养殖站点为仿真数据。',
+      '      真实站点按日期区间（年/月/日 时:分）查询历史，需队长在 server.py 挂载 backend/api/env.py（已随 PR 提交说明）；',
+      '      未挂载时可按「自定义分钟数」查看最近窗口。',
       '    </div>',
       '    <div class="dt-wrap" style="margin-top:8px">',
       '      <table class="dt">',
       '        <thead><tr><th>时间</th><th>站点</th><th>来源</th><th>质量</th>',
       '                <th>浪高 (m)</th><th>风速 (m/s)</th><th>流速 (m/s)</th><th>气温 (℃)</th></tr></thead>',
       '        <tbody>',
-      '          <tr v-for="r in fast" :key="r.ts">',
+      '          <tr v-for="r in rawRows" :key="r.ts">',
       '            <td class="mono small">{{ fmtTs(r.ts) }}</td>',
       '            <td class="small">{{ r.site_id }}</td>',
       '            <td class="small">{{ srcCn(r.source) }}</td>',
@@ -581,7 +700,7 @@
       '            <td class="mono">{{ r.current_speed == null ? \'—\' : r.current_speed }}</td>',
       '            <td class="mono">{{ r.air_temp == null ? \'—\' : r.air_temp }}</td>',
       '          </tr>',
-      '          <tr v-if="!fast.length"><td colspan="8" class="muted small">暂无数据</td></tr>',
+      '          <tr v-if="!rawRows.length"><td colspan="8" class="muted small">暂无数据</td></tr>',
       '        </tbody>',
       '      </table>',
       '    </div>',
@@ -666,7 +785,10 @@
     data: function () {
       return { site: 'site_01', picked: null, series: null,
                per: null, loadSeq: 0, chart: null, timer: null,
-               show: { water_temp: true, dissolved_oxygen: true, light_intensity: false } };
+               show: { water_temp: true, dissolved_oxygen: true, light_intensity: false },
+               /* 问题二：历史区间（真实站点公开数据可自定义时间查看更长远历史） */
+               rangeMode: false, rangeSeries: null, rangeMsg: '',
+               rangeStart: '', rangeEnd: '', ranges: {} };
     },
     computed: {
       fast: function () { return this.series ? this.series.fast : []; },
@@ -719,6 +841,18 @@
           return { id: a.id, ts: a.ts, level: a.level,
                    text: '水温 ' + a.hit.trigger_value + ' ℃ 触发「' + a.hit.rule_name + '」' };
         });
+      },
+      /* 问题三：原始数据表按「最新在最上面」显示（倒序）；历史区间模式显示查询结果 */
+      rawRows: function () {
+        const src = this.rangeMode ? (this.rangeSeries || []) : this.fast;
+        return src.slice().reverse();
+      },
+      slowRows: function () { return this.slow.slice().reverse(); },
+      rawTitle: function () {
+        const n = this.rawRows.length;
+        const tag = this.isObs ? 'NOAA NDBC 公开历史数据' : '仿真数据';
+        if (this.rangeMode) return '原始数据（历史区间 · ' + n + ' 条 · ' + tag + '）';
+        return '原始数据（最近 ' + this.activePer.minutes + ' 分钟 · ' + tag + '）';
       },
       topAlarm: function () { return this.alarms.length ? this.alarms[this.alarms.length - 1] : null; }
     },
@@ -784,12 +918,69 @@
       },
       exportCsv: function () {
         const H = global.__ENV_HELPERS__;
-        const rows = this.fast.map(function (r) {
+        /* 问题三：页面按「最新在上」显示，导出保持时间正序（历史区间则导出查询结果） */
+        const src = this.rangeMode ? (this.rangeSeries || []) : this.fast;
+        const rows = src.map(function (r) {
           return [H.fmtTs(r.ts), r.site_id, srcCn(r.source), qCn(r.quality),
                   r.water_temp, r.dissolved_oxygen, r.light_intensity];
         });
         const csv = H.toCsv(['时间', '站点', '来源', '质量', '水温 (℃)', '溶解氧 (mg/L)', '光照 (lux)'], rows);
         downloadCsv('水质原始数据_' + this.siteName() + '.csv', csv);
+      },
+      /* 问题二：真实站点按自定义起止时间查询公开历史（后端 /api/env/historical，随 api/env.py 挂载） */
+      loadRanges: function () {
+        const self = this;
+        if (typeof fetch !== 'function') return;
+        fetch('/api/env/ndbc-ranges')
+          .then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+          .then(function (d) {
+            const map = {};
+            (d.ranges || []).forEach(function (x) { map[x.station_id] = x; });
+            self.ranges = map;
+          })
+          .catch(function () { /* 未挂载：ndbcRangeText 用估算并标注 */ });
+      },
+      queryRange: function () {
+        const self = this;
+        const st = Date.parse(this.rangeStart);
+        const en = Date.parse(this.rangeEnd);
+        if (!st || !en || en <= st) {
+          this.rangeMsg = '请选择有效的起止时间（结束时间需晚于开始时间）';
+          return;
+        }
+        if (typeof fetch !== 'function') {
+          this.rangeMsg = '当前环境不支持联网查询（本地静态演示）——历史区间接口需队长挂载 backend/api/env.py 后可用';
+          return;
+        }
+        this.rangeMsg = '正在查询历史区间…';
+        fetch('/api/env/historical?site_id=' + this.site + '&start_ts=' + st + '&end_ts=' + en)
+          .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+          .then(function (d) {
+            if (d.count > 0) {
+              const recs = d.records;
+              self.rangeSeries = recs;
+              self.rangeMode = true;
+              self.rangeMsg = '已加载 ' + d.count + ' 条公开历史数据（' +
+                global.__ENV_HELPERS__.fmtTs(recs[0].ts) + ' ~ ' +
+                global.__ENV_HELPERS__.fmtTs(recs[recs.length - 1].ts) + '）';
+            } else {
+              self.rangeMode = false;
+              self.rangeSeries = null;
+              self.rangeMsg = '该时间区间内无数据（真实站点数据范围有限，见「数据时间范围」列）';
+            }
+          })
+          .catch(function (e) {
+            self.rangeMode = false;
+            self.rangeMsg = '历史区间接口不可用（' + e.message + '）——需队长在 server.py 挂载 backend/api/env.py 后生效（已在 PR 说明）；' +
+                           '当前可按「自定义分钟数」查看尾部窗口。';
+          });
+      },
+      /* 退出历史区间，回到实时尾部窗口 */
+      exitRange: function () {
+        this.rangeMode = false;
+        this.rangeSeries = null;
+        this.rangeMsg = '';
+        this.load();
       },
       /* 可交互时序（问题 2）：缩放 / 框选 / 异常点标记；光照强度走右轴（量级差太大） */
       renderChart: function () {
@@ -866,11 +1057,22 @@
     },
     mounted: function () {
       const self = this;
+      const H = global.__ENV_HELPERS__;
       this.ensurePer();
+      /* 问题二：历史区间输入默认 最近 1 天 */
+      if (!this.rangeStart) {
+        const en = new Date();
+        const st = new Date(en.getTime() - 24 * 3600 * 1000);
+        this.rangeStart = H.localInput(st);
+        this.rangeEnd = H.localInput(en);
+      }
+      this.loadRanges();
       this.load();
       this.$nextTick(function () { self.renderChart(); });
-      /* 轮询：只刷新「未暂停」的当前站点；暂停站点冻结（站点独立） */
+      /* 轮询：只刷新「未暂停」的当前站点；暂停站点冻结（站点独立）；
+         历史区间模式下保持查询结果，不被实时窗口覆盖（问题二） */
       this.timer = setInterval(function () {
+        if (self.rangeMode) return;
         if (global.__ENV_HELPERS__.shouldRefresh(self.per, self.site)) self.load();
       }, 5000);
     },
@@ -880,6 +1082,10 @@
     },
     watch: {
       site: function () {
+        /* 切站点：退出历史区间模式，回到该站点实时窗口（问题二） */
+        this.rangeMode = false;
+        this.rangeSeries = null;
+        this.rangeMsg = '';
         /* 切到已暂停站点：不刷新，保留其冻结的最后数据（站点独立） */
         if (global.__ENV_HELPERS__.shouldRefresh(this.per, this.site)) this.load();
       },
@@ -991,7 +1197,7 @@
       '',
       '  <!-- 原始数据：快变量 + 慢变量两张表；可自定义时间窗、可导出 -->',
       '  <div class="card" style="margin-top:12px">',
-      '    <div class="card-title">原始数据（最近 {{ activePer.minutes }} 分钟 · {{ isObs ? \'NOAA NDBC 公开历史数据\' : \'仿真数据\' }}）</div>',
+      '    <div class="card-title">{{ rawTitle }}</div>',
       '    <div class="row" style="align-items:center">',
       '      <time-range :model-value="activePer.minutes" @update:model-value="onMinutes" />',
       '      <input type="number" min="5" max="1440" :value="activePer.minutes" @change="onCustomMin"',
@@ -1000,9 +1206,22 @@
       '      <span style="flex:1"></span>',
       '      <button class="primary" @click="exportCsv">导出 CSV</button>',
       '    </div>',
+      '    <!-- 问题二：真实站点公开数据支持自定义起止时间（年/月/日 时:分）查看更长远历史 -->',
+      '    <div v-if="isObs" class="row" style="align-items:center;margin-top:8px;flex-wrap:wrap">',
+      '      <span class="small muted">历史区间（真实站点公开数据）：</span>',
+      '      <input type="datetime-local" v-model="rangeStart" class="mono" style="padding:2px 6px" />',
+      '      <span class="small muted"> ~ </span>',
+      '      <input type="datetime-local" v-model="rangeEnd" class="mono" style="padding:2px 6px" />',
+      '      <button class="primary" style="padding:3px 10px" @click="queryRange">查询历史</button>',
+      '      <button style="padding:3px 10px" @click="exitRange">返回实时</button>',
+      '    </div>',
+      '    <div v-if="rangeMsg" class="hint" style="margin-top:8px">{{ rangeMsg }}</div>',
       '    <div class="hint" style="margin-top:8px">',
-      '      时间显示为「年/月/日 时:分:秒」。快变量（水温 / 溶解氧 / 光照）5 秒一条，',
-      '      慢变量（盐度 / pH）30 秒一条。切换「观测站点」后即为 NOAA NDBC 公开历史实测数据。',
+      '      时间显示为「年/月/日 时:分:秒」，原始数据表按<b>最新在上</b>排列（导出 CSV 保持时间正序）。',
+      '      快变量（水温 / 溶解氧 / 光照）5 秒一条，慢变量（盐度 / pH）30 秒一条。',
+      '      切换「观测站点」后即为 NOAA NDBC 公开历史实测数据（NDBC 不测水质，故溶氧 / 光照等为「—」）。',
+      '      真实站点按日期区间（年/月/日 时:分）查询历史，需队长在 server.py 挂载 backend/api/env.py（已随 PR 提交说明）；',
+      '      未挂载时可按「自定义分钟数」查看最近窗口。',
       '    </div>',
       '    <div class="card-title" style="margin-top:10px;font-size:13px">快变量</div>',
       '    <div class="dt-wrap">',
@@ -1010,7 +1229,7 @@
       '        <thead><tr><th>时间</th><th>站点</th><th>来源</th><th>质量</th>',
       '                <th>水温 (℃)</th><th>溶解氧 (mg/L)</th><th>光照 (lux)</th></tr></thead>',
       '        <tbody>',
-      '          <tr v-for="r in fast" :key="r.ts">',
+      '          <tr v-for="r in rawRows" :key="r.ts">',
       '            <td class="mono small">{{ fmtTs(r.ts) }}</td>',
       '            <td class="small">{{ r.site_id }}</td>',
       '            <td class="small">{{ srcCn(r.source) }}</td>',
@@ -1019,7 +1238,7 @@
       '            <td class="mono">{{ r.dissolved_oxygen == null ? \'—\' : r.dissolved_oxygen }}</td>',
       '            <td class="mono">{{ r.light_intensity == null ? \'—\' : r.light_intensity }}</td>',
       '          </tr>',
-      '          <tr v-if="!fast.length"><td colspan="7" class="muted small">暂无数据</td></tr>',
+      '          <tr v-if="!rawRows.length"><td colspan="7" class="muted small">暂无数据</td></tr>',
       '        </tbody>',
       '      </table>',
       '    </div>',
@@ -1028,14 +1247,14 @@
       '      <table class="dt">',
       '        <thead><tr><th>时间</th><th>站点</th><th>质量</th><th>盐度 (‰)</th><th>pH 值</th></tr></thead>',
       '        <tbody>',
-      '          <tr v-for="r in slow" :key="r.ts">',
+      '          <tr v-for="r in slowRows" :key="r.ts">',
       '            <td class="mono small">{{ fmtTs(r.ts) }}</td>',
       '            <td class="small">{{ r.site_id }}</td>',
       '            <td class="small">{{ qCn(r.quality) }}</td>',
       '            <td class="mono">{{ r.salinity == null ? \'—\' : r.salinity }}</td>',
       '            <td class="mono">{{ r.ph == null ? \'—\' : r.ph }}</td>',
       '          </tr>',
-      '          <tr v-if="!slow.length"><td colspan="5" class="muted small">暂无数据</td></tr>',
+      '          <tr v-if="!slowRows.length"><td colspan="5" class="muted small">暂无数据</td></tr>',
       '        </tbody>',
       '      </table>',
       '    </div>',

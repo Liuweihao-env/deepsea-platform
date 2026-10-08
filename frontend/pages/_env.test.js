@@ -34,6 +34,7 @@ sandbox.Blob = function () {};
 vm.createContext(sandbox);
 vm.runInContext(code, sandbox, { filename: 'env.js' });
 
+(async function () {
 let failed = 0;
 function assert(cond, msg) {
   if (cond) { console.log('  PASS ' + msg); }
@@ -157,7 +158,12 @@ assert(sea.template.indexOf('<time-range') >= 0, '海况页有 time-range 时间
 assert(sea.template.indexOf('自定义分钟数') >= 0, '海况页有自定义分钟输入');
 assert(sea.template.indexOf('导出 CSV') >= 0, '海况页有导出 CSV 按钮');
 assert(sea.template.indexOf('fmtTs(r.ts)') >= 0, '原始数据表时间用年/月/日格式（无字母混用）');
-assert(sea.template.indexOf('NOAA NDBC 公开历史数据') >= 0, '原始数据标题动态标注公开历史数据/仿真');
+/* 标题改为 computed rawTitle（历史区间/实时窗口动态标注），源码须同时含两种数据来源文案 */
+{
+  const rt = sea.computed.rawTitle.toString();
+  assert(rt.indexOf('NOAA NDBC 公开历史数据') >= 0 && rt.indexOf('仿真数据') >= 0,
+    '原始数据标题动态标注公开历史数据/仿真');
+}
 assert(sea.template.indexOf('backend/api/env.py') >= 0, '精确历史日期接口的降级说明已展示');
 assert(water.template.indexOf('快变量') >= 0 && water.template.indexOf('慢变量（盐度 / pH）') >= 0,
   '水质页原始数据分快变量/慢变量两张表');
@@ -301,6 +307,78 @@ section('问题6：per 空值安全（首渲染不抛错 —— 修复 Cannot re
     '水质调试面板骤升/离线有 per 空值防护');
 }
 
+section('新问题2：真实站点自定义时间历史 + 数据时间范围');
+{
+  assert(sea.template.indexOf('datetime-local') >= 0, '海况页有自定义起止时间输入（年/月/日 时:分）');
+  assert(sea.template.indexOf('查询历史') >= 0 && sea.template.indexOf('返回实时') >= 0, '海况页有查询历史/返回实时按钮');
+  assert(water.template.indexOf('datetime-local') >= 0 && water.template.indexOf('查询历史') >= 0,
+    '水质页有自定义起止时间输入与查询按钮');
+  assert(sea.template.indexOf('数据时间范围') >= 0, '浮标表头改为「数据时间范围」');
+  assert(typeof sea.methods.queryRange === 'function' && typeof sea.methods.exitRange === 'function',
+    '海况页有 queryRange / exitRange 方法');
+  assert(typeof sea.methods.loadRanges === 'function' && typeof water.methods.loadRanges === 'function',
+    '两页都有 loadRanges（精确时间范围）');
+  assert(typeof sea.computed.rawRows === 'function' && typeof sea.computed.rawTitle === 'function',
+    '海况页有 rawRows / rawTitle');
+  assert(typeof water.computed.slowRows === 'function', '水质页有 slowRows（慢变量倒序）');
+}
+{
+  /* 无效时间提示（同步） */
+  const inst = { site: 'site_01', rangeStart: '2026-10-08T12:00', rangeEnd: '2026-10-08T10:00', rangeMsg: '' };
+  sea.methods.queryRange.call(inst);
+  assert(inst.rangeMsg.indexOf('结束时间需晚于开始时间') >= 0, '结束时间早于开始时间 → 提示错误');
+}
+/* 成功 / 失败路径：mock fetch（Promise），异步断言 */
+{
+  const inst = { site: 'site_02', rangeStart: '2026-09-01T00:00', rangeEnd: '2026-09-02T00:00',
+                 rangeMode: false, rangeSeries: null, rangeMsg: '' };
+  let calledUrl = '';
+  sandbox.fetch = function (url) {
+    calledUrl = url;
+    return Promise.resolve({ ok: true, json: function () {
+      return Promise.resolve({ count: 2, records: [
+        { ts: 1700000000000, site_id: 'site_02', source: 'public' },
+        { ts: 1700000000100, site_id: 'site_02', source: 'public' }
+      ] });
+    } });
+  };
+  sea.methods.queryRange.call(inst);
+  await new Promise(function (r) { setTimeout(r, 0); });
+  assert(calledUrl.indexOf('/api/env/historical?site_id=site_02&start_ts=') === 0,
+    'queryRange 请求 historical 接口（含站点与起止时间戳）');
+  assert(inst.rangeMode === true && inst.rangeSeries.length === 2, '查询成功后进入历史区间模式并保存数据');
+  assert(inst.rangeMsg.indexOf('已加载 2 条公开历史数据') >= 0, '成功提示含条数与区间');
+  /* 失败降级（接口未挂载） */
+  const failInst = { site: 'site_02', rangeStart: '2026-09-01T00:00', rangeEnd: '2026-09-02T00:00',
+                     rangeMode: false, rangeSeries: null, rangeMsg: '' };
+  sandbox.fetch = function () {
+    return Promise.resolve({ ok: false, status: 404, json: function () { return Promise.resolve({}); } });
+  };
+  sea.methods.queryRange.call(failInst);
+  await new Promise(function (r) { setTimeout(r, 0); });
+  assert(failInst.rangeMode === false && failInst.rangeMsg.indexOf('需队长在 server.py 挂载') >= 0,
+    '接口未挂载（404）→ 诚实降级提示，不假装成功');
+  /* exitRange 复位并回到实时 */
+  let loadCalled = 0;
+  failInst.load = function () { loadCalled++; };
+  sea.methods.exitRange.call(failInst);
+  assert(failInst.rangeMode === false && failInst.rangeSeries === null && failInst.rangeMsg === '' && loadCalled === 1,
+    'exitRange 复位历史区间并回到实时');
+}
+{
+  /* ndbcRangeText：精确（挂载）/ 估算（未挂载）/ 无数据 */
+  const inst = { ranges: { '42001': { first_ts_utc: '2026-08-25 00:10', latest_ts_utc: '2026-10-08 03:30' } } };
+  inst.ndbcRangeText = sea.methods.ndbcRangeText;
+  const exact = inst.ndbcRangeText({ station_id: '42001' });
+  assert(exact.indexOf('2026-08-25 00:10 ~ 2026-10-08 03:30 UTC') >= 0, '挂载后显示精确数据时间范围');
+  const est = sea.methods.ndbcRangeText.call({ ranges: {} },
+    { station_id: '46001', latest_ts: 1700000000000, count: 6373 });
+  assert(est.indexOf('估算') >= 0 && est.indexOf('~') >= 0, '未挂载时按缓存估算并诚实标注「估算」');
+  const none = sea.methods.ndbcRangeText.call({ ranges: {} },
+    { station_id: '51001', latest_ts_utc: '2026-10-08 03:30' });
+  assert(none === '2026-10-08 03:30', '仅有 latest 时显示原值');
+}
+
 section('验收第 6 条相关：模板 {{ }} 内无裸枚举字段（与 acceptance.py 同口径）');
 {
   /* 与 scripts/acceptance.py 的 WRAPPED 豁免规则保持一致：
@@ -324,3 +402,4 @@ section('验收第 6 条相关：模板 {{ }} 内无裸枚举字段（与 accept
 console.log('\n----------------------------------------');
 if (failed) { console.error('❌ 失败 ' + failed + ' 项'); process.exit(1); }
 console.log('✅ 全部通过');
+})().catch(function (e) { console.error('异步测试异常：' + (e && (e.stack || e.message) || e)); process.exit(1); });

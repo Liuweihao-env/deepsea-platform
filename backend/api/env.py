@@ -6,7 +6,7 @@ backend/api/env.py —— 环境板块后端扩展（供 server.py 挂载，不�
   队长仓库的 server.py 是手工路由（_api_get / _api_post 的 if 链），
   没有自动加载 backend/api/ 目录的机制（该目录只有 .gitkeep）。
   以下三个能力（精确历史区间 / 大风大浪细化 / 站点暂停控制）都写在 server.py 之外，
-  由本文件提供。队长只需在 server.py 里挂载 4 条路由（改动 <10 行），
+  由本文件提供。队长只需在 server.py 里挂载 5 条路由（改动 <12 行），
   不碰任何现有逻辑，前端也无需再改。
 
 【挂载方法】（给队长看，二选一）
@@ -20,6 +20,10 @@ backend/api/env.py —— 环境板块后端扩展（供 server.py 挂载，不�
       #      精确历史区间：观测站点读 NDBC 缓存，养殖站点按区间模拟
       if path == "/api/env/historical":
           return _json(env_api.historical(query))
+      # GET /api/env/ndbc-ranges
+      #      各观测站点缓存数据的精确起止时间（前端「数据时间范围」列）
+      if path == "/api/env/ndbc-ranges":
+          return _json(env_api.ndbc_ranges())
       # GET /api/env/storm?site_id=site_01&minutes=60&storm_type=wind&heat=0&offline=0
       #      大风大浪细化：storm_type = all / wind / wave（仅风速异常 / 仅浪高异常 / 整体）
       if path == "/api/env/storm":
@@ -240,6 +244,30 @@ def historical(site_id, start_ts, end_ts, max_points=720):
 
 
 # ----------------------------------------------------------------------
+# NDBC 缓存时间范围（浮标「数据时间范围」精确值；未挂载时前端降级用估算并标注）
+# ----------------------------------------------------------------------
+def ndbc_ranges():
+    """返回每个观测站点缓存数据的起止时间（供前端「数据时间范围」列显示）。"""
+    out = []
+    for s in _load_farm():
+        sid = s.get("station_id")
+        if not sid:
+            continue
+        cache = _load_ndbc_cache(sid)
+        recs = (cache or {}).get("records", [])
+        if recs:
+            out.append({
+                "station_id": sid,
+                "count": len(recs),
+                "first_ts": recs[0]["ts"],
+                "latest_ts": recs[-1]["ts"],
+                "first_ts_utc": recs[0].get("ts_utc"),
+                "latest_ts_utc": recs[-1].get("ts_utc"),
+            })
+    return {"ranges": out}
+
+
+# ----------------------------------------------------------------------
 # 大风大浪细化（storm_type = all / wind / wave）
 # ----------------------------------------------------------------------
 def storm(site_id, minutes=60, storm_type="all", heat=False, offline=False, seed=None):
@@ -293,6 +321,7 @@ def sim_toggle(body):
 def routes():
     return [
         ("GET", "/api/env/historical", "historical(query)"),
+        ("GET", "/api/env/ndbc-ranges", "ndbc_ranges()"),
         ("GET", "/api/env/storm", "storm(query)"),
         ("GET", "/api/env/sim-control", "sim_snapshot()"),
         ("POST", "/api/env/sim-control", "sim_toggle(body)"),

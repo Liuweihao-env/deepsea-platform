@@ -131,12 +131,49 @@ class TestSimControl(unittest.TestCase):
         self.assertFalse(out["ok"], msg="缺 site_id 返回失败")
 
 
+class TestNdbcRanges(unittest.TestCase):
+    """浮标「数据时间范围」精确值（供前端列显示）"""
+
+    def _farm(self):
+        return [
+            {"site_id": "site_01", "kind": "farm"},
+            {"site_id": "site_02", "kind": "obs", "station_id": "42001"},
+            {"site_id": "site_03", "kind": "obs", "station_id": "46001"},
+        ]
+
+    def _cache(self):
+        return {"records": [
+            {"ts": 1000, "ts_utc": "2026-01-01 00:00"},
+            {"ts": 2000, "ts_utc": "2026-01-01 00:10"},
+            {"ts": 3000, "ts_utc": "2026-01-01 00:20"},
+        ]}
+
+    def test_ranges_obs_only(self):
+        with mock.patch.object(env, "_load_farm", return_value=self._farm()), \
+             mock.patch.object(env, "_load_ndbc_cache",
+                               side_effect=lambda sid: self._cache() if sid == "42001" else None):
+            out = env.ndbc_ranges()["ranges"]
+            self.assertEqual(len(out), 1, msg="只统计有缓存的观测站点，无 station_id 的养殖站点跳过")
+            self.assertEqual(out[0]["station_id"], "42001", msg="正确关联浮标")
+            self.assertEqual(out[0]["first_ts"], 1000, msg="首条时间戳")
+            self.assertEqual(out[0]["latest_ts"], 3000, msg="末条时间戳")
+            self.assertEqual(out[0]["first_ts_utc"], "2026-01-01 00:00", msg="首条 UTC 文本")
+            self.assertEqual(out[0]["latest_ts_utc"], "2026-01-01 00:20", msg="末条 UTC 文本")
+            self.assertEqual(out[0]["count"], 3, msg="缓存条数")
+
+    def test_no_cache_empty(self):
+        with mock.patch.object(env, "_load_farm", return_value=self._farm()), \
+             mock.patch.object(env, "_load_ndbc_cache", return_value=None):
+            self.assertEqual(env.ndbc_ranges()["ranges"], [], msg="无缓存 → 空列表")
+
+
 class TestRoutes(unittest.TestCase):
     def test_routes_list(self):
         r = env.routes()
-        self.assertEqual(len(r), 4, msg="4 条路由清单")
+        self.assertEqual(len(r), 5, msg="5 条路由清单")
         paths = [x[1] for x in r]
         self.assertIn("/api/env/historical", paths, msg="历史区间路由")
+        self.assertIn("/api/env/ndbc-ranges", paths, msg="数据时间范围路由")
         self.assertIn("/api/env/storm", paths, msg="风暴细化路由")
         self.assertEqual(paths.count("/api/env/sim-control"), 2, msg="暂停控制 GET+POST")
 
