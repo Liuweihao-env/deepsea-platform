@@ -111,10 +111,12 @@
      ============================================================ */
   PAGES['/env/sea'] = {
     data: function () {
-      return { site: 'site_01', picked: null, series: null,
+      /* 问题六：per / site 存全局 __ENV_SESSION__，海况↔水质切换后操作状态与站点选择不丢 */
+      const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = { per: null, site: 'site_01' });
+      return { site: S.site || 'site_01', picked: null, series: null,
                tick: 0, unsub: null, timer: null,
                refreshing: false, refreshMsg: '', refreshOk: null,
-               per: null, loadSeq: 0, chart: null,
+               per: S.per, loadSeq: 0, chart: null,
                /* 问题二：历史区间（真实站点公开数据可自定义时间查看更长远历史） */
                rangeMode: false, rangeSeries: null, rangeMsg: '',
                rangeStart: '', rangeEnd: '', ranges: {} };
@@ -244,9 +246,12 @@
       }
     },
     methods: {
-      /* 站点独立状态兜底：API.sites() 可能晚于 data() 返回，这里补齐 */
+      /* 站点独立状态兜底：API.sites() 可能晚于 data() 返回，这里补齐；
+         问题六：per 挂在全局 __ENV_SESSION__，跨页（海况/水质）共享同一份操作状态 */
       ensurePer: function () {
-        if (!this.per) this.per = {};
+        const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = { per: null, site: 'site_01' });
+        if (!S.per) S.per = {};
+        this.per = S.per;
         const H = global.__ENV_HELPERS__;
         API.sites().forEach(function (s) {
           if (!this.per[s.site_id]) this.per[s.site_id] = H.defaultPer();
@@ -522,6 +527,9 @@
     },
     watch: {
       site: function () {
+        /* 问题六：站点选择写入全局，切换页面后保留 */
+        const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = {});
+        S.site = this.site;
         /* 切站点：退出历史区间模式，回到该站点实时窗口（问题二） */
         this.rangeMode = false;
         this.rangeSeries = null;
@@ -794,8 +802,10 @@
      ============================================================ */
   PAGES['/env/water'] = {
     data: function () {
-      return { site: 'site_01', picked: null, series: null,
-               per: null, loadSeq: 0, chart: null, timer: null,
+      /* 问题六：per / site 存全局 __ENV_SESSION__，海况↔水质切换后操作状态与站点选择不丢 */
+      const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = { per: null, site: 'site_01' });
+      return { site: S.site || 'site_01', picked: null, series: null,
+               per: S.per, loadSeq: 0, chart: null, timer: null,
                show: { water_temp: true, dissolved_oxygen: true, light_intensity: false,
                        salinity: true },
                /* 问题二：历史区间（真实站点公开数据可自定义时间查看更长远历史） */
@@ -874,7 +884,10 @@
     },
     methods: {
       ensurePer: function () {
-        if (!this.per) this.per = {};
+        /* 问题六：per 挂在全局 __ENV_SESSION__，跨页（海况/水质）共享同一份操作状态 */
+        const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = { per: null, site: 'site_01' });
+        if (!S.per) S.per = {};
+        this.per = S.per;
         const H = global.__ENV_HELPERS__;
         API.sites().forEach(function (s) {
           if (!this.per[s.site_id]) this.per[s.site_id] = H.defaultPer();
@@ -1112,6 +1125,9 @@
     },
     watch: {
       site: function () {
+        /* 问题六：站点选择写入全局，切换页面后保留 */
+        const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = {});
+        S.site = this.site;
         /* 切站点：退出历史区间模式，回到该站点实时窗口（问题二） */
         this.rangeMode = false;
         this.rangeSeries = null;

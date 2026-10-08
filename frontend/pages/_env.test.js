@@ -480,6 +480,35 @@ section('新问题5：所有异常数据进事件列表（含时间/站点/数�
          t.indexOf('R-TEMP-01 水温上限') >= 0, '水质事件含 站点 · 时间 · 数据 · 规则名');
 }
 
+section('新问题6：页面切换不丢操作状态（跨页共享 per / site）');
+{
+  /* data() 从全局恢复站点；两页共享同一 per 对象（模拟 海况→水质 切换） */
+  const i1 = { per: null, site: 'site_01', chart: null };
+  sea.methods.ensurePer.call(i1);
+  assert(!!i1.per.site_01 && i1.per.site_01.paused === false, 'ensurePer 补齐全部站点状态');
+  /* 海况页在 site_01 暂停、site_03 调时间窗与风暴细化，然后切到水质页 */
+  i1.per.site_01.paused = true;
+  i1.per.site_03.minutes = 240;
+  i1.per.site_03.stormType = 'wind';
+  const S = sandbox.__ENV_SESSION__;
+  S.site = 'site_02';
+  const wd = water.data();
+  assert(wd.site === 'site_02', '水质页打开恢复上次选择的站点（site_02）');
+  const i2 = { per: wd.per, site: wd.site, chart: null };
+  water.methods.ensurePer.call(i2);
+  assert(i2.per === i1.per, '两页共享同一份 per 对象（不是拷贝）');
+  assert(i2.per.site_01.paused === true, '海况页暂停 site_01 → 水质页状态同步保留');
+  assert(i2.per.site_03.minutes === 240, '时间窗选择跨页保留');
+  assert(i2.per.site_03.stormType === 'wind', '风暴细化选择跨页保留');
+  /* 水质页恢复 site_01 暂停 → 海况页可见（反向） */
+  i2.per.site_01.paused = false;
+  assert(i1.per.site_01.paused === false, '水质页恢复暂停 → 海况页同步');
+  /* watch.site 写回全局（静态验证：切换站点后另一页也能恢复） */
+  assert(sea.watch.site.toString().indexOf('S.site = this.site') >= 0 &&
+         water.watch.site.toString().indexOf('S.site = this.site') >= 0,
+    '两页 watch.site 都把站点选择写回全局');
+}
+
 section('验收第 6 条相关：模板 {{ }} 内无裸枚举字段（与 acceptance.py 同口径）');
 {
   /* 与 scripts/acceptance.py 的 WRAPPED 豁免规则保持一致：
