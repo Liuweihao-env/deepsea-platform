@@ -430,17 +430,6 @@
       primaryCount: function () {
         const s = this.species;
         return s.filter(function (r) { return r.source && r.source !== 'FishBase'; }).length;
-      },
-      ruleList: function () {
-        return [
-          { id: 'R-TENSION-01', name: '锚泊张力黄色预警', cond: '张力利用率 R > 80%（R = T_max / T_design，T_design = PB/1.67）', level: 'yellow', from: 'tension_pct' },
-          { id: 'R-TENSION-02', name: '锚泊张力红色预警', cond: '张力利用率 R > 95%（等价约 57% PB，低于 60% PB 许用上限）', level: 'red', from: 'tension_pct' },
-          { id: 'R-TILT-01', name: '网箱倾斜橙色预警', cond: 'tilt_pitch > 5 且 wave_height > 1.5', level: 'orange', from: 'tilt_pitch + wave_height' },
-          { id: 'R-TILT-02', name: '网箱倾斜红色预警', cond: 'tilt_pitch > 15（CCS 完整稳性衡准角）', level: 'red', from: 'tilt_pitch' },
-          { id: 'R-BAT-01', name: '储能低电量黄色预警', cond: 'battery_soc < 20', level: 'yellow', from: 'battery_soc' },
-          { id: 'R-BAT-02', name: '储能严重低电量预警', cond: 'battery_soc < 10', level: 'red', from: 'battery_soc' },
-          { id: 'R-TEMP-01', name: '水温上限告警', cond: 'water_temp >= 21.5', level: 'red', from: 'water_temp' }
-        ];
       }
     },
     methods: {
@@ -515,23 +504,6 @@
       '    <div class="row" style="margin-top:12px;align-items:center">',
       '      <button class="primary" @click="save">保存阈值</button>',
       '      <span class="small muted">{{ saved }}</span>',
-      '    </div>',
-      '  </div>',
-      '',
-      '  <div class="card">',
-      '    <div class="card-title">判断规则（挂在结构安全的规则引擎上）</div>',
-      '    <div class="dt-wrap">',
-      '      <table class="dt">',
-      '        <thead><tr><th>规则编号</th><th>规则名称</th><th>条件</th><th>等级</th><th>取数字段</th></tr></thead>',
-      '        <tbody>',
-      '          <tr v-for="r in ruleList" :key="r.id">',
-      '            <td class="mono">{{ r.id }}</td><td>{{ r.name }}</td>',
-      '            <td class="mono small">{{ r.cond }}</td>',
-      '            <td><span class="dot" :class="lvCls(r.level)"></span>{{ lvCn(r.level) }}</td>',
-      '            <td class="mono small">{{ r.from }}</td>',
-      '          </tr>',
-      '        </tbody>',
-      '      </table>',
       '    </div>',
       '  </div>',
       '',
