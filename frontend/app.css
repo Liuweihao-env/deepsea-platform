@@ -282,3 +282,44 @@ select, input[type=text], input[type=datetime-local] {
 }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 13px; }
 .kv .k { color: var(--c-muted); }
+
+/* ---------- 网箱摄像头（鱼类板块，仅新增，不改动既有样式） ---------- */
+.grid-cam { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.cam-tile {
+  position: relative; border: 1px solid #1f3550; border-radius: 6px;
+  overflow: hidden; background: #07101e;
+}
+.cam-canvas { display: block; width: 100%; height: 190px; object-fit: cover; }
+.cam-canvas.off { opacity: .25; }
+.cam-top {
+  position: absolute; top: 0; left: 0; right: 0;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 8px;
+  background: linear-gradient(180deg, rgba(0,0,0,.6), rgba(0,0,0,0));
+}
+.cam-name { color: #e5eefb; font-size: 12px; font-weight: 600; }
+.cam-live {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: #ffd9d9; font-size: 11px;
+}
+.cam-live.off { color: #9aa8bc; }
+.cam-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: #ef4444;
+  animation: camblink 1.2s infinite;
+}
+.cam-live.off .cam-dot { background: #6b7280; animation: none; }
+@keyframes camblink { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+.cam-meta {
+  display: flex; justify-content: space-between;
+  padding: 5px 8px; color: #9db4d4; font-size: 11px;
+  background: rgba(6, 14, 26, .9);
+}
+.cam-no {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px;
+}
+.cam-no-text {
+  color: #ff6b6b; font-size: 15px; font-weight: 700; letter-spacing: 2px;
+}
+.cam-no-sub { color: #8fa0b8; font-size: 11px; }

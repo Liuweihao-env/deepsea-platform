@@ -47,14 +47,20 @@
   }
 
   PAGES['/fish/monitor'] = {
-    data: function () { return { minutes: 60, series: [] }; },
+    data: function () {
+      return {
+        minutes: 60, series: [],
+        cameras: [], camOffline: false,
+        camRaf: null, camPoll: null, tileState: null
+      };
+    },
     computed: {
       last: function () { return this.series.length ? this.series[this.series.length - 1] : {}; },
       charts: function () {
         return [
           { name: '现存尾数', unit: '尾', data: this.series.map(function (r) { return [r.ts, r.fish_count]; }) },
           { name: '平均体重', unit: 'g', data: this.series.map(function (r) { return [r.ts, r.avg_weight_g]; }) },
-          { name: '预估总生物量', unit: 'kg', data: this.series.map(function (r) { return [r.ts, r.total_biomass_kg]; }) }
+          { name: '预估总体重', unit: 'kg', data: this.series.map(function (r) { return [r.ts, r.total_biomass_kg]; }) }
         ];
       },
       /* 摄食强度变化即"事件"——由数据实时判定，不造假事件 */
@@ -80,14 +86,115 @@
         API.resolve(API.fish(this.minutes), function (d) { self.series = d; });
       },
       cn: function (v) { return { none: '无', weak: '弱', mid: '中', strong: '强' }[v] || v; },
-      time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); }
+      time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
+      loadCams: function () {
+        const self = this;
+        fishGet('/api/fish/cameras').then(function (d) {
+          self.cameras = (d && d.cameras) || [];
+          self.camOffline = !!(d && d.offline);
+        }).catch(function () { self.cameras = []; self.camOffline = true; });
+      },
+      /* 四路仿真画面：每路 canvas 按角度画不同场景，让"多角度"名副其实。
+         后期接入真实视频时，把对应 canvas 换成 <video :src="c.stream_url"> 即可。 */
+      startTiles: function () {
+        const self = this;
+        const mk = function (n, r) {
+          const a = [];
+          for (let i = 0; i < n; i++) {
+            a.push({ x: r(), y: r(), vx: (Math.random() - 0.5) * 0.5,
+                     vy: (Math.random() - 0.5) * 0.4, s: 1 + Math.random() * 2.4 });
+          }
+          return a;
+        };
+        const R = function () { return 0.1 + Math.random() * 0.8; };
+        this.tileState = {
+          top: mk(42, R), side: mk(28, R), under: mk(22, R), pan: mk(46, R),
+          bubbles: mk(18, R), t: 0
+        };
+        const draw = function () {
+          const canvases = self.$refs.camCanvas;
+          if (canvases && canvases.length) {
+            const st = self.tileState;
+            st.t += 0.02;
+            for (let idx = 0; idx < canvases.length; idx++) {
+              const cv = canvases[idx];
+              const cam = self.cameras[idx];
+              if (!cam) continue;
+              const ctx = cv.getContext('2d');
+              const w = cv.width, h = cv.height;
+              const g = ctx.createLinearGradient(0, 0, 0, h);
+              g.addColorStop(0, '#0a1b30'); g.addColorStop(1, '#07101e');
+              ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+              const dot = function (p) {
+                p.x += p.vx * 0.003; p.y += p.vy * 0.003;
+                if (p.x < 0.05 || p.x > 0.95) p.vx *= -1;
+                if (p.y < 0.05 || p.y > 0.95) p.vy *= -1;
+                ctx.beginPath();
+                ctx.arc(p.x * w, p.y * h, p.s, 0, Math.PI * 2);
+                ctx.fill();
+              };
+              ctx.fillStyle = 'rgba(140,190,255,.85)';
+              if (cam.angle === '俯视') {
+                st.top.forEach(dot);
+              } else if (cam.angle === '侧视') {
+                /* 水面线 + 鱼只在中下部 */
+                ctx.strokeStyle = 'rgba(120,180,255,.35)';
+                ctx.beginPath();
+                ctx.moveTo(0, h * 0.22); ctx.lineTo(w, h * 0.22); ctx.stroke();
+                st.side.forEach(function (p) {
+                  if (p.y < 0.3) p.y = 0.3 + Math.random() * 0.5;
+                  dot(p);
+                });
+              } else if (cam.angle === '水下') {
+                /* 气泡上升 */
+                ctx.fillStyle = 'rgba(160,210,255,.45)';
+                st.bubbles.forEach(function (p) {
+                  p.y -= 0.002;
+                  if (p.y < 0.05) p.y = 0.95;
+                  ctx.beginPath();
+                  ctx.arc(p.x * w, p.y * h, p.s * 0.7, 0, Math.PI * 2);
+                  ctx.fill();
+                });
+                ctx.fillStyle = 'rgba(170,210,255,.9)';
+                st.under.forEach(dot);
+              } else {
+                /* 全景：四角取景框 + 小点 */
+                ctx.strokeStyle = 'rgba(255,255,255,.25)';
+                const L = 14;
+                [[0, 0, 1, 1], [w, 0, -1, 1], [0, h, 1, -1], [w, h, -1, -1]]
+                  .forEach(function (q) {
+                    ctx.beginPath();
+                    ctx.moveTo(q[0] + L * q[2], q[1]);
+                    ctx.lineTo(q[0], q[1]);
+                    ctx.lineTo(q[0], q[1] + L * q[3]);
+                    ctx.stroke();
+                  });
+                st.pan.forEach(dot);
+              }
+            }
+          }
+          self.camRaf = requestAnimationFrame(draw);
+        };
+        draw();
+      },
+      stopTiles: function () {
+        if (this.camRaf) { cancelAnimationFrame(this.camRaf); this.camRaf = null; }
+        if (this.camPoll) { clearInterval(this.camPoll); this.camPoll = null; }
+      }
     },
     mounted: function () {
       /* API.bind：数据变化重算 + 定时刷新曲线 */
       this.unsub = API.bind(this, this.load);
       this.load();
+      const self = this;
+      this.loadCams();
+      this.$nextTick(function () { self.startTiles(); });
+      this.camPoll = setInterval(function () { self.loadCams(); }, 5000);
     },
-    beforeUnmount: function () { if (this.unsub) { this.unsub(); this.unsub = null; } },
+    beforeUnmount: function () {
+      if (this.unsub) { this.unsub(); this.unsub = null; }
+      this.stopTiles();
+    },
     watch: { minutes: function () { this.load(); } },
     template: [
       '<div>',
@@ -99,9 +206,40 @@
       '    <stat-card name="现存总尾数" field="fish_count" unit="尾" :value="last.fish_count" :digits="0" source="public" />',
       '    <stat-card name="平均体重" field="avg_weight_g" unit="g" :value="last.avg_weight_g" source="simulated" />',
       '    <stat-card name="平均体长" field="avg_length_cm" unit="cm" :value="last.avg_length_cm" source="simulated" />',
-      '    <stat-card name="预估总生物量" field="total_biomass_kg" unit="kg" :value="last.total_biomass_kg" source="simulated" />',
+      '    <stat-card name="预估总体重" field="total_biomass_kg" unit="kg" :value="last.total_biomass_kg" source="simulated" />',
       '    <stat-card name="鱼群摄食强度" field="feeding_intensity" unit="" :value="cn(last.feeding_intensity)" source="public" />',
       '    <stat-card name="活动鱼群密度" field="fish_density" unit="尾/m³" :value="last.fish_density" source="simulated" />',
+      '  </div>',
+      '',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title">网箱摄像头 · 多角度实时监测（4 路）</div>',
+      '    <div class="grid-cam">',
+      '      <div v-for="c in cameras" :key="c.camera_id" class="cam-tile">',
+      '        <canvas ref="camCanvas" width="340" height="190" class="cam-canvas"',
+      '          :class="{ off: !c.online }"></canvas>',
+      '        <div class="cam-top">',
+      '          <span class="cam-name">{{ c.name }}</span>',
+      '          <span class="cam-live" :class="{ off: !c.online }">',
+      '            <i class="cam-dot"></i>{{ c.online ? \'直播中\' : \'已离线\' }}</span>',
+      '        </div>',
+      '        <div v-if="!c.online" class="cam-no">',
+      '          <div class="cam-no-text">信号中断</div>',
+      '          <div class="cam-no-sub">视觉链路不可用，不显示上一个画面</div>',
+      '        </div>',
+      '        <div class="cam-meta">',
+      '          <span>{{ c.resolution }} · {{ c.fps }}fps</span>',
+      '          <span>{{ c.online ? time(c.ts) : \'—\' }}</span>',
+      '        </div>',
+      '      </div>',
+      '    </div>',
+      '    <div v-if="camOffline" class="muted small" style="margin-top:8px">',
+      '      视觉链路不可用（生成器已停止或摄像头离线）—— 全部画面显示「信号中断」，不显示上一个值。',
+      '    </div>',
+      '    <div class="hint small" style="margin-top:10px">',
+      '      <b>现阶段为演示画面</b>：四路画面由前端按角度仿真绘制（俯视/侧视/水下/全景）。',
+      '      后端已为每路摄像头预留 <code>stream_url</code> 字段，后期接入真实视频流时，',
+      '      把对应画面换成 <code>&lt;video&gt;</code> 即可（浏览器播放需 WebRTC/HLS，RTSP 需网关转换）。',
+      '    </div>',
       '  </div>',
       '',
       '  <div class="split" style="margin-top:12px">',
@@ -128,7 +266,17 @@
   };
 
   PAGES['/fish/heatmap'] = {
-    data: function () { return { grid: [], picked: null, offline: false }; },
+    data: function () {
+      return {
+        grid: [], picked: null, offline: false,
+        view: '2d', offline3d: false, pointCount: 0, lastUpdate: '',
+        three: null, scene3d: null, camera3d: null, renderer3d: null,
+        points3d: null, curPos: null, tgtPos: null, curCol: null,
+        raf: null, poll3d: null,
+        theta: Math.PI * 0.25, phi: Math.PI * 0.38, radius: 17,
+        dragging: false, lastX: 0, lastY: 0
+      };
+    },
     computed: {
       peak: function () {
         let best = { x: 0, y: 0, v: null }, sum = 0, n = 0;
@@ -148,6 +296,175 @@
           self.grid = (d && d.grid) || [];
           self.offline = !!(d && d.offline);
         }).catch(function () { self.grid = []; self.offline = true; });
+      },
+      switchView: function (v) {
+        if (v === this.view) return;
+        this.view = v;
+        const self = this;
+        if (v === '3d') {
+          this.destroy3d();
+          this.$nextTick(function () {
+            self.ensureThree(function () {
+              self.init3d();
+              self.fetch3d();
+            });
+          });
+        }
+      },
+      /* three.js 只在切到 3D 时才加载，不改 index.html、不增加其他页面负担 */
+      ensureThree: function (cb) {
+        if (global.THREE) { cb(); return; }
+        const s = document.createElement('script');
+        s.src = (global.__API_BASE__ || '') + '/vendor/three.min.js';
+        s.onload = function () { cb(); };
+        s.onerror = function () { cb(); };
+        document.head.appendChild(s);
+      },
+      init3d: function () {
+        const THREE = global.THREE;
+        const box = this.$refs.box3d;
+        const w = Math.max(300, box.clientWidth), h = 480;
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0b1626);
+        const camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 200);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(w, h);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        box.appendChild(renderer.domElement);
+
+        /* 网箱边框 10×10×8（X/Y 平面，Z 为水深） */
+        const center = new THREE.Vector3(5, 5, 4);
+        const edges = new THREE.EdgesGeometry(new THREE.BoxGeometry(10, 10, 8));
+        const cageLine = new THREE.LineSegments(
+          edges, new THREE.LineBasicMaterial({ color: 0x4a7bb8 }));
+        cageLine.position.copy(center);
+        scene.add(cageLine);
+
+        /* 底部网格线，帮助判断位置 */
+        const grid = new THREE.GridHelper(10, 10, 0x27405f, 0x1a2c44);
+        grid.rotation.x = Math.PI / 2;
+        grid.position.set(5, 5, 0.02);
+        scene.add(grid);
+
+        /* 点云：固定 1000 个点，按数据条数设置 drawRange */
+        const MAX = 1000;
+        const geom = new THREE.BufferGeometry();
+        const pos = new Float32Array(MAX * 3);
+        const col = new Float32Array(MAX * 3);
+        for (let i = 0; i < MAX; i++) { pos[i * 3] = 5; pos[i * 3 + 1] = 5; pos[i * 3 + 2] = 4; }
+        geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        geom.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        const mat = new THREE.PointsMaterial({
+          size: 0.16, vertexColors: true, transparent: true, opacity: 0.9,
+          sizeAttenuation: true, depthWrite: false
+        });
+        const points = new THREE.Points(geom, mat);
+        scene.add(points);
+
+        this.scene3d = scene; this.camera3d = camera; this.renderer3d = renderer;
+        this.points3d = points;
+        this.curPos = pos; this.curCol = col;
+
+        /* 拖拽旋转 / 滚轮缩放（自己实现，不依赖 OrbitControls） */
+        const self = this;
+        this._onDown = function (e) {
+          self.dragging = true; self.lastX = e.clientX; self.lastY = e.clientY;
+        };
+        this._onMove = function (e) {
+          if (!self.dragging) return;
+          const dx = e.clientX - self.lastX, dy = e.clientY - self.lastY;
+          self.lastX = e.clientX; self.lastY = e.clientY;
+          self.theta -= dx * 0.008;
+          self.phi -= dy * 0.008;
+          self.phi = Math.max(0.12, Math.min(Math.PI - 0.12, self.phi));
+        };
+        this._onUp = function () { self.dragging = false; };
+        this._onWheel = function (e) {
+          e.preventDefault();
+          self.radius *= (1 + e.deltaY * 0.0012);
+          self.radius = Math.max(8, Math.min(40, self.radius));
+        };
+        renderer.domElement.addEventListener('mousedown', this._onDown);
+        window.addEventListener('mousemove', this._onMove);
+        window.addEventListener('mouseup', this._onUp);
+        renderer.domElement.addEventListener('wheel', this._onWheel, { passive: false });
+
+        const render = function () {
+          /* 点位向目标平滑过渡（每帧走 8%），鱼群看起来是"游动"而非"跳变" */
+          const tp = self.tgtPos;
+          if (tp) {
+            for (let i = 0; i < pos.length; i++) {
+              pos[i] += (tp[i] - pos[i]) * 0.08;
+            }
+            geom.attributes.position.needsUpdate = true;
+          }
+          const c = new THREE.Vector3(
+            center.x + self.radius * Math.sin(self.phi) * Math.sin(self.theta),
+            center.y + self.radius * Math.cos(self.phi),
+            center.z + self.radius * Math.sin(self.phi) * Math.cos(self.theta));
+          camera.position.copy(c);
+          camera.lookAt(center);
+          renderer.render(scene, camera);
+          self.raf = requestAnimationFrame(render);
+        };
+        render();
+      },
+      fetch3d: function () {
+        const self = this;
+        const one = function () {
+          if (self.view !== '3d') return;
+          fishGet('/api/fish/positions3d').then(function (d) {
+            if (d.offline || !d.data) {
+              self.offline3d = true; self.pointCount = 0;
+              return;
+            }
+            self.offline3d = false;
+            const pts = d.data.points;
+            self.pointCount = pts.length;
+            self.lastUpdate = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+            if (!self.tgtPos) {
+              self.tgtPos = new Float32Array(1000 * 3);
+            }
+            const tp = self.tgtPos;
+            const col = self.curCol;
+            /* 颜色：0 正常=浅蓝、1 摄食活跃=暖橙、2 异常=红 */
+            const CC = [[0.35, 0.75, 1.0], [1.0, 0.62, 0.22], [1.0, 0.28, 0.28]];
+            for (let i = 0; i < 1000; i++) {
+              if (i < pts.length) {
+                const p = pts[i];
+                tp[i * 3] = p.x; tp[i * 3 + 1] = p.y; tp[i * 3 + 2] = p.z;
+                const cc = CC[p.s] || CC[0];
+                col[i * 3] = cc[0]; col[i * 3 + 1] = cc[1]; col[i * 3 + 2] = cc[2];
+              } else {
+                /* 多余点收到中心，drawRange 不画它们 */
+                tp[i * 3] = 5; tp[i * 3 + 1] = 5; tp[i * 3 + 2] = 4;
+                col[i * 3] = 0; col[i * 3 + 1] = 0; col[i * 3 + 2] = 0;
+              }
+            }
+            if (self.points3d) {
+              self.points3d.geometry.setDrawRange(0, pts.length);
+              self.points3d.geometry.attributes.color.needsUpdate = true;
+            }
+          }).catch(function () { self.offline3d = true; });
+        };
+        one();
+        this.poll3d = setInterval(one, 3000); /* 每 3 秒更新一次 */
+      },
+      destroy3d: function () {
+        if (this.poll3d) { clearInterval(this.poll3d); this.poll3d = null; }
+        if (this.raf) { cancelAnimationFrame(this.raf); this.raf = null; }
+        if (this.renderer3d) {
+          this.renderer3d.domElement.removeEventListener('mousedown', this._onDown);
+          window.removeEventListener('mousemove', this._onMove);
+          window.removeEventListener('mouseup', this._onUp);
+          this.renderer3d.domElement.removeEventListener('wheel', this._onWheel);
+          this.renderer3d.dispose();
+          if (this.renderer3d.domElement.parentNode) {
+            this.renderer3d.domElement.parentNode.removeChild(this.renderer3d.domElement);
+          }
+        }
+        this.scene3d = null; this.camera3d = null; this.renderer3d = null;
+        this.points3d = null; this.tgtPos = null;
       }
     },
     mounted: function () {
@@ -155,36 +472,57 @@
       this.unsub = API.bind(this, this.load);
       this.load();
     },
-    beforeUnmount: function () { if (this.unsub) { this.unsub(); this.unsub = null; } },
+    beforeUnmount: function () {
+      if (this.unsub) { this.unsub(); this.unsub = null; }
+      this.destroy3d();
+    },
     template: [
       '<div>',
       '  <page-head title="鱼类 · 鱼群分布热力图"',
-      '    desc="10 × 10 网格累加密度（拍板问题单 问题 5 建议 A）。接口字段 <code>grid[][]</code>"',
+      '    desc="支持二维网格与三维点云切换：三维画面每隔 3 秒更新，鱼体简化为点，可拖拽旋转、滚轮缩放"',
       '    :sources="[\'simulated\']" />',
       '',
       '  <div class="grid-stats">',
       '    <stat-card name="最高密度网格" unit="尾/m³" :value="peak.best.v" source="simulated" />',
       '    <stat-card name="最高密度位置" unit="" :value="\'X\' + (peak.best.x + 1) + \' / Y\' + (peak.best.y + 1)" source="simulated" />',
       '    <stat-card name="网格平均密度" unit="尾/m³" :value="peak.avg" source="simulated" />',
-      '    <stat-card name="网格分辨率" unit="" value="10 × 10" source="simulated" />',
+      '    <stat-card name="三维点云点数" unit="个" :value="view === \'3d\' ? pointCount : 0" source="simulated" />',
       '  </div>',
       '',
-      '  <div v-if="offline" class="card" style="margin-top:12px">',
-      '    <div class="muted small">视觉链路不可用（生成器已停止或摄像头离线）—— 密度数据显示「—」，不显示上一个值。</div>',
-      '  </div>',
-      '  <div v-else style="margin-top:12px">',
-      '    <heat-grid title="鱼群密度分布（颜色越红越密）" :grid="grid" unit="尾/m³" :height="430" />',
-      '  </div>',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="row" style="gap:8px;align-items:center">',
+      '      <div class="seg">',
+      '        <button :class="{ primary: view === \'2d\' }" @click="switchView(\'2d\')">二维网格</button>',
+      '        <button :class="{ primary: view === \'3d\' }" @click="switchView(\'3d\')">三维点云</button>',
+      '      </div>',
+      '      <span v-if="view === \'3d\' && !offline3d" class="small muted">',
+      '        共 {{ pointCount }} 个点 · 每 3 秒更新 · 最近更新 {{ lastUpdate || \'—\' }}</span>',
+      '      <span class="small muted" style="margin-left:auto">拖拽旋转 · 滚轮缩放</span>',
+      '    </div>',
       '',
-      '  <div class="hint" style="margin-top:12px">',
-      '    <b>为什么是 10 × 10</b>：热力图是给值班人<b>一眼看趋势</b>用的，不是科研分析。',
-      '    10×10 已经能清楚显示鱼群集中在哪个区域；20×20 单格在网页上小于可读尺寸，收益不明显。',
+      '    <div v-if="offline" class="muted small" style="margin-top:10px">',
+      '      视觉链路不可用（生成器已停止或摄像头离线）—— 密度数据显示「—」，不显示上一个值。',
+      '    </div>',
+      '    <div v-else-if="view === \'2d\'">',
+      '      <heat-grid title="鱼群密度分布（颜色越红越密）" :grid="grid" unit="尾/m³" :height="430" />',
+      '    </div>',
+      '    <div v-else style="position:relative;margin-top:10px">',
+      '      <div ref="box3d" style="width:100%;height:480px;border-radius:6px;overflow:hidden"></div>',
+      '      <div v-if="offline3d" class="card" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(11,22,38,.82)">',
+      '        <span class="muted">视觉链路不可用（生成器已停止或摄像头离线）—— 不显示上一个值</span>',
+      '      </div>',
+      '    </div>',
+      '',
+      '    <div class="hint small" style="margin-top:10px">',
+      '      <b>两种视角的用途</b>：二维网格用于值班时<b>一眼看密度分布</b>；三维点云用于直观判断',
+      '      <b>鱼群在水中的空间聚集</b>（例如上浮、扎堆）。点的颜色：蓝=正常、橙=摄食活跃、红=异常。',
+      '    </div>',
       '  </div>',
       '',
       '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
       '    <button @click="load">重新采样</button>',
       '    <span style="flex:1"></span>',
-      '    <span class="small muted">配色沿用状态色阶语义，未使用彩虹色</span>',
+      '    <span class="small muted">三维点云每 3 秒从后端接口拉取一次，离线下显示「—」</span>',
       '  </div>',
       '</div>'
     ].join('\n')
@@ -665,6 +1003,149 @@
       '      </div>',
       '    </div>',
       '  </div>',
+      '</div>'
+    ].join('\n')
+  };
+
+  /* ---------- 鱼种档案（复制自管理板块 /mgmt/species，鱼类板块内部查阅用） ----------
+     数据仍来自后端两个参数库（/api/species、/api/species/temp），内容与管理页完全一致；
+     管理板块原页面不动。 */
+  PAGES['/fish/species'] = {
+    data: function () { return { tick: 0, unsub: null, kw: '', onlyOk: false, picked: null }; },
+    computed: {
+      tempAll: function () { this.tick; const t = API.speciesTemp(); return (t && t.species) || []; },
+      lwrAll: function () { this.tick; return API.species() || []; },
+      rows: function () {
+        const lwr = {};
+        this.lwrAll.forEach(function (x) { lwr[x.species_cn] = x; });
+        return this.tempAll.map(function (t) {
+          const l = lwr[t.species_cn] || {};
+          return {
+            cn: t.species_cn, latin: t.species_latin,
+            opt: (t.temp_opt_low != null ? t.temp_opt_low + '~' + t.temp_opt_high : '—'),
+            tol: (t.temp_tol_low != null ? t.temp_tol_low + '~' + t.temp_tol_high : '—'),
+            warnH: t.temp_warn_high, alarmH: t.temp_alarm_high,
+            warnL: t.temp_warn_low, alarmL: t.temp_alarm_low,
+            evidence: t.evidence, source: t.source, note: t.note,
+            a: l.lw_a, b: l.lw_b, lenType: l.length_type,
+            lwrEvidence: l.evidence_cn || l.evidence
+          };
+        });
+      },
+      list: function () {
+        const k = this.kw.trim();
+        let r = this.rows;
+        if (k) {
+          r = r.filter(function (x) {
+            return (x.cn && x.cn.indexOf(k) >= 0) || (x.latin && x.latin.toLowerCase().indexOf(k.toLowerCase()) >= 0);
+          });
+        }
+        if (this.onlyOk) {
+          r = r.filter(function (x) { return x.alarmH !== null || x.alarmL !== null; });
+        }
+        return r;
+      },
+      stat: function () {
+        const r = this.rows;
+        const cnt = {};
+        r.forEach(function (x) { cnt[x.evidence] = (cnt[x.evidence] || 0) + 1; });
+        return {
+          total: r.length,
+          withAlarm: r.filter(function (x) { return x.alarmH !== null || x.alarmL !== null; }).length,
+          both: r.filter(function (x) { return x.a != null && x.alarmH !== null; }).length,
+          byEvidence: cnt
+        };
+      }
+    },
+    methods: {
+      evColor: function (lv) {
+        return {
+          '官方/标准': { bg: '#F0FDF4', br: '#86EFAC', fg: '#166534' },
+          '学术文献': { bg: '#EFF6FF', br: '#BFDBFE', fg: '#1D4ED8' },
+          '技术手册/科普': { bg: '#FFFBEB', br: '#FDE68A', fg: '#92400E' },
+          '没找到': { bg: '#FEF2F2', br: '#FECACA', fg: '#991B1B' }
+        }[lv] || { bg: '#F3F4F6', br: '#E5E7EB', fg: '#6B7280' };
+      },
+      info: function (r) {
+        return { level: r.evidence, text: r.note || '（这一条没有补充说明）', source: r.source, url: '' };
+      },
+      lenTypeCn: function (t) {
+        return {
+          TL: '全长', SL: '标准长', FL: '叉长',
+          'total length': '全长', 'standard length': '标准长', 'fork length': '叉长'
+        }[t] || t || '—';
+      }
+    },
+    mounted: function () {
+      const self = this;
+      this.unsub = API.subscribe(function () { self.tick++; });
+    },
+    beforeUnmount: function () { if (this.unsub) { this.unsub(); this.unsub = null; } },
+    template: [
+      '<div>',
+      '  <page-head title="鱼类 · 鱼种档案"',
+      '    desc="海水养殖鱼种的<b>温度参数</b>与<b>体长体重参数</b>，每条都带出处 —— 本页参数与管理板块鱼种档案一致"',
+      '    :sources="[\'public\']" />',
+      '',
+      '  <div v-if="!rows.length" class="card">',
+      '    <div class="card-title">需要后端</div>',
+      '    <div class="small muted">鱼种档案住在后端 <b>data/</b> 下的两个参数库。请双击 <b>启动平台.bat</b>。</div>',
+      '  </div>',
+      '',
+      '  <template v-else>',
+      '    <div class="grid-stats">',
+      '      <stat-card name="鱼种总数" field="species" unit="种" :value="stat.total" source="public" />',
+      '      <stat-card name="有温度告警线" field="alarm" unit="种" :value="stat.withAlarm" source="public" />',
+      '      <stat-card name="两库齐备" field="both" unit="种" :value="stat.both" source="public" />',
+      '      <stat-card name="证据：官方/标准" field="official" unit="种"',
+      '                 :value="stat.byEvidence[\'官方/标准\'] || 0" source="public" />',
+      '    </div>',
+      '',
+      '    <div class="card">',
+      '      <div class="card-title">鱼种参数总表</div>',
+      '      <div class="row" style="gap:10px;margin-bottom:8px;align-items:center">',
+      '        <input type="text" v-model="kw" placeholder="搜中文名或拉丁名" style="width:220px">',
+      '        <label class="small" style="display:flex;align-items:center;gap:4px">',
+      '          <input type="checkbox" v-model="onlyOk"> 只看有告警线的',
+      '        </label>',
+      '        <span class="small muted">共 {{ list.length }} 条</span>',
+      '      </div>',
+      '      <div class="dt-wrap" style="max-height:560px">',
+      '        <table class="dt">',
+      '          <thead><tr><th>鱼种</th><th>拉丁学名</th><th>最适水温</th><th>耐受范围</th>',
+      '            <th>建议告警线</th><th>体长体重 a / b</th><th>体长类型</th><th>证据强度</th><th>依据</th></tr></thead>',
+      '          <tbody>',
+      '            <tr v-for="r in list" :key="r.cn" :style="r.evidence === \'没找到\' ? { opacity: .55 } : {}">',
+      '              <td><b>{{ r.cn }}</b></td>',
+      '              <td class="small" style="font-style:italic">{{ r.latin }}</td>',
+      '              <td class="mono small">{{ r.opt }} ℃</td>',
+      '              <td class="mono small">{{ r.tol }} ℃</td>',
+      '              <td class="mono small">',
+      '                <span v-if="r.alarmH !== null || r.alarmL !== null">',
+      '                  低 {{ r.alarmL != null ? r.alarmL : \'—\' }} / 高 {{ r.alarmH != null ? r.alarmH : \'—\' }} ℃',
+      '                </span>',
+      '                <span v-else class="muted">数据不足</span>',
+      '              </td>',
+      '              <td class="mono small">',
+      '                <span v-if="r.a != null">{{ r.a }} / {{ r.b }}</span>',
+      '                <span v-else class="muted">—</span>',
+      '              </td>',
+      '              <td class="small">{{ lenTypeCn(r.lenType) }}</td>',
+      '              <td><span class="hd-badge"',
+      '                    :style="{ background: evColor(r.evidence).bg, borderColor: evColor(r.evidence).br, color: evColor(r.evidence).fg }">',
+      '                {{ r.evidence }}</span></td>',
+      '              <td><help-dot :info="info(r)" :label="r.cn + \' · 温度参数依据\'" /></td>',
+      '            </tr>',
+      '            <tr v-if="!list.length"><td colspan="9" class="muted small">没有匹配的鱼种</td></tr>',
+      '          </tbody>',
+      '        </table>',
+      '      </div>',
+      '      <div class="hint small" style="margin-top:10px">',
+      '        <b>为什么「没找到」也留在表里</b>：查不到就是查不到，留空比编一个数字有用 ——',
+      '        它明确告诉我们<b>哪几个种还需要补文献</b>。',
+      '      </div>',
+      '    </div>',
+      '  </template>',
       '</div>'
     ].join('\n')
   };
