@@ -33,22 +33,32 @@
         tick: 0,
         /* 先给安全默认值：mounted 之前模板已经渲染一次，
            dec 若是 null 会抛 "Cannot read properties of null" */
-        dec: { biomass_kg: null, feeding_intensity_cn: '—', suggest_kg_h: null,
+        dec: { biomass_kg: null, feeding_intensity_cn: '—', suggest_kg: null,
                water_temp: null, basis: [], times_per_day: 4 },
         records: [], inject: '', confirmOpen: false, lastSent: null, unsub: null,
         /* 2026-10-07 按组员反馈新增：
              mode   —— 自动/手动模式切换。自动=按系统算的规则投喂；手动=自己填量
-             amount —— 手工投喂量。null 表示"还没填过"，界面上回落显示建议值 */
-        mode: 'auto', amount: null, stopMsg: '', showSteps: false
+             amount —— 手工投喂量。null 表示"还没填过"，界面上回落显示建议值
+           2026-10-12 按反馈：speed —— 投喂速度 kg/min，自动/手动都能调；
+             时长 = 量 ÷ 速度 × 60 自动算。后端 suggest_kg_h 在前端映射为 suggest_kg。 */
+        mode: 'auto', amount: null, stopMsg: '', showSteps: false,
+        speed: 0.5
       };
     },
     computed: {
-      /* 实际要下发的投喂量：手动模式下用填的值，否则用系统的建议值 */
+      /* 实际要下发的投喂量(kg)：手动模式下用填的值，否则用系统的建议值 */
       targetKg: function () {
         if (this.mode === 'manual' && this.amount !== null && this.amount !== '') {
           return Number(this.amount);
         }
-        return this.dec.suggest_kg_h;
+        return this.dec.suggest_kg;
+      },
+      /* 2026-10-12：预计投喂时长(秒) = 量 ÷ 速度 × 60，自动算不手填 */
+      durationSec: function () {
+        var kg = Number(this.targetKg) || 0;
+        var sp = Number(this.speed) || 0;
+        if (kg <= 0 || sp <= 0) return 0;
+        return Math.round(kg / sp * 60);
       },
       /* 有没有"正在执行中"的任务 —— 决定记录表里那行的「停止」按钮显不显示 */
       runningCount: function () {
@@ -81,7 +91,10 @@
     methods: {
       load: function () {
         const self = this;
-        API.resolve(API.feedDecision(), function (d) { self.dec = d; });
+        API.resolve(API.feedDecision(), function (d) {
+          /* 后端字段仍叫 suggest_kg_h(单次建议量 kg)，前端统一映射为 suggest_kg（行2） */
+          self.dec = Object.assign({}, d, { suggest_kg: d.suggest_kg_h });
+        });
         API.resolve(API.feedRecords(), function (r) { self.records = r; });
       },
       statusCn: function (s) {
@@ -94,8 +107,9 @@
       confirm: function () {
         this.confirmOpen = false;
         const self = this;
+        /* 行2：命令载荷带速度；时长由量÷速度自动算 */
         const cmd = API.sendCommand('feeder_01', 'feed',
-          { amount_kg: this.targetKg, duration_s: 60 },
+          { amount_kg: this.targetKg, speed_kg_min: this.speed, duration_s: this.durationSec },
           this.inject ? { inject: this.inject } : {});
         this.lastSent = cmd;
         this.stopMsg = '';
@@ -120,7 +134,7 @@
         });
       },
       /* 手动模式：把输入框一键填成建议值 */
-      useSuggest: function () { this.amount = this.dec.suggest_kg_h; }
+      useSuggest: function () { this.amount = this.dec.suggest_kg; }
     },
     mounted: function () {
       this.load();
@@ -134,21 +148,20 @@
        切到手动模式时若还没填过，直接给建议值，值班人在此基础上改即可。 */
     watch: {
       mode: function (v) {
-        if (v === 'manual' && this.amount === null && this.dec && this.dec.suggest_kg_h != null) {
-          this.amount = this.dec.suggest_kg_h;
+        if (v === 'manual' && this.amount === null && this.dec && this.dec.suggest_kg != null) {
+          this.amount = this.dec.suggest_kg;
         }
       }
     },
     template: [
       '<div>',
       '  <page-head title="智能 · 自动投喂"',
-      '    desc="投喂决策归智能（裁定 1）；命令状态机是全项目卖点载体 —— <b>我知道设备到底动没动</b>"',
-      '    :sources="[\'simulated\',\'public\']" />',
+      '    desc="投喂决策归智能（裁定 1）；命令状态机是全项目卖点载体 —— <b>我知道设备到底动没动</b>" />',
       '',
       '  <div class="grid-stats">',
-      '    <stat-card name="当前生物量" field="total_biomass_kg" unit="kg" :value="dec.biomass_kg" source="public" />',
+      '    <stat-card name="当前总体重" field="total_biomass_kg" unit="kg" :value="dec.biomass_kg" source="public" />',
       '    <stat-card name="鱼群摄食强度" field="feeding_intensity" unit="" :value="dec.feeding_intensity_cn" source="public" />',
-      '    <stat-card name="建议投喂量" field="suggest_kg_h" unit="kg/h" :value="dec.suggest_kg_h" source="simulated" />',
+      '    <stat-card name="建议投喂量" field="suggest_kg" unit="kg" :value="dec.suggest_kg" source="simulated" />',
       '    <stat-card name="投饵机状态" field="device_state" unit="" :value="CN.deviceState(feeder.device_state)" source="simulated" />',
       '    <stat-card name="饵料剩余" field="feed_remain_pct" unit="%" :value="feeder.device_params && feeder.device_params.feed_remain_pct" source="simulated" />',
       '  </div>',
@@ -199,11 +212,21 @@
       '        <div v-if="mode === \'manual\'" class="row" style="gap:8px;align-items:center;margin-top:10px">',
       '          <span class="small muted">投喂量</span>',
       '          <input type="number" step="0.1" v-model.number="amount"',
-      '                 :placeholder="\'建议 \' + dec.suggest_kg_h"',
+      '                 :placeholder="\'建议 \' + dec.suggest_kg"',
       '                 style="width:110px;border:1.5px solid #2F5496;background:#EEF2FA" title="可修改投喂量">',
       '          <span class="small" style="color:#2F5496">可修改</span>',
-      '          <span class="small">kg/h</span>',
-      '          <button @click="useSuggest">用建议值（{{ dec.suggest_kg_h }}）</button>',
+      '          <span class="small">kg</span>',
+      '          <button @click="useSuggest">用建议值（{{ dec.suggest_kg }}）</button>',
+      '        </div>',
+      '        <!-- 投喂速度：自动/手动都能调；时长=量÷速度自动算（行2） -->',
+      '        <div class="row" style="gap:8px;align-items:center;margin-top:10px">',
+      '          <span class="small muted">投喂速度</span>',
+      '          <input type="number" step="0.1" min="0.1" v-model.number="speed"',
+      '                 style="width:100px;border:1.5px solid #2F5496;background:#EEF2FA" title="可修改投喂速度">',
+      '          <span class="small" style="color:#2F5496">可修改</span>',
+      '          <span class="small">kg/min</span>',
+      '          <span class="small muted">（默认值待按实际投饵机标定）</span>',
+      '          <span class="small" style="margin-left:12px">预计时长 <b>{{ durationSec }}</b> 秒</span>',
       '        </div>',
       '        <div class="hint small" style="margin-top:10px">',
       '          <b>系统给的是建议，不是命令。</b>自动模式下按建议值投喂，',
@@ -245,8 +268,11 @@
       '          <li v-for="(b, i) in dec.basis" :key="i">{{ b }}</li>',
       '        </ul>',
       '        <div class="hint" style="margin-top:10px">',
-      '          投喂量<b>由智能板块计算</b>，鱼类只出观测类指标 —— 裁定 1。',
-      '          鱼类不再提供 <code>suggest_feed_kg_h</code>。',
+      '          投喂量<b>由智能板块计算</b>，鱼类板块只出观测数据、不重复出决策值 —— 裁定 1。',
+      '        </div>',
+      '        <div class="small muted" style="margin-top:6px">',
+      '          <b>阈值口径（行5）</b>：本板块不持有告警阈值 —— 水温告警线归环境板块、锚泊张力归结构板块；',
+      '          日投饲率 1.2% / 分 4 次 / 时段折算系数归智能板块（裁定 1）。',
       '        </div>',
       '      </div>',
       '',
@@ -266,7 +292,7 @@
       '',
       '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
       '    <span class="small muted">{{ mode === \'auto\' ? \'自动模式\' : \'手动模式\' }}</span>',
-'    <button class="primary" @click="ask">下发投喂命令（{{ targetKg }} kg/h）</button>',
+'    <button class="primary" @click="ask">下发投喂命令（{{ targetKg }} kg / {{ durationSec }} s）</button>',
       '    <!-- 就地反馈：命令状态直接显示在按钮旁边，不用滚回页首看状态机 -->',
       '    <span v-if="latest" class="small">',
       '      最近命令 <span class="mono">{{ latest.command_id }}</span> ·',
@@ -287,9 +313,10 @@
       '      <div class="card-title">确认下发投喂命令？</div>',
       '      <div class="kv">',
       '        <span class="k">设备</span><span class="mono">feeder_01</span>',
-      '        <span class="k">投喂量</span><span><b>{{ targetKg }}</b> kg/h',
+      '        <span class="k">投喂量</span><span><b>{{ targetKg }}</b> kg',
       '          <span class="small muted">（{{ mode === \'auto\' ? \'系统建议值\' : \'手动填写\' }}）</span></span>',
-      '        <span class="k">时长</span><span>60 s</span>',
+      '        <span class="k">速度</span><span>{{ speed }} kg/min</span>',
+      '        <span class="k">预计时长</span><span>{{ durationSec }} s（量 ÷ 速度自动算）</span>',
       '        <span class="k">超时</span><span>5000 ms，最多重试 3 次</span>',
       '      </div>',
       '      <div class="row" style="justify-content:flex-end;margin-top:14px">',
@@ -372,8 +399,7 @@
     template: [
       '<div>',
       '  <page-head title="智能 · 智能补光"',
-      '    desc="当前光照 <code>light_intensity</code>（环境提供，lux）；调光档位 <code>light_dimming_pct</code>（%，裁定 N2）"',
-      '    :sources="[\'simulated\']" />',
+      '    desc="当前光照 <code>light_intensity</code>（环境提供，lux）；调光档位 <code>light_dimming_pct</code>（%，裁定 N2）" />',
       '',
       '  <div class="hint" style="margin-bottom:12px">',
       '    ⚠️ <b>本期只做手工模式</b>。补光依据（促生长 / 调控繁殖 / 抑制藻类）<b>查不到出处</b>，',
@@ -543,8 +569,7 @@
     template: [
       '<div>',
       '  <page-head title="设备状态"',
-      '    desc="智能板块涉及的养殖设备实时状态 —— 数据走 API.devices()，每 3 秒自动刷新"',
-      '    :sources="[\'simulated\']" />',
+      '    desc="智能板块涉及的养殖设备实时状态 —— 数据走 API.devices()，每 3 秒自动刷新" />',
       '',
       '  <div class="hint" style="margin-bottom:12px">',
       '    <b>{{ onlineCount }} / {{ devices.length }}</b> 台设备在线。',
@@ -612,7 +637,8 @@
       targetText: function (c) {
         const p = c.params || {};
         if (c.command_type === 'feed') {
-          return (p.amount_kg != null ? p.amount_kg + ' kg/h' : '—') +
+          return (p.amount_kg != null ? p.amount_kg + ' kg' : '—') +
+                 (p.speed_kg_min != null ? ' · ' + p.speed_kg_min + ' kg/min' : '') +
                  (p.duration_s != null ? ' · ' + p.duration_s + ' s' : '');
         }
         if (c.command_type === 'light') {
@@ -636,8 +662,7 @@
     template: [
       '<div>',
       '  <page-head title="指令日志"',
-      '    desc="智能板块全部指令的下发记录与全链路状态 —— 数据走 API.commands()，每 3 秒自动刷新"',
-      '    :sources="[\'simulated\']" />',
+      '    desc="智能板块全部指令的下发记录与全链路状态 —— 数据走 API.commands()，每 3 秒自动刷新" />',
       '',
       '  <div class="card">',
       '    <div class="card-title">全部指令（{{ commands.length }} 条）',
@@ -690,6 +715,199 @@
       '  <div class="hint small" style="margin-top:12px">',
       '    <b>为什么有「失败原因」这一列</b>：命令发出去没回执，必须报警，绝不许悄悄过去（R-CMD-01）。',
       '    失败的命令可以点「全链路」看它走到哪一步才失败、重试了几次。',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
+
+  /* ============================================================
+     /ai/crane —— 起重设备页（2026-10-12 按反馈行4新增）
+     查证依据：中集来福士（CIMC Raffles）官网深远海渔业产品页载明，
+       经海001/002/003/006、长鲸一号等大型坐底式网箱（68×68m）
+       每座配「网衣绞车（提网绞车）」10–20 台，平台另带克令吊。
+       出处：https://www.cimc-raffles.com/list-17-1.html
+     本页只做命令闭环：提升/下放/回转/停止 → 命令状态机四态 →
+       超时重试 → 失败升级报警（R-CMD-01）。
+     设备实时状态未接入（API.devices 无 crane_01），按"不编数据"原则显示 —。
+     ============================================================ */
+  PAGES['/ai/crane'] = {
+    data: function () {
+      return {
+        tick: 0, pendingAction: '', inject: '', confirmOpen: false,
+        showSteps: false, unsub: null, sendMsg: ''
+      };
+    },
+    computed: {
+      commands: function () {
+        this.tick;
+        return API.commands().filter(function (c) { return c.command_type === 'crane'; });
+      },
+      latest: function () {
+        this.tick;
+        return this.commands.length ? this.commands[0] : null;
+      },
+      steps: function () {
+        this.tick;
+        const c = this.latest;
+        if (!c) return [];
+        return c.history.map(function (h) {
+          return { t: new Date(h.ts).toLocaleTimeString('zh-CN', { hour12: false }), s: h.status };
+        });
+      },
+      badEnd: function () {
+        this.tick;
+        const c = this.latest;
+        return !!(c && ['failed', 'escalated'].indexOf(c.command_status) >= 0);
+      }
+    },
+    methods: {
+      load: function () { this.tick++; },
+      statusCn: function (s) {
+        return { created: '已创建', sent: '已发出', acknowledged: '已收到回执', success: '成功',
+                 timeout: '超时', retrying: '重试中', failed: '失败', escalated: '升级报警',
+                 cancelled: '已停止' }[s] || s;
+      },
+      actionCn: function (a) {
+        return { up: '提升（提网）', down: '下放（放网）', rotate: '回转', stop: '停止' }[a] || a;
+      },
+      cmdTime: function (c) {
+        const ts = c.created_ts || (c.history && c.history.length ? c.history[0].ts : null);
+        return ts ? new Date(ts).toLocaleString('zh-CN', { hour12: false }) : '—';
+      },
+      ask: function (a) { this.pendingAction = a; this.confirmOpen = true; },
+      cancel: function () { this.confirmOpen = false; },
+      confirm: function () {
+        this.confirmOpen = false;
+        const self = this;
+        this.sendMsg = '';
+        API.sendCommand('crane_01', 'crane',
+          { action: this.pendingAction },
+          this.inject ? { inject: this.inject } : {})
+          .then(function (cmd) {
+            if (cmd && cmd.command_id) {
+              self.lastSent = cmd;
+              self.load();
+            } else {
+              /* post() 不检查 HTTP 状态码，404 时 resolve 错误体。
+                 后端设备表暂无 crane_01（server.py PLATFORM.devices）会拒绝。
+                 按"不静默失败"原则如实提示；PR 里请队长补这台设备。 */
+              self.sendMsg = '命令未生效：后端返回「' +
+                ((cmd && (cmd.msg || cmd.error || cmd.detail || cmd.message)) || '未知错误') +
+                '」——crane_01 尚未在后端设备表注册，需队长在 PLATFORM.devices 补一行起重设备后才能走状态机。';
+            }
+          })
+          .catch(function (e) {
+            self.sendMsg = '命令未生效：' + (e && e.message ? e.message : '网络错误');
+          });
+      }
+    },
+    mounted: function () {
+      this.load();
+      this.unsub = API.bind(this, this.load);
+    },
+    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    template: [
+      '<div>',
+      '  <page-head title="智能 · 起重设备"',
+      '    desc="网衣绞车 / 克令吊命令闭环 —— 提升 / 下放 / 回转 / 停止，走命令状态机四态，超时重试、失败升级报警" />',
+      '',
+      '  <div class="hint" style="margin-bottom:12px">',
+      '    <b>查证依据（可追溯）</b>：中集来福士（CIMC Raffles）官网深远海渔业产品页载明，',
+      '    经海 001/002/003/006、长鲸一号等大型坐底式网箱（68×68 m）每座配',
+      '    <b>网衣绞车（提网绞车）10–20 台</b>，平台另带克令吊。',
+      '    <div class="small" style="margin-top:4px">出处：',
+      '      <a href="https://www.cimc-raffles.com/list-17-1.html" target="_blank">cimc-raffles.com · 深远海渔业产品页</a>',
+      '    </div>',
+      '    <div class="small muted" style="margin-top:6px">本页<b>只做命令闭环</b>：设备实时状态未接入（API.devices 无此设备），按"不编数据"原则状态显示 —。</div>',
+      '  </div>',
+      '',
+      '  <div class="grid-stats">',
+      '    <stat-card name="起重设备" field="device" unit="" value="网衣绞车/克令吊" source="public" />',
+      '    <stat-card name="设备在线" field="online" unit="" value="—" source="public" />',
+      '    <stat-card name="运行状态" field="run_state" unit="" value="—" source="public" />',
+      '    <stat-card name="累计命令" field="cmd_count" unit="条" :value="commands.length" source="simulated" />',
+      '  </div>',
+      '',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title">动作下发（先选动作 → 二次确认 → 看状态机）</div>',
+      '    <div class="row" style="gap:10px;flex-wrap:wrap">',
+      '      <button @click="ask(\'up\')">提升（提网）</button>',
+      '      <button @click="ask(\'down\')">下放（放网）</button>',
+      '      <button @click="ask(\'rotate\')">回转</button>',
+      '      <button @click="ask(\'stop\')">停止</button>',
+      '    </div>',
+      '    <div v-if="sendMsg" class="hint small" style="margin-top:10px;background:#FEF2F2;border-color:#FECACA;color:#991B1B">{{ sendMsg }}</div>',
+      '  </div>',
+      '',
+      '  <div class="split" style="margin-top:12px">',
+      '    <div>',
+      '      <div class="card">',
+      '        <div class="card-title">命令状态机</div>',
+      '        <div v-if="!latest" class="todo">还没有下发过起重命令</div>',
+      '        <div v-else>',
+      '          <command-flow :status="latest.command_status" />',
+      '          <div class="kv" style="margin-top:12px">',
+      '            <span class="k">命令号</span><span class="mono">{{ latest.command_id }}</span>',
+      '            <span class="k">动作</span><span>{{ actionCn(latest.params && latest.params.action) }}</span>',
+      '            <span class="k">超时 / 重试</span><span>{{ latest.timeout_ms }} ms / 最多 {{ latest.max_retry }} 次</span>',
+      '            <span class="k">失败原因</span>',
+      '            <span :style="{ color: latest.fail_reason ? \'#991B1B\' : \'#6B7280\' }">{{ latest.fail_reason || \'—\' }}</span>',
+      '          </div>',
+      '          <div v-if="badEnd" class="hint" style="margin-top:10px;background:#FEF2F2;border-color:#FECACA">',
+      '            <b>命令失败已升级报警</b> —— 已进告警中心（不允许静默失败）。',
+      '            <a href="#/alarm">去告警中心看 →</a>',
+      '          </div>',
+      '          <div class="small muted" style="margin-top:10px;cursor:pointer" @click="showSteps = !showSteps">',
+      '            状态变更时间线 {{ showSteps ? \'▾\' : \'▸\' }}</div>',
+      '          <div v-if="showSteps" class="events">',
+      '            <div v-for="(s, i) in steps" :key="i" class="row-item" style="cursor:default">',
+      '              <span class="t">{{ s.t }}</span><span class="d">{{ statusCn(s.s) }}</span>',
+      '            </div>',
+      '          </div>',
+      '        </div>',
+      '      </div>',
+      '',
+      '      <div class="card">',
+      '        <div class="card-title">造故障（验证闭环用）</div>',
+      '        <div class="row" style="gap:8px">',
+      '          <label class="small"><input type="radio" value="" v-model="inject"> 正常</label>',
+      '          <label class="small"><input type="radio" value="timeout" v-model="inject"> 命令超时</label>',
+      '          <label class="small"><input type="radio" value="offline" v-model="inject"> 设备离线</label>',
+      '        </div>',
+      '      </div>',
+      '    </div>',
+      '',
+      '    <div>',
+      '      <div class="card">',
+      '        <div class="card-title">起重命令历史（{{ commands.length }} 条）</div>',
+      '        <div v-if="!commands.length" class="todo">暂无记录</div>',
+      '        <div v-else class="events" style="max-height:420px;overflow:auto">',
+      '          <div v-for="c in commands" :key="c.command_id" class="row-item" style="cursor:default">',
+      '            <span class="t">{{ cmdTime(c) }}</span>',
+      '            <span class="d">',
+      '              <b>{{ actionCn(c.params && c.params.action) }}</b>',
+      '              · <span class="mono small">{{ c.command_id }}</span>',
+      '              · <span :style="{ color: c.command_status === \'success\' ? \'#166534\' : (c.fail_reason ? \'#991B1B\' : \'#6B7280\') }">{{ statusCn(c.command_status) }}</span>',
+      '            </span>',
+      '          </div>',
+      '        </div>',
+      '      </div>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <div v-if="confirmOpen" style="position:fixed;inset:0;background:rgba(17,24,39,.45);display:flex;align-items:center;justify-content:center;z-index:50">',
+      '    <div class="card" style="width:380px">',
+      '      <div class="card-title">确认下发起重命令？</div>',
+      '      <div class="kv">',
+      '        <span class="k">设备</span><span class="mono">crane_01（网衣绞车/克令吊）</span>',
+      '        <span class="k">动作</span><span>{{ actionCn(pendingAction) }}</span>',
+      '        <span class="k">超时</span><span>5000 ms，最多重试 3 次</span>',
+      '      </div>',
+      '      <div class="row" style="justify-content:flex-end;margin-top:14px">',
+      '        <button @click="cancel">取消</button>',
+      '        <button class="primary" @click="confirm">确认下发</button>',
+      '      </div>',
+      '    </div>',
       '  </div>',
       '</div>'
     ].join('\n')
