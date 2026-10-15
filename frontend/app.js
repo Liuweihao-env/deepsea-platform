@@ -99,12 +99,28 @@
   };
 
   /* ---------- 顶部大板块切换 ---------- */
-  const TABS = [
+  /* ---------- 板块入口的告警小红点（老师意见 2026-10-09 第 2 条）----------
+   老师原话：「挂鱼类/环境/结构安全/智能四入口；有未解除告警就亮（**不分等级**）；
+               **告警解除才消**（点进去不消）；**纯红点**；管理与跨板块不挂」
+
+   /api/alarms 里**没有** board 字段（这点我核过），所以由 alarm_type 映射到板块。
+   低电量 / 供电异常现在归「管理」，按老师要求**管理与跨板块不挂红点**，
+   所以这两个类型**不点亮任何点** —— 这是刻意的，不是漏了。 */
+const ALARM_BOARD = {
+  /* 鱼类 */  feeding: 'fish', feeding_abnormal: 'fish', fish_anomaly: 'fish', density: 'fish',
+  /* 环境 */  water_temp: 'env', dissolved_oxygen: 'env', salinity: 'env', ph: 'env', light: 'env',
+  /* 结构 */  tension: 'struct', tilt: 'struct', net_damage: 'struct', deformation: 'struct',
+  /* 智能 */  command: 'ai', command_timeout: 'ai', feeder: 'ai', light_device: 'ai', device_offline: 'ai'
+};
+/* 能挂红点的四个板块 —— 总览/管理不挂 */
+const DOT_BOARDS = ['fish', 'env', 'struct', 'ai'];
+
+const TABS = [
     { key: 'overview', label: '总览', first: '/overview' },
-    { key: 'fish',     label: '鱼类', first: '/fish/monitor' },
-    { key: 'env',      label: '环境', first: '/env/sea' },
-    { key: 'struct',   label: '结构安全', first: '/struct/overview' },
-    { key: 'ai',       label: '智能', first: '/ai/feed' },
+    { key: 'fish',     label: '鱼类', first: '/fish/monitor' , board: 'fish' },
+    { key: 'env',      label: '环境', first: '/env/sea' , board: 'env' },
+    { key: 'struct',   label: '结构安全', first: '/struct/overview' , board: 'struct' },
+    { key: 'ai',       label: '智能', first: '/ai/feed' , board: 'ai' },
     /* 🔴 2026-10-15 队长删：拆掉「跨板块」（老师第 3 条）。告警/处置已挪进「管理」，
        追溯查询删除，参数配置拆解。侧边菜单里的 MENU 也同步删了那一组。 */
     /* 管理板块 —— 养殖生产视角（场长用）。
@@ -114,9 +130,29 @@
 
   const App = {
     data: function () {
-      return { path: '/overview', menu: MENU, tabs: TABS, err: null };
+      /* tick：给 boardDots 建立响应式依赖用。
+         ⚠️ 这是项目里踩过好几次的坑 —— API.alarms() 返回的是**普通数组**，
+            「没有响应式依赖的 computed」会被 Vue **永久缓存**：红点第一次算完
+            就再也不更新，告警解除了点也不会灭。
+         所以这里订阅 API 变化 → tick 自增 → boardDots 里读一下 this.tick 逼它重算。 */
+      return { path: '/overview', menu: MENU, tabs: TABS, err: null, tick: 0 };
     },
     computed: {
+      /* 每个板块「未解除」的告警条数 —— 顶部红点亮不亮看它。
+         「未解除」= alarm_status !== 'recovered'（active 与 acknowledged 都算）。
+         ⚠️ 点进去**不消** —— 它读的是告警的实际状态，不是「已读/未读」。 */
+      boardDots: function () {
+        this.tick;   /* ← 建立响应式依赖，否则永久缓存（见 data 里的说明） */
+        const out = {};
+        DOT_BOARDS.forEach(function (b) { out[b] = 0; });
+        (API.alarms() || []).forEach(function (a) {
+          if (a.alarm_status === 'recovered') return;      // 已解除 → 不点亮
+          const b = ALARM_BOARD[a.alarm_type];
+          if (b && out[b] !== undefined) out[b] += 1;
+        });
+        return out;
+      },
+
       /* 当前一级板块 */
       tabKey: function () {
         const p = this.path;
@@ -172,6 +208,12 @@
     mounted: function () {
       const self = this;
       Router.onChange(function (p) { self.path = p; });
+      /* 订阅 API 变化 → tick 自增 → boardDots 重算。
+         红点跟着**告警的实际状态**走：告警解除（recovered）了，点自动灭；
+         点进去是**不会消**的（老师要求）。 */
+      this.unsub = (window.API && window.API.subscribe)
+        ? window.API.subscribe(function () { self.tick++; })
+        : null;
       Router.start();
       window.addEventListener('error', function (e) { self.err = e.message; });
     },
@@ -181,8 +223,16 @@
       '  <div class="topbar">',
       '    <div class="brand">深远海养殖与海洋牧场智能管控平台</div>',
       '    <div class="tabs">',
-      '      <div v-for="t in tabs" :key="t.key" class="tab" :class="{ active: tabKey === t.key }"',
-      '           @click="tabPick(t)">{{ t.label }}</div>',
+      '      <div v-for="t in tabs" :key="t.key" class="tab" ',
+      '           :class="{ active: tabKey === t.key }"',
+      '           @click="tabPick(t)">',
+      '        {{ t.label }}',
+      '        <!-- 板块入口告警小红点（老师第 2 条）：纯红点、不分等级、',
+      '             有未解除告警就亮，点进去不消、告警解除才消。',
+      '             管理/总览不挂 —— t.board 为空就不画。 -->',
+      '        <span v-if="t.board && boardDots[t.board]" class="nav-dot"',
+      '              title="本板块有未解除告警"></span>',
+      '      </div>',
       '    </div>',
       '    <div class="spacer"></div>',
       '    ',

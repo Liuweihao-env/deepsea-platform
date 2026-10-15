@@ -1470,7 +1470,7 @@
       '    <div class="small" style="margin-top:6px">',
       ' {{ topAlarm.hit.trigger_field }} = <b>{{ topAlarm.hit.trigger_value }}</b>',
       '      （阈值 {{ topAlarm.hit.trigger_threshold }}）· 时间 {{ time(topAlarm.ts) }}',
-      '      · <a href="#/trace">去追溯查询看完整链路 →</a>',
+      '      · <a href="#/mgmt/alarm">去追溯查询看完整链路 →</a>',
       '    </div>',
       '  </div>',
       '',

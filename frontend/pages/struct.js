@@ -559,7 +559,7 @@
       '          快照：<span class="mono">{{ JSON.stringify({anchor_tension: picked.row.anchor_tension, tension_pct: picked.row.tension_pct, tilt_roll: picked.row.tilt_roll, tilt_pitch: picked.row.tilt_pitch, wave_height: picked.envRow ? picked.envRow.wave_height : null, wind_speed: picked.envRow ? picked.envRow.wind_speed : null, current_speed: picked.envRow ? picked.envRow.current_speed : null}) }}</span><br>',
       '          建议：{{ picked.handling_advice }}',
       '        </div>',
-      '        <div style="margin-top:8px"><a href="#/trace"><button>查看触发依据（追溯） →</button></a></div>',
+      '        <div style="margin-top:8px"><a href="#/mgmt/alarm"><button>查看触发依据（追溯） →</button></a></div>',
       '      </div>',
       '    </div>',
       '  </div>',
@@ -578,8 +578,8 @@
       '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
       '    <time-range v-model="minutes" />',
       '    <span style="flex:1"></span>',
-      '    <a href="#/trace"><button>去追溯查询</button></a>',
-      '    <a href="#/alarm"><button>去告警中心</button></a>',
+      '    <a href="#/mgmt/alarm"><button>去追溯查询</button></a>',
+      '    <a href="#/mgmt/alarm"><button>去告警中心</button></a>',
       '  </div>',
       '</div>'
     ].join('\n')
@@ -1036,7 +1036,7 @@
     beforeUnmount: function () { if (this.unsub) { this.unsub(); this.unsub = null; } },
     template: [
       '<div class="struct-page">',
-      '  <page-head title="结构安全 · 规则配置" desc="查看当前结构风险判断规则及其依据。下表为只读说明，阈值修改仍在参数配置页。" />',
+      '  <page-head title="结构安全 · 规则配置" desc="查看当前结构风险判断规则及其依据。下表为只读说明；阈值已在下方「阈值配置（结构安全）」里列全（原「参数配置」页已按老师意见拆解）。" />',
       '  <div class="hint" style="margin-bottom:12px">网衣目前按最近一小时真实拉力建立试运行线，正式风险或破损状态字段优先；试运行线只表示拉力相对升高，不证明网衣破损。样本不足时仍显示“待判定”。储能低电量规则保留在能源保障页，不参与结构总览和灾害预警的风险等级。</div>',
       '  <div class="card">',
       '    <div class="card-title">当前判断规则</div>',

@@ -114,7 +114,7 @@
       '          <span class="d"><span class="mono">{{ a.alarm_event_id }}</span> {{ a.rule_name }}</span>',
       '        </div>',
       '      </div>',
-      '      <div style="margin-top:10px"><a href="#/alarm"><button>去告警中心 →</button></a></div>',
+      '      <div style="margin-top:10px"><a href="#/mgmt/alarm"><button>去告警中心 →</button></a></div>',
       '    </div>',
       '  </div>',
       '',

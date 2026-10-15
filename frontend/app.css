@@ -323,3 +323,22 @@ select, input[type=text], input[type=datetime-local] {
   color: #ff6b6b; font-size: 15px; font-weight: 700; letter-spacing: 2px;
 }
 .cam-no-sub { color: #8fa0b8; font-size: 11px; }
+
+
+/* ---------- 板块入口告警小红点（老师意见 2026-10-09 第 2 条）----------
+   微信那种右上角小圆点：**纯红点、不带数字**（老师要求「纯红点」）。
+   ⚠️ 类名用 .nav-dot，与平台上原有的 .dot（告警等级色点）和 ECharts 的
+      markPoint（曲线上的异常数据点）区分开 —— 这是收件箱 Q3
+      「红点命名怎么和现有红点区分」的答案，三个名字互不重叠。 */
+.tab { position: relative; }
+.nav-dot {
+  position: absolute;
+  top: 6px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #E53935;
+  box-shadow: 0 0 0 2px rgba(229, 57, 53, .18);
+  pointer-events: none;
+}
