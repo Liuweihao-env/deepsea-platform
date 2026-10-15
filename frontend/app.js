@@ -32,8 +32,15 @@
     { group: '环境', owner: '刘伟豪', items: [
       { path: '/env/sea',    label: '海况', ready: true },
       { path: '/env/water',  label: '水质', ready: true },
-      { path: '/env/records',label: '原始数据明细', ready: false },
-      { path: '/env/simulator', label: '环境仿真控制', ready: false }
+      /* 🔴 2026-10-15 队长删：原「原始数据明细 /env/records」与
+         「环境仿真控制 /env/simulator」两个菜单项**已移除**。
+
+         这不是临时决定 —— 是**刘伟豪在 2026-10-08 的 PR 说明里提的「问题四」**：
+         那两页 env.js 从未注册过（从未实现），功能已并入「海况 / 水质」两页
+         （原始明细在页面底部就有，仿真控制就是页面上的造故障入口）。
+         他当时注明「删除导航项需要改 app.js，属越权范围，本分支未改动」，请队长删。
+         **这正是约定该有的样子** —— 公共骨架文件归队长改，组员提出来就行。
+         完整记录见 backend/api/env.py 的 2026-10-08 追加说明第 2 条。 */
     ]},
     { group: '结构安全', owner: '邓宇涵', items: [
       { path: '/struct/overview', label: '结构安全总览', ready: false },

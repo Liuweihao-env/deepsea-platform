@@ -65,6 +65,11 @@ backend/api/env.py —— 环境板块后端扩展（供 server.py 挂载，不�
      属越权范围，本分支未改动。若队长确认删除，请移除 app.js 中
      { path: '/env/records', label: '原始数据明细', ready: false } 与
      { path: '/env/simulator', label: '环境仿真控制', ready: false } 两项。
+
+      ✅ **2026-10-15 队长已处理**：这两项已从 app.js 的 MENU 中移除，
+         理由是「功能已并入海况/水质两页，从未实现，留着只会让人以为有这页」。
+         **你这个判断是对的，处理方式也对** —— 公共骨架文件（app.js）不归你改，
+         提出来交给队长删，正是约定该有的样子。
 """
 
 import json
