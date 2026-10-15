@@ -33,22 +33,32 @@
         tick: 0,
         /* 先给安全默认值：mounted 之前模板已经渲染一次，
            dec 若是 null 会抛 "Cannot read properties of null" */
-        dec: { biomass_kg: null, feeding_intensity_cn: '—', suggest_kg_h: null,
+        dec: { biomass_kg: null, feeding_intensity_cn: '—', suggest_kg: null,
                water_temp: null, basis: [], times_per_day: 4 },
         records: [], inject: '', confirmOpen: false, lastSent: null, unsub: null,
         /* 2026-10-07 按组员反馈新增：
              mode   —— 自动/手动模式切换。自动=按系统算的规则投喂；手动=自己填量
-             amount —— 手工投喂量。null 表示"还没填过"，界面上回落显示建议值 */
-        mode: 'auto', amount: null, stopMsg: '', showSteps: false
+             amount —— 手工投喂量。null 表示"还没填过"，界面上回落显示建议值
+           2026-10-12 按反馈：speed —— 投喂速度 kg/min，自动/手动都能调；
+             时长 = 量 ÷ 速度 × 60 自动算。后端 suggest_kg_h 在前端映射为 suggest_kg。 */
+        mode: 'auto', amount: null, stopMsg: '', showSteps: false,
+        speed: 0.5
       };
     },
     computed: {
-      /* 实际要下发的投喂量：手动模式下用填的值，否则用系统的建议值 */
+      /* 实际要下发的投喂量(kg)：手动模式下用填的值，否则用系统的建议值 */
       targetKg: function () {
         if (this.mode === 'manual' && this.amount !== null && this.amount !== '') {
           return Number(this.amount);
         }
-        return this.dec.suggest_kg_h;
+        return this.dec.suggest_kg;
+      },
+      /* 2026-10-12：预计投喂时长(秒) = 量 ÷ 速度 × 60，自动算不手填 */
+      durationSec: function () {
+        var kg = Number(this.targetKg) || 0;
+        var sp = Number(this.speed) || 0;
+        if (kg <= 0 || sp <= 0) return 0;
+        return Math.round(kg / sp * 60);
       },
       /* 有没有"正在执行中"的任务 —— 决定记录表里那行的「停止」按钮显不显示 */
       runningCount: function () {
@@ -81,7 +91,10 @@
     methods: {
       load: function () {
         const self = this;
-        API.resolve(API.feedDecision(), function (d) { self.dec = d; });
+        API.resolve(API.feedDecision(), function (d) {
+          /* 后端字段仍叫 suggest_kg_h(单次建议量 kg)，前端统一映射为 suggest_kg（行2） */
+          self.dec = Object.assign({}, d, { suggest_kg: d.suggest_kg_h });
+        });
         API.resolve(API.feedRecords(), function (r) { self.records = r; });
       },
       statusCn: function (s) {
@@ -94,8 +107,9 @@
       confirm: function () {
         this.confirmOpen = false;
         const self = this;
+        /* 行2：命令载荷带速度；时长由量÷速度自动算 */
         const cmd = API.sendCommand('feeder_01', 'feed',
-          { amount_kg: this.targetKg, duration_s: 60 },
+          { amount_kg: this.targetKg, speed_kg_min: this.speed, duration_s: this.durationSec },
           this.inject ? { inject: this.inject } : {});
         this.lastSent = cmd;
         this.stopMsg = '';
@@ -120,7 +134,7 @@
         });
       },
       /* 手动模式：把输入框一键填成建议值 */
-      useSuggest: function () { this.amount = this.dec.suggest_kg_h; }
+      useSuggest: function () { this.amount = this.dec.suggest_kg; }
     },
     mounted: function () {
       this.load();
@@ -134,8 +148,8 @@
        切到手动模式时若还没填过，直接给建议值，值班人在此基础上改即可。 */
     watch: {
       mode: function (v) {
-        if (v === 'manual' && this.amount === null && this.dec && this.dec.suggest_kg_h != null) {
-          this.amount = this.dec.suggest_kg_h;
+        if (v === 'manual' && this.amount === null && this.dec && this.dec.suggest_kg != null) {
+          this.amount = this.dec.suggest_kg;
         }
       }
     },
@@ -148,7 +162,7 @@
       '  <div class="grid-stats">',
       '    <stat-card name="当前生物量" field="total_biomass_kg" unit="kg" :value="dec.biomass_kg" source="public" />',
       '    <stat-card name="鱼群摄食强度" field="feeding_intensity" unit="" :value="dec.feeding_intensity_cn" source="public" />',
-      '    <stat-card name="建议投喂量" field="suggest_kg_h" unit="kg/h" :value="dec.suggest_kg_h" source="simulated" />',
+      '    <stat-card name="建议投喂量" field="suggest_kg" unit="kg" :value="dec.suggest_kg" source="simulated" />',
       '    <stat-card name="投饵机状态" field="device_state" unit="" :value="CN.deviceState(feeder.device_state)" source="simulated" />',
       '    <stat-card name="饵料剩余" field="feed_remain_pct" unit="%" :value="feeder.device_params && feeder.device_params.feed_remain_pct" source="simulated" />',
       '  </div>',
@@ -199,11 +213,21 @@
       '        <div v-if="mode === \'manual\'" class="row" style="gap:8px;align-items:center;margin-top:10px">',
       '          <span class="small muted">投喂量</span>',
       '          <input type="number" step="0.1" v-model.number="amount"',
-      '                 :placeholder="\'建议 \' + dec.suggest_kg_h"',
+      '                 :placeholder="\'建议 \' + dec.suggest_kg"',
       '                 style="width:110px;border:1.5px solid #2F5496;background:#EEF2FA" title="可修改投喂量">',
       '          <span class="small" style="color:#2F5496">可修改</span>',
-      '          <span class="small">kg/h</span>',
-      '          <button @click="useSuggest">用建议值（{{ dec.suggest_kg_h }}）</button>',
+      '          <span class="small">kg</span>',
+      '          <button @click="useSuggest">用建议值（{{ dec.suggest_kg }}）</button>',
+      '        </div>',
+      '        <!-- 投喂速度：自动/手动都能调；时长=量÷速度自动算（行2） -->',
+      '        <div class="row" style="gap:8px;align-items:center;margin-top:10px">',
+      '          <span class="small muted">投喂速度</span>',
+      '          <input type="number" step="0.1" min="0.1" v-model.number="speed"',
+      '                 style="width:100px;border:1.5px solid #2F5496;background:#EEF2FA" title="可修改投喂速度">',
+      '          <span class="small" style="color:#2F5496">可修改</span>',
+      '          <span class="small">kg/min</span>',
+      '          <span class="small muted">（默认值待按实际投饵机标定）</span>',
+      '          <span class="small" style="margin-left:12px">预计时长 <b>{{ durationSec }}</b> 秒</span>',
       '        </div>',
       '        <div class="hint small" style="margin-top:10px">',
       '          <b>系统给的是建议，不是命令。</b>自动模式下按建议值投喂，',
@@ -266,7 +290,7 @@
       '',
       '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
       '    <span class="small muted">{{ mode === \'auto\' ? \'自动模式\' : \'手动模式\' }}</span>',
-'    <button class="primary" @click="ask">下发投喂命令（{{ targetKg }} kg/h）</button>',
+'    <button class="primary" @click="ask">下发投喂命令（{{ targetKg }} kg / {{ durationSec }} s）</button>',
       '    <!-- 就地反馈：命令状态直接显示在按钮旁边，不用滚回页首看状态机 -->',
       '    <span v-if="latest" class="small">',
       '      最近命令 <span class="mono">{{ latest.command_id }}</span> ·',
@@ -287,9 +311,10 @@
       '      <div class="card-title">确认下发投喂命令？</div>',
       '      <div class="kv">',
       '        <span class="k">设备</span><span class="mono">feeder_01</span>',
-      '        <span class="k">投喂量</span><span><b>{{ targetKg }}</b> kg/h',
+      '        <span class="k">投喂量</span><span><b>{{ targetKg }}</b> kg',
       '          <span class="small muted">（{{ mode === \'auto\' ? \'系统建议值\' : \'手动填写\' }}）</span></span>',
-      '        <span class="k">时长</span><span>60 s</span>',
+      '        <span class="k">速度</span><span>{{ speed }} kg/min</span>',
+      '        <span class="k">预计时长</span><span>{{ durationSec }} s（量 ÷ 速度自动算）</span>',
       '        <span class="k">超时</span><span>5000 ms，最多重试 3 次</span>',
       '      </div>',
       '      <div class="row" style="justify-content:flex-end;margin-top:14px">',
@@ -612,7 +637,8 @@
       targetText: function (c) {
         const p = c.params || {};
         if (c.command_type === 'feed') {
-          return (p.amount_kg != null ? p.amount_kg + ' kg/h' : '—') +
+          return (p.amount_kg != null ? p.amount_kg + ' kg' : '—') +
+                 (p.speed_kg_min != null ? ' · ' + p.speed_kg_min + ' kg/min' : '') +
                  (p.duration_s != null ? ' · ' + p.duration_s + ' s' : '');
         }
         if (c.command_type === 'light') {
