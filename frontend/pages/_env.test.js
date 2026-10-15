@@ -837,6 +837,50 @@ section('问题二：时序图异常点只标圆点、不显示数字');
     '风速异常点只标红色圆点（≥17.2 八级大风）');
 }
 
+section('问题一~三（新）：海况时序四指标 / 指标框上移 / 水质页视频位');
+{
+  /* 问题一：海况时序图显示四个指标（浪高/风速/海水流速/环境气温），不能只有两个 */
+  const seaChartSrc = sea.methods.renderChart.toString();
+  assert(seaChartSrc.indexOf("name: '浪高（m）'") >= 0 && seaChartSrc.indexOf("name: '风速（m/s）'") >= 0,
+    '海况时序保留浪高、风速两个系列');
+  assert(seaChartSrc.indexOf("name: '海水流速（m/s）'") >= 0,
+    '海况时序新增「海水流速（m/s）」系列（第三指标）');
+  assert(seaChartSrc.indexOf("name: '环境气温（℃）'") >= 0,
+    '海况时序新增「环境气温（℃）」系列（第四指标）');
+  const seaChartArray = sea.methods.renderChart.toString();
+  const seaSeriesCount = (seaChartArray.match(/type: 'line'/g) || []).length;
+  assert(seaSeriesCount >= 4, '海况时序系列不少于 4 条（实际 ' + seaSeriesCount + ' 条）');
+  /* 流速/气温无界定规则：不配置 markLine/markPoint（如实曲线） */
+  assert(seaChartArray.indexOf("data: fast.map(function (r) { return [r.ts, r.current_speed]; })") >= 0,
+    '海水流速系列取 current_speed 字段（台站缺测如实不连）');
+  assert(seaChartArray.indexOf("data: fast.map(function (r) { return [r.ts, r.air_temp]; })") >= 0,
+    '环境气温系列取 air_temp 字段');
+
+  /* 问题三：海况页四个指标框移到站点切换之后、数据源面板之前（一眼看到主要信息） */
+  const seaTpl = sea.template;
+  const statsPos = seaTpl.indexOf('<div class="grid-stats"');
+  const srcPos = seaTpl.indexOf('数据来源 · 国家海洋科学数据中心');
+  const switchPos = seaTpl.indexOf('站点：');
+  assert(statsPos >= 0 && switchPos >= 0 && srcPos >= 0,
+    '海况模板含站点切换、数值卡、数据源面板三段');
+  assert(statsPos > switchPos && statsPos < srcPos,
+    '四个指标框位于站点切换下方、数据源面板上方（显眼位置）');
+  assert((seaTpl.match(/stat-card name="浪高"/g) || []).length === 1,
+    '海况页数值卡只保留一份（原位置重复块已删除）');
+
+  /* 问题二：水质页预留视频位（先留空不放内容，未来接监控实时画面） */
+  const watTpl = water.template;
+  assert(watTpl.indexOf('海水监控视频（预留）') >= 0,
+    '水质页含「海水监控视频（预留）」卡片标题');
+  assert(watTpl.indexOf('视频位已预留') >= 0,
+    '视频位说明文案已写入（当前未接入，暂无画面）');
+  const videoPos = watTpl.indexOf('海水监控视频（预留）');
+  const waterStatsPos = watTpl.indexOf('<div class="grid-stats">');
+  const waterChartPos = watTpl.indexOf('水质时序（可缩放');
+  assert(videoPos > waterStatsPos && videoPos < waterChartPos,
+    '视频位位于水质数值卡之后、水质时序图之前');
+}
+
 section('问题一（换站）：真实站点换成中国三站（小麦岛/嵊山/遮浪）');
 {
   /* 站点表：envSites 含中国三站，且均为观测站点（公开数据） */

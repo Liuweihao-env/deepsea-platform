@@ -770,6 +770,18 @@
                 data: this.windLines },
               /* 问题二：异常点只标圆点（红色），不显示数字 */
               markPoint: { symbol: 'circle', symbolSize: 7, label: { show: false }, data: this.windDots }
+            },
+            {
+              /* 问题一（新）：海况时序图显示四个指标 —— 海水流速（台站无此要素，缺测如实不连） */
+              name: '海水流速（m/s）', type: 'line', showSymbol: false, smooth: true,
+              lineStyle: { width: 1.6, color: '#0F766E' }, itemStyle: { color: '#0F766E' },
+              data: fast.map(function (r) { return [r.ts, r.current_speed]; })
+            },
+            {
+              /* 问题一（新）：海况时序图显示四个指标 —— 环境气温 */
+              name: '环境气温（℃）', type: 'line', showSymbol: false, smooth: true,
+              lineStyle: { width: 1.6, color: '#7C3AED' }, itemStyle: { color: '#7C3AED' },
+              data: fast.map(function (r) { return [r.ts, r.air_temp]; })
             }
           ]
         }, true);
@@ -840,6 +852,18 @@
       '    </div>',
       '  </div>',
       '',
+      '  <!-- 问题三（新）：四个主要指标框放到站点切换下方最显眼的位置，一眼看到核心信息 -->',
+      '  <div class="grid-stats" style="margin-bottom:12px">',
+      '    <stat-card name="浪高" field="wave_height" unit="m" :value="last.wave_height"',
+      '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
+      '    <stat-card name="风速" field="wind_speed" unit="m/s" :value="last.wind_speed"',
+      '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
+      '    <stat-card name="海水流速" field="current_speed" unit="m/s" :value="last.current_speed"',
+      '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
+      '    <stat-card name="环境气温" field="air_temp" unit="℃" :value="last.air_temp"',
+      '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
+      '  </div>',
+      '',
       '  <!-- 中国台站数据源面板：说明数据从哪来、时间范围、一键重新加载 -->',
       '  <div class="card" style="margin-bottom:12px">',
       '    <div class="card-title">数据来源 · 国家海洋科学数据中心（NMDC）中国海洋台站</div>',
@@ -896,17 +920,6 @@
       '        {{ refreshMsg }}',
       '      </span>',
       '    </div>',
-      '  </div>',
-      '',
-      '  <div class="grid-stats">',
-      '    <stat-card name="浪高" field="wave_height" unit="m" :value="last.wave_height"',
-      '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
-      '    <stat-card name="风速" field="wind_speed" unit="m/s" :value="last.wind_speed"',
-      '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
-      '    <stat-card name="海水流速" field="current_speed" unit="m/s" :value="last.current_speed"',
-      '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
-      '    <stat-card name="环境气温" field="air_temp" unit="℃" :value="last.air_temp"',
-      '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '  </div>',
       '',
       '  <div class="split" style="margin-top:12px">',
@@ -1522,6 +1535,14 @@
       '               :quality="lastSlow.quality" :ts="lastSlow.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '    <stat-card name="光照强度" field="light_intensity" unit="lux" :value="last.light_intensity"',
       '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
+      '  </div>',
+      '',
+      '  <!-- 问题二（新）：海水监控视频位（预留）—— 未来接入监控实时画面，当前留空不放内容 -->',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title">海水监控视频（预留）</div>',
+      '    <div class="hint" style="text-align:center;padding:30px 0;color:#6B7280">',
+      '      视频位已预留 —— 后续用于接入海水监控实时画面（当前未接入，暂无画面）',
+      '    </div>',
       '  </div>',
       '',
       '  <div class="split" style="margin-top:12px">',
