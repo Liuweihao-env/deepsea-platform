@@ -185,7 +185,7 @@
       '           @click="tabPick(t)">{{ t.label }}</div>',
       '    </div>',
       '    <div class="spacer"></div>',
-      '    <source-tag :source="\'simulated\'" />',
+      '    ',
       '  </div>',
       '',
       '  <div class="body">',
@@ -195,7 +195,7 @@
       '        <div class="group">{{ g.group }}<span v-if="g.owner"> · {{ g.owner }}</span></div>',
       '        <div v-for="it in g.items" :key="it.path" class="item"',
       '             :class="{ active: path === it.path }" @click="pick(it.path)">',
-      '          {{ it.label }}<span v-if="!it.ready" class="small muted"> ·待建</span>',
+      ' {{ it.label }}<span v-if="!it.ready" class="small muted"> ·待建</span>',
       '        </div>',
       '      </template>',
       '    </div>',
@@ -219,7 +219,6 @@
   /* 枚举中文标签（通用规范 第五节）—— 模板里写 {{ CN.deviceState(x) }} */
   app.config.globalProperties.CN = window.CN;
   /* 注册通用组件（骨架规范 第三节） */
-  app.component('source-tag', C.SourceTag);
   app.component('stat-card', C.StatCard);
   app.component('trend-chart', C.TrendChart);
   app.component('heat-grid', C.HeatGrid);

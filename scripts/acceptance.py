@@ -318,7 +318,17 @@ def check_3(base):
 
 
 # ======================================================================
-# 验收第 4 条：来源标签 + 离线显示 — 而不是上一个值
+# 验收第 4 条：离线显示「—」而不是上一个值
+#
+#   🔴 2026-10-15 队长改：老师意见第 6 条「全平台删除来源字样 + 数据质量标记」。
+#      原来这条叫「来源标签 + 离线显示「—」」，查两件事：
+#        ① 离线时值必须给 null（不许拿上一个值顶）← **这一半保留**
+#        ② 每个页面都有 <source-tag> 来源标签       ← **这一半删掉了**
+#      注意区分两件事：
+#        · 「来源」= 仿真/公开/实测 的来源徽标 → 老师要求删
+#        · 「质量」= quality（good/stale/suspect）→ **必须留**，
+#          离线时值给 null 且标 stale 就是靠它，删了「设备离线显示 —」就没了。
+#      所以这一条现在只守「离线给 null」。
 # ======================================================================
 def check_4(base):
     # ① 离线：所有快变量与慢变量都必须给 null（不许给上一个值）
@@ -330,21 +340,21 @@ def check_4(base):
     slow_null = all(r.get("salinity") is None for r in tail_slow)
     stale = all(r.get("quality") == "stale" for r in tail_fast)
 
-    # ② 数据来源标签：接口每条数据都带 source，且取值在白名单内
-    on = get(base, "/api/env?site_id=site_01&minutes=5")
-    srcs = {r.get("source") for r in (on.get("fast") or [])}
-    allowed = {"real", "public", "simulated", "demo"}
-    src_ok = bool(srcs) and srcs <= allowed
-
-    # ③ 前端每页都有来源标签组件（静态检查）
+    # ② 来源字样必须已经从页面上清干净（静态检查，反向守 —— 删干净了才算过）
     js = read_pages(base)
-    pages_with_tag = js.count("<page-head")
-    tag_ok = pages_with_tag >= 13
+    leftovers = js.count("<source-tag") + js.count(":sources=")
+    clean = leftovers == 0
 
-    if fast_null and slow_null and stale and src_ok and tag_ok:
-        rec(4, "来源标签 + 离线显示「—」", PASS,
+    # ③ 观测时间必须留着（老师明说「保留观测时间」）——
+    #    界面上要有时间列，接口每条要有 ts
+    on = get(base, "/api/env?site_id=site_01&minutes=5")
+    has_ts = all(r.get("ts") for r in (on.get("fast") or []))
+    has_time_ui = js.count("观测时间") + js.count("预警时间") + js.count("时间") > 0
+
+    if fast_null and slow_null and stale and clean and has_ts and has_time_ui:
+        rec(4, "离线显示「—」（来源字样已按老师要求清除）", PASS,
             "离线时快变量与慢变量全部为 null 且 quality=stale（不给上一个值）；"
-            "数据带 source 且取值合法 %s；%d 个页面使用来源标签" % (sorted(srcs), pages_with_tag))
+            "全平台已无 source-tag / :sources 残留（%d 处）；观测时间保留" % leftovers)
     else:
         why = []
         if not fast_null:
@@ -353,11 +363,11 @@ def check_4(base):
             why.append("离线时慢变量没置空")
         if not stale:
             why.append("离线时 quality 不是 stale")
-        if not src_ok:
-            why.append("数据来源缺失或取值非法：%s" % srcs)
-        if not tag_ok:
-            why.append("有页面没有来源标签（只有 %d 个）" % pages_with_tag)
-        rec(4, "来源标签 + 离线显示「—」", FAIL, "；".join(why))
+        if not clean:
+            why.append("还残留 %d 处来源标签（老师第 6 条要求全删）" % leftovers)
+        if not has_ts:
+            why.append("接口没给 ts —— 观测时间必须保留")
+        rec(4, "离线显示「—」（来源字样已按老师要求清除）", FAIL, "；".join(why))
 
 
 # ======================================================================

@@ -95,20 +95,10 @@
     };
   }
 
-  /* ---------- 3.5 数据来源标签 SourceTag ---------- */
-  C.SourceTag = {
-    props: { source: { type: String, default: 'simulated' }, multi: { type: Array, default: null } },
-    computed: {
-      items: function () {
-        const list = this.multi && this.multi.length ? this.multi : [this.source];
-        return list.map(function (s) { return { key: s, text: API.sourceText[s] || s }; });
-      }
-    },
-    template:
-      '<span class="tagline">' +
-      '  <span v-for="it in items" :key="it.key" class="tag" :class="\'tag-\' + it.key">{{ it.text }}</span>' +
-      '</span>'
-  };
+  /* 🔴 2026-10-15 队长删：老师意见第 6 条「全平台删除来源字样 + 数据质量标记」。
+     这里原来是 C.SourceTag（仿真数据 / 公开数据 … 的小徽标），整块删除。
+     ⚠️ 注意区分：删的是**来源徽标**；`quality`（离线/可疑的状态标记）与
+        `ts`（观测时间）都保留 —— 验收第 4 条仍守「离线给 null、显示设备离线」。 */
 
   /* ---------- 3.1 数值卡 StatCard ----------
      状态：① 正常 ② 缺失（— + 设备离线）③ 可疑（黄）④ 过期（灰 + 最后更新）
@@ -118,7 +108,6 @@
   C.StatCard = {
     props: {
       name: String, value: [Number, String], unit: { type: String, default: '' },
-      source: { type: String, default: 'simulated' },
       quality: { type: String, default: 'good' },   // good | stale | suspect
       ts: { type: Number, default: 0 },
       field: { type: String, default: '' },         // 完整字段名，悬停显示
@@ -143,7 +132,7 @@
       tip: function () {
         const t = this.ts ? new Date(this.ts).toLocaleTimeString('zh-CN', { hour12: false }) : '—';
         return '字段：' + (this.field || '（未标注）') + '\n更新时间：' + t +
-               '\n数据来源：' + (API.sourceText[this.source] || this.source);
+               '\n来源标注已按老师意见删除';
       },
       foot: function () {
         if (this.missing) {
@@ -161,7 +150,7 @@
     },
     template:
       '<div class="stat" :class="cls" :title="tip">' +
-      '  <div class="name"><span>{{ name }}</span><source-tag :source="source" /></div>' +
+      '  <div class="name"><span>{{ name }}</span></div>' +
       '  <div class="val"><span>{{ shown }}</span><span class="unit" v-if="!missing && unit">{{ unit }}</span></div>' +
       '  <div class="foot">{{ foot }}</div>' +
       '</div>'
@@ -525,14 +514,13 @@
 
   /* ---------- 页头：标题 + 来源标签（纪律 4：每页都要有） ---------- */
   C.PageHead = {
-    props: { title: String, desc: { type: String, default: '' }, sources: { type: Array, default: null }, source: { type: String, default: 'simulated' } },
+    props: { title: String, desc: { type: String, default: '' }, source: { type: String, default: 'simulated' } },
     template:
       '<div class="row" style="justify-content:space-between;align-items:flex-end;margin-bottom:12px">' +
       '  <div>' +
       '    <div style="font-size:18px;font-weight:700">{{ title }}</div>' +
       '    <div class="small muted" v-if="desc" v-html="desc"></div>' +
       '  </div>' +
-      '  <source-tag :source="source" :multi="sources" />' +
       '</div>'
   };
 
