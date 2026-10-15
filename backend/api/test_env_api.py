@@ -170,12 +170,99 @@ class TestNdbcRanges(unittest.TestCase):
 class TestRoutes(unittest.TestCase):
     def test_routes_list(self):
         r = env.routes()
-        self.assertEqual(len(r), 5, msg="5 条路由清单")
+        self.assertEqual(len(r), 7, msg="7 条路由清单")
         paths = [x[1] for x in r]
         self.assertIn("/api/env/historical", paths, msg="历史区间路由")
         self.assertIn("/api/env/ndbc-ranges", paths, msg="数据时间范围路由")
         self.assertIn("/api/env/storm", paths, msg="风暴细化路由")
         self.assertEqual(paths.count("/api/env/sim-control"), 2, msg="暂停控制 GET+POST")
+        self.assertIn("/api/env/cn-sites", paths, msg="中国台站列表路由")
+        self.assertIn("/api/env/cn-ranges", paths, msg="中国台站数据时间范围路由")
+
+
+class TestCnSites(unittest.TestCase):
+    """中国台站（小麦岛/嵊山/遮浪）：站点清单与本地 JSON 数据"""
+    # backend/api/test_env_api.py 从 backend/api 运行，数据文件相对仓库根
+
+    def _data_dir(self):
+        return os.path.join(ROOT, "frontend", "pages", "env_data")
+
+    def test_cn_sites_list(self):
+        sites = env.cn_sites()["sites"]
+        self.assertEqual(len(sites), 3, msg="中国台站共 3 个（黄海/东海/南海各一）")
+        ids = [s["site_id"] for s in sites]
+        self.assertEqual(ids, ["cn_xmd", "cn_ssn", "cn_zlg"], msg="站点 id 顺序：小麦岛/嵊山/遮浪")
+        xmd = sites[0]
+        self.assertEqual(xmd["site_name"], "小麦岛海洋站", msg="小麦岛中文名")
+        self.assertIn("黄海", xmd["region"], msg="小麦岛属黄海")
+        self.assertEqual(xmd["kind"], "obs", msg="中国站均为观测站点（公开数据）")
+        self.assertTrue(all(s["file"].startswith("env_cn_") and s["file"].endswith(".json")
+                            for s in sites), msg="每个站点都有本地数据文件")
+
+    def test_cn_site_by_id(self):
+        s = env.cn_site("cn_zlg")
+        self.assertEqual(s["site_name"], "遮浪海洋站", msg="遮浪海洋站")
+        self.assertIn("南海", s["region"], msg="遮浪属南海")
+        self.assertIsNone(env.cn_site("site_02"), msg="未知站点返回 None")
+
+    def test_load_cn_data(self):
+        d = env._load_cn_data("cn_xmd")
+        self.assertIsNotNone(d, msg="小麦岛 JSON 数据文件存在且可读")
+        self.assertEqual(d["site_id"], "cn_xmd", msg="文件头含 site_id")
+        self.assertEqual(d["source"], "public", msg="来源为 public（真实公开数据）")
+        self.assertGreaterEqual(len(d["records"]), 3000, msg="5 个月逐时数据条数充足")
+        r0 = d["records"][0]
+        self.assertIn("wave_height", r0, msg="记录含浪高")
+        self.assertIn("wind_speed", r0, msg="记录含风速")
+        self.assertIn("air_temp", r0, msg="记录含气温")
+        self.assertIn("water_temp", r0, msg="记录含水温")
+
+    def test_cn_data_truthfulness(self):
+        """如实标注：嵊山/遮浪漫高缺测（null），不编数据"""
+        ssn = env._load_cn_data("cn_ssn")
+        zlg = env._load_cn_data("cn_zlg")
+        xmd = env._load_cn_data("cn_xmd")
+        self.assertTrue(all(r["wave_height"] is None for r in ssn["records"]),
+                        msg="嵊山浪高全缺测（如实 null，不编造）")
+        self.assertTrue(all(r["wave_height"] is None for r in zlg["records"]),
+                        msg="遮浪漫高全缺测（如实 null，不编造）")
+        self.assertTrue(any(r["wave_height"] is not None for r in xmd["records"]),
+                        msg="小麦岛浪高有实测值")
+        self.assertTrue(all(r["water_temp"] is not None for r in xmd["records"]),
+                        msg="小麦岛水温全有效（海温实测）")
+
+    def test_cn_ranges(self):
+        out = env.cn_ranges()
+        self.assertEqual(len(out["sites"]), 3, msg="三站都有数据时间范围")
+        xmd = [r for r in out["sites"] if r["station_id"] == "XMD"][0]
+        self.assertEqual(xmd["count"], 3672, msg="小麦岛逐时条数")
+        self.assertIn("NMDC", xmd["source_detail"], msg="来源标注 NMDC")
+        self.assertLessEqual(xmd["first_ts"], xmd["latest_ts"], msg="时间范围合法")
+
+
+class TestHistoricalCn(unittest.TestCase):
+    """中国台站历史区间：读本地 JSON，按 ts 过滤"""
+
+    def test_cn_historical_filter(self):
+        out = env.historical("cn_xmd", 1743436800000, 1743451200000)
+        self.assertEqual(out["source"], "public", msg="中国台站历史来源为 public")
+        self.assertGreater(out["count"], 0, msg="区间内有数据")
+        self.assertTrue(all(1743436800000 <= r["ts"] <= 1743451200000 for r in out["records"]),
+                        msg="所有记录都在区间内")
+        self.assertIn("NMDC", out["source_detail"], msg="来源详情标注 NMDC")
+        r0 = out["records"][0]
+        self.assertIsNone(r0["dissolved_oxygen"], msg="台站不测水质要素 → None（如实）")
+        self.assertIsNone(r0["light_intensity"], msg="光照 None")
+
+    def test_cn_historical_empty_range(self):
+        out = env.historical("cn_xmd", 1757000000000, 1757100000000)
+        self.assertEqual(out["count"], 0, msg="超出数据时间范围的区间返回空")
+
+    def test_cn_unknown_site(self):
+        """未知站点不冒充真实公开数据：按既有口径回退仿真并如实标注 source=simulated"""
+        out = env.historical("cn_unknown", 0, 9999999999999)
+        self.assertEqual(out["source"], "simulated", msg="未知站点回退仿真并诚实标注，不编造 public 数据")
+        self.assertIn("仿真", out["source_detail"], msg="来源详情标注仿真")
 
 
 if __name__ == "__main__":

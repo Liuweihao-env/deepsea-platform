@@ -104,17 +104,24 @@ section('共享纯函数');
   assert(csv.indexOf('simulated') >= 0, 'CSV 正常字段原样输出');
 }
 {
-  const per = H.buildPer(sandbox.API.sites());
+  /* 换站后站点列表 = 养殖 site_01 + 中国三站（envSites 内置，忽略 server.py 的 NDBC 站） */
+  const sites = sandbox.__ENV_CN__.envSites();
+  const ids = sites.map(function (s) { return s.site_id; }).join(',');
+  assert(ids === 'site_01,cn_xmd,cn_ssn,cn_zlg',
+    'envSites 站点列表 = site_01 + 中国三站（实际：' + ids + '）');
+  assert(sites.filter(function (s) { return s.kind === 'obs'; }).length === 3,
+    '中国三站均为观测站点（公开数据不可模拟）');
+  const per = H.buildPer(sites);
   assert(Object.keys(per).length === 4, 'buildPer 覆盖全部 4 个站点');
   assert(per.site_01.paused === false && per.site_01.storm === false, '默认状态：运行中、无风暴');
   assert(H.pausedText(per) === '', '无暂停站点时聚合文本为空');
   per.site_01.paused = true;
-  per.site_03.paused = true;
-  assert(H.pausedText(per) === 'site_01、site_03（共2个）', '暂停聚合列出所有被暂停站点（不是最后一个）');
-  per.site_02.paused = true;
-  assert(H.pausedText(per) === 'site_01、site_02、site_03（共3个）', '三个暂停站点按 id 顺序列出');
+  per.cn_ssn.paused = true;
+  assert(H.pausedText(per) === 'site_01、cn_ssn（共2个）', '暂停聚合列出所有被暂停站点（不是最后一个）');
+  per.cn_xmd.paused = true;
+  assert(H.pausedText(per) === 'site_01、cn_xmd、cn_ssn（共3个）', '三个暂停站点按 id 顺序列出');
   per.site_01.paused = false;
-  assert(H.pausedText(per) === 'site_02、site_03（共2个）', '恢复后只列仍暂停的站点');
+  assert(H.pausedText(per) === 'cn_xmd、cn_ssn（共2个）', '恢复后只列仍暂停的站点');
 }
 
 section('问题2：时序增强（缩放/框选/红点）+ 异常界定指标');
@@ -172,10 +179,10 @@ assert(sea.template.indexOf('fmtTs(r.ts)') >= 0, '原始数据表时间用年/�
 /* 标题改为 computed rawTitle（历史区间/实时窗口动态标注），源码须同时含两种数据来源文案 */
 {
   const rt = sea.computed.rawTitle.toString();
-  assert(rt.indexOf('NOAA NDBC 公开历史数据') >= 0 && rt.indexOf('仿真数据') >= 0,
-    '原始数据标题动态标注公开历史数据/仿真');
+  assert(rt.indexOf('国家海洋科学数据中心（NMDC）中国台站实测') >= 0 && rt.indexOf('仿真数据') >= 0,
+    '原始数据标题动态标注中国台站实测/仿真');
 }
-assert(sea.template.indexOf('backend/api/env.py') >= 0, '精确历史日期接口的降级说明已展示');
+assert(sea.template.indexOf('本地数据文件') >= 0, '真实站点历史查询的本地数据说明已展示');
 assert(water.template.indexOf('快变量') >= 0 && water.template.indexOf('慢变量（盐度 / pH）') >= 0,
   '水质页原始数据分快变量/慢变量两张表');
 assert(water.template.indexOf('导出 CSV') >= 0, '水质页有导出 CSV 按钮');
@@ -229,20 +236,21 @@ assert(water.template.indexOf('导出 CSV') >= 0, '水质页有导出 CSV 按钮
 
 section('问题4：站点独立 + 切换（per-site 状态互不影响）');
 {
-  const per = H.buildPer(sandbox.API.sites());
-  assert(per.site_01 !== per.site_02, '每个站点是独立状态对象（互不引用）');
+  const sites = sandbox.__ENV_CN__.envSites();
+  const per = H.buildPer(sites);
+  assert(per.site_01 !== per.cn_xmd, '每个站点是独立状态对象（互不引用）');
   per.site_01.paused = true;
   per.site_01.minutes = 1440;
-  assert(per.site_02.paused === false && per.site_02.minutes === 60,
-    '修改 site_01 不影响 site_02 / site_03 / site_04 的状态与时间窗');
-  assert(per.site_03.paused === false && per.site_04.paused === false, '其余站点保持运行中');
+  assert(per.cn_xmd.paused === false && per.cn_xmd.minutes === 60,
+    '修改 site_01 不影响 cn_xmd / cn_ssn / cn_zlg 的状态与时间窗');
+  assert(per.cn_ssn.paused === false && per.cn_zlg.paused === false, '其余站点保持运行中');
 }
 {
   assert(H.shouldRefresh(null, 'site_01') === true, 'per 未初始化时默认刷新（运行）');
   assert(H.shouldRefresh({ site_01: { paused: false } }, 'site_01') === true, '运行中站点刷新');
   assert(H.shouldRefresh({ site_01: { paused: true } }, 'site_01') === false, '暂停站点不刷新（冻结）');
-  assert(H.shouldRefresh({ site_01: { paused: true } }, 'site_02') === true,
-    'site_01 暂停不影响 site_02 刷新');
+  assert(H.shouldRefresh({ site_01: { paused: true } }, 'cn_xmd') === true,
+    'site_01 暂停不影响 cn_xmd 刷新');
 }
 assert(String(sea.mounted).indexOf('setInterval') >= 0 && String(sea.mounted).indexOf('5000') >= 0,
   '海况页有 5 秒轮询');
@@ -288,19 +296,19 @@ section('新问题1：真实站点（公开数据）不参与仿真控制');
 {
   const noop = function () {};
   const per = { site_01: { paused: false, storm: false, heat: false, offline: false },
-                site_02: { paused: false, storm: false, heat: false, offline: false },
-                site_03: { paused: false, storm: false, heat: false, offline: false } };
+                cn_xmd: { paused: false, storm: false, heat: false, offline: false },
+                cn_ssn: { paused: false, storm: false, heat: false, offline: false } };
   const seaInst = { site: 'site_01', per: per, load: noop, isObsSite: sea.methods.isObsSite };
-  sea.methods.togglePause.call(seaInst, 'site_02');
-  sea.methods.toggleStorm.call(seaInst, 'site_03');
-  assert(per.site_02.paused === false, '真实站点 site_02 不可暂停');
-  assert(per.site_03.storm === false, '真实站点 site_03 不可模拟大风大浪');
+  sea.methods.togglePause.call(seaInst, 'cn_xmd');
+  sea.methods.toggleStorm.call(seaInst, 'cn_ssn');
+  assert(per.cn_xmd.paused === false, '真实站点 cn_xmd 不可暂停');
+  assert(per.cn_ssn.storm === false, '真实站点 cn_ssn 不可模拟大风大浪');
   sea.methods.togglePause.call(seaInst, 'site_01');
   assert(per.site_01.paused === true, '养殖站点 site_01 可正常暂停');
   const waterInst = { site: 'site_01', per: per, load: noop, isObsSite: water.methods.isObsSite };
-  water.methods.toggleHeat.call(waterInst, 'site_02');
-  water.methods.toggleOffline.call(waterInst, 'site_02');
-  assert(per.site_02.heat === false && per.site_02.offline === false, '真实站点不可触发骤升/离线');
+  water.methods.toggleHeat.call(waterInst, 'cn_xmd');
+  water.methods.toggleOffline.call(waterInst, 'cn_xmd');
+  assert(per.cn_xmd.heat === false && per.cn_xmd.offline === false, '真实站点不可触发骤升/离线');
 }
 
 section('问题6：per 空值安全（首渲染不抛错 —— 修复 Cannot read properties of null (reading site_01)）');
@@ -339,68 +347,81 @@ section('新问题2：真实站点自定义时间历史 + 数据时间范围');
   sea.methods.queryRange.call(inst);
   assert(inst.rangeMsg.indexOf('结束时间需晚于开始时间') >= 0, '结束时间早于开始时间 → 提示错误');
 }
-/* 成功 / 失败路径：mock fetch（Promise），异步断言 */
+/* 成功 / 失败路径：mock fetch（本地 JSON 数据文件），异步断言 */
 {
-  const inst = { site: 'site_02', rangeStart: '2026-09-01T00:00', rangeEnd: '2026-09-02T00:00',
+  /* 构造与 frontend/pages/env_data/ 相同的 JSON 结构 */
+  const fakeJson = {
+    site_id: 'cn_xmd', site_name: '小麦岛海洋站', region: '黄海（山东青岛）',
+    source: 'public', source_detail: '国家海洋科学数据中心（NMDC）中国海洋台站逐时观测 · 2025-04 ~ 2025-08',
+    first_ts: 1743436800000, latest_ts: 1756652400000, count: 2,
+    records: [
+      { ts: 1743436800000, wave_height: 0.9, wind_speed: 3.1, air_temp: 12.0, water_temp: 9.8 },
+      { ts: 1743440400000, wave_height: 1.1, wind_speed: 2.7, air_temp: 12.2, water_temp: 10.1 }
+    ]
+  };
+  /* 清掉全局缓存，确保 fetch 被调用 */
+  delete sandbox.__ENV_CN__.data['cn_xmd'];
+  const inst = { site: 'cn_xmd', rangeStart: '2025-04-01T00:00', rangeEnd: '2025-04-01T02:00',
                  rangeMode: false, rangeSeries: null, rangeMsg: '', ranges: {},
                  loadRanges: sea.methods.loadRanges };
-  let firstUrl = '', calledUrl = '';
+  let firstUrl = '';
   sandbox.fetch = function (url) {
     if (!firstUrl) firstUrl = url;
-    calledUrl = url;
-    if (url.indexOf('/api/env/ndbc-ranges') >= 0) {
-      return Promise.resolve({ ok: true, json: function () {
-        return Promise.resolve({ ranges: [
-          { station_id: '42001', first_ts_utc: '2026-08-25 00:10', latest_ts_utc: '2026-10-08 03:30' }
-        ] });
-      } });
-    }
-    return Promise.resolve({ ok: true, json: function () {
-      return Promise.resolve({ count: 2, records: [
-        { ts: 1700000000000, site_id: 'site_02', source: 'public' },
-        { ts: 1700000000100, site_id: 'site_02', source: 'public' }
-      ] });
-    } });
+    return Promise.resolve({ ok: true, json: function () { return Promise.resolve(fakeJson); } });
   };
   sea.methods.queryRange.call(inst);
   await new Promise(function (r) { setTimeout(r, 0); });
   await new Promise(function (r) { setTimeout(r, 0); });
-  assert(firstUrl.indexOf('/api/env/historical?site_id=site_02&start_ts=') === 0,
-    'queryRange 先请求 historical 接口（含站点与起止时间戳）');
+  assert(firstUrl.indexOf('pages/env_data/env_cn_xmd.json') >= 0,
+    'queryRange 读取本地 JSON 数据文件（pages/env_data/env_cn_xmd.json），实际：' + firstUrl);
   assert(inst.rangeMode === true && inst.rangeSeries.length === 2, '查询成功后进入历史区间模式并保存数据');
   assert(inst.rangeMsg.indexOf('已加载 2 条公开历史数据') >= 0, '成功提示含条数与区间');
-  assert(inst.ranges['42001'] && inst.ranges['42001'].first_ts_utc === '2026-08-25 00:10',
-    '查询历史成功后惰性请求 ndbc-ranges，数据时间范围变精确');
-  assert(calledUrl.indexOf('/api/env/ndbc-ranges') >= 0, '成功路径会请求精确范围接口（不产生未挂载 404）');
-  /* 失败降级（接口未挂载） */
-  const failInst = { site: 'site_02', rangeStart: '2026-09-01T00:00', rangeEnd: '2026-09-02T00:00',
-                     rangeMode: false, rangeSeries: null, rangeMsg: '' };
+  assert(inst.ranges['XMD'] && inst.ranges['XMD'].count === 2,
+    '查询成功后同步本地「数据时间范围」（不依赖后端接口）');
+  /* 区间内无数据（超出数据范围） */
+  const emptyInst = { site: 'cn_xmd', rangeStart: '2026-09-01T00:00', rangeEnd: '2026-09-02T00:00',
+                      rangeMode: false, rangeSeries: null, rangeMsg: '', ranges: {} };
   sandbox.fetch = function () {
-    return Promise.resolve({ ok: false, status: 404, json: function () { return Promise.resolve({}); } });
+    return Promise.resolve({ ok: true, json: function () { return Promise.resolve(fakeJson); } });
   };
-  sea.methods.queryRange.call(failInst);
+  sea.methods.queryRange.call(emptyInst);
   await new Promise(function (r) { setTimeout(r, 0); });
-  assert(failInst.rangeMode === false && failInst.rangeMsg.indexOf('需队长在 server.py 挂载') >= 0,
-    '接口未挂载（404）→ 诚实降级提示，不假装成功');
+  await new Promise(function (r) { setTimeout(r, 0); });
+  assert(emptyInst.rangeMode === false && emptyInst.rangeMsg.indexOf('该时间区间内无数据') >= 0,
+    '区间无数据 → 诚实提示数据范围（不假装成功）');
+  /* 数据文件缺失（fetch 失败）—— 先清缓存确保真实触发 fetch */
+  delete sandbox.__ENV_CN__.data['cn_xmd'];
+  const missInst = { site: 'cn_xmd', rangeStart: '2025-04-01T00:00', rangeEnd: '2025-04-01T02:00',
+                     rangeMode: false, rangeSeries: null, rangeMsg: '', ranges: {},
+                     loadRanges: sea.methods.loadRanges };
+  sandbox.fetch = function () {
+    return Promise.reject(new Error('file missing'));
+  };
+  sea.methods.queryRange.call(missInst);
+  await new Promise(function (r) { setTimeout(r, 0); });
+  await new Promise(function (r) { setTimeout(r, 0); });
+  assert(missInst.rangeMode === false && missInst.rangeMsg.indexOf('数据未加载') >= 0,
+    '数据文件缺失 → 诚实降级提示，不假装成功');
   /* exitRange 复位并回到实时 */
   let loadCalled = 0;
-  failInst.load = function () { loadCalled++; };
-  sea.methods.exitRange.call(failInst);
-  assert(failInst.rangeMode === false && failInst.rangeSeries === null && failInst.rangeMsg === '' && loadCalled === 1,
+  const exInst = { site: 'cn_xmd', rangeMode: true, rangeSeries: [], rangeMsg: 'x',
+                   load: function () { loadCalled++; } };
+  sea.methods.exitRange.call(exInst);
+  assert(exInst.rangeMode === false && exInst.rangeSeries === null && exInst.rangeMsg === '' && loadCalled === 1,
     'exitRange 复位历史区间并回到实时');
+  delete sandbox.fetch;
 }
 {
-  /* ndbcRangeText：精确（挂载）/ 估算（未挂载）/ 无数据 */
-  const inst = { ranges: { '42001': { first_ts_utc: '2026-08-25 00:10', latest_ts_utc: '2026-10-08 03:30' } } };
+  /* ndbcRangeText：中国台站读本地元信息显示精确时间范围；未加载显示 — */
+  const cn = sandbox.__ENV_CN__;
+  const inst = { ranges: {} };
   inst.ndbcRangeText = sea.methods.ndbcRangeText;
-  const exact = inst.ndbcRangeText({ station_id: '42001' });
-  assert(exact.indexOf('2026-08-25 00:10 ~ 2026-10-08 03:30 UTC') >= 0, '挂载后显示精确数据时间范围');
-  const est = sea.methods.ndbcRangeText.call({ ranges: {} },
-    { station_id: '46001', latest_ts: 1700000000000, count: 6373 });
-  assert(est.indexOf('估算') >= 0 && est.indexOf('~') >= 0, '未挂载时按缓存估算并诚实标注「估算」');
-  const none = sea.methods.ndbcRangeText.call({ ranges: {} },
-    { station_id: '51001', latest_ts_utc: '2026-10-08 03:30' });
-  assert(none === '2026-10-08 03:30', '仅有 latest 时显示原值');
+  const exact = inst.ndbcRangeText({ first_ts: 1743436800000, latest_ts: 1756652400000, count: 3672 });
+  assert(exact.indexOf('2025年04月01日') >= 0 && exact.indexOf('2025年08月31日') >= 0 &&
+         exact.indexOf('3672 条') >= 0 && exact.indexOf('NMDC 实测') >= 0,
+    '中国台站显示精确数据时间范围（起止 + 条数 + NMDC 实测）');
+  const none = inst.ndbcRangeText({ first_ts: null, latest_ts: null, count: 0 });
+  assert(none === '—', '数据未加载时显示 —');
 }
 
 section('新问题3：原始数据最新在最上面（倒序显示，导出保持正序）');
@@ -471,12 +492,12 @@ section('新问题5：所有异常数据进事件列表（含时间/站点/数�
     { ts: 3000, wave_height: null, wind_speed: 20.0 },   /* 风速红（浪高空） */
     { ts: 4000, wave_height: 9.0, wind_speed: null }     /* 浪高红（风速空） */
   ];
-  const inst = { fast: fast, allFast: fast, siteName: function () { return '墨西哥湾中部'; } };
+  const inst = { fast: fast, allFast: fast, siteName: function () { return '小麦岛海洋站'; } };
   const evs = sea.computed.events.call(inst);
   assert(evs.length === 4, '浪高警报 + 风速异常全部列为事件（实际 ' + evs.length + ' 条）');
   assert(evs[0].ts === 4000 && evs[evs.length - 1].ts === 2000, '事件按时间降序（最新在上）');
   const joined = evs.map(function (e) { return e.text; }).join('\n');
-  assert(joined.indexOf('墨西哥湾中部') >= 0, '事件包含站点名（真实站点公开数据异常同样列入）');
+  assert(joined.indexOf('小麦岛海洋站') >= 0, '事件包含站点名（真实站点公开数据异常同样列入）');
   assert(joined.indexOf(H.fmtTs(4000)) >= 0, '事件包含时间');
   assert(joined.indexOf('浪高 9 m') >= 0 && joined.indexOf('红色警报级') >= 0, '浪高事件含数据与分级');
   assert(joined.indexOf('风速 17.2 m/s') >= 0 && joined.indexOf('8 级及以上大风') >= 0,
@@ -487,11 +508,11 @@ section('新问题5：所有异常数据进事件列表（含时间/站点/数�
   const inst = { fast: [{ ts: 1, water_temp: 28.5 }, { ts: 2, water_temp: 20.0 }],
                  allFast: [{ ts: 1, water_temp: 28.5 }, { ts: 2, water_temp: 20.0 }] };
   inst.alarms = water.computed.alarms.call(inst);
-  inst.siteName = function () { return '阿拉斯加湾西部'; };
+  inst.siteName = function () { return '嵊山海洋站'; };
   const evs = water.computed.events.call(inst);
   assert(evs.length === 1, '仅水温越限出事件（实际 ' + evs.length + ' 条）');
   const t = evs[0].text;
-  assert(t.indexOf('阿拉斯加湾西部') >= 0 && t.indexOf('水温 28.5 ℃') >= 0 &&
+  assert(t.indexOf('嵊山海洋站') >= 0 && t.indexOf('水温 28.5 ℃') >= 0 &&
          t.indexOf('R-TEMP-01 水温上限') >= 0, '水质事件含 站点 · 时间 · 数据 · 规则名');
 }
 
@@ -500,21 +521,23 @@ section('新问题6：页面切换不丢站点选择；仿真控制状态两页�
   /* 海况页初始化自己的 per（seaPer） */
   const i1 = { per: null, site: 'site_01', chart: null, pageKey: 'sea' };
   sea.methods.ensurePer.call(i1);
-  assert(!!i1.per.site_01 && i1.per.site_01.paused === false, 'ensurePer 补齐全部站点状态');
-  /* 海况页在 site_01 暂停、site_03 调时间窗与风暴细化，然后切到水质页 */
+  assert(!!i1.per.site_01 && !!i1.per.cn_xmd && !!i1.per.cn_ssn && !!i1.per.cn_zlg,
+    'ensurePer 补齐全部站点状态（site_01 + 中国三站）');
+  assert(i1.per.site_01.paused === false, '默认全部运行中');
+  /* 海况页在 site_01 暂停、cn_ssn 调时间窗与风暴细化，然后切到水质页 */
   i1.per.site_01.paused = true;
-  i1.per.site_03.minutes = 240;
-  i1.per.site_03.stormType = 'wind';
+  i1.per.cn_ssn.minutes = 240;
+  i1.per.cn_ssn.stormType = 'wind';
   const S = sandbox.__ENV_SESSION__;
-  S.site = 'site_02';
+  S.site = 'cn_xmd';
   const wd = water.data();
-  assert(wd.site === 'site_02', '水质页打开恢复上次选择的站点（site_02）');
+  assert(wd.site === 'cn_xmd', '水质页打开恢复上次选择的站点（cn_xmd）');
   const i2 = { per: wd.per, site: wd.site, chart: null, pageKey: 'water' };
   water.methods.ensurePer.call(i2);
   assert(i2.per !== i1.per, '两页 per 各自独立（海况 seaPer / 水质 waterPer，非同一对象）');
   assert(i2.per.site_01.paused === false, '海况页暂停 site_01 → 水质页不受影响（仍运行中）');
-  assert(i2.per.site_03.minutes === 60, '水质页时间窗独立（海况调的 240 不影响水质页）');
-  assert(i2.per.site_03.stormType === 'all', '风暴细化选择两页独立（海况选 wind 不影响水质页）');
+  assert(i2.per.cn_ssn.minutes === 60, '水质页时间窗独立（海况调的 240 不影响水质页）');
+  assert(i2.per.cn_ssn.stormType === 'all', '风暴细化选择两页独立（海况选 wind 不影响水质页）');
   /* 水质页暂停 site_01 → 海况页也不受影响（反向） */
   i2.per.site_01.paused = true;
   assert(i1.per.site_01.paused === true, '水质页暂停不覆盖海况页（海况页保持自己的暂停状态）');
@@ -709,28 +732,55 @@ section('问题三：正常状态偶发「较异常」数据并计入事件');
   }
 }
 
-section('问题一补充：两页 load() 对养殖站点流式生成、对观测站点走公开接口');
+section('问题一补充：两页 load() 对养殖站点流式生成、对真实站点读本地 JSON');
 {
-  let apiEnvCalled = 0;
-  const origEnv = sandbox.API.env;
-  sandbox.API.env = function () { apiEnvCalled++; return { fast: [{ ts: 1, source: 'public' }], slow: [] }; };
-  try {
-    const obsInst = { site: 'site_02', ensurePer: function () {}, activePer: { minutes: 60 },
-                      loadSeq: 0, isObsSite: sea.methods.isObsSite };
-    sea.methods.load.call(obsInst);
-    assert(apiEnvCalled === 1, '观测站点（site_02）仍走 API.env 公开数据接口');
-    const farmInst = { site: 'site_01', ensurePer: function () {}, activePer: { minutes: 60 },
-                       loadSeq: 0, isObsSite: sea.methods.isObsSite };
-    sea.methods.load.call(farmInst);
-    assert(apiEnvCalled === 1, '养殖站点（site_01）不再调用 API.env（改由前端流式生成器生成）');
-    assert(!!farmInst.series && farmInst.series.fast.length >= 2, '养殖站点 load 后拿到流式生成的窗口数据');
-    const wfarm = { site: 'site_01', ensurePer: function () {}, activePer: { minutes: 60 },
-                    loadSeq: 0, isObsSite: water.methods.isObsSite };
-    water.methods.load.call(wfarm);
-    assert(!!wfarm.series && wfarm.series.slow.length >= 2, '水质页养殖站点拿到含慢变量（盐度/pH）的窗口数据');
-  } finally {
-    sandbox.API.env = origEnv;
-  }
+  /* 真实站点（中国台站）load：读本地 JSON 数据文件（离线可用，不联网） */
+  const fakeJson = {
+    site_id: 'cn_xmd', site_name: '小麦岛海洋站', region: '黄海（山东青岛）',
+    source: 'public', source_detail: '国家海洋科学数据中心（NMDC）中国海洋台站逐时观测 · 2025-04 ~ 2025-08',
+    first_ts: 1743436800000, latest_ts: 1756652400000, count: 3,
+    records: [
+      { ts: 1743436800000, wave_height: 0.9, wind_speed: 3.1, air_temp: 12.0, water_temp: 9.8 },
+      { ts: 1743440400000, wave_height: 1.1, wind_speed: 2.7, air_temp: 12.2, water_temp: 10.1 },
+      { ts: 1743444000000, wave_height: 1.0, wind_speed: 3.0, air_temp: 12.1, water_temp: 10.0 }
+    ]
+  };
+  delete sandbox.__ENV_CN__.data['cn_xmd'];
+  sandbox.fetch = function () {
+    return Promise.resolve({ ok: true, json: function () { return Promise.resolve(fakeJson); } });
+  };
+  const obsInst = { site: 'cn_xmd', ensurePer: function () {}, activePer: { minutes: 120 },
+                    loadSeq: 0, isObsSite: sea.methods.isObsSite, series: null };
+  sea.methods.load.call(obsInst);
+  await new Promise(function (r) { setTimeout(r, 0); });
+  await new Promise(function (r) { setTimeout(r, 0); });
+  assert(!!obsInst.series && obsInst.series.fast.length >= 2,
+    '真实站点（cn_xmd）load 后拿到本地 JSON 窗口数据');
+  assert(obsInst.series.fast[0].source === 'public' && obsInst.series.fast[0].quality === 'good',
+    '真实站点记录 source=public / quality=good');
+  assert(obsInst.sourceDetail.indexOf('NMDC') >= 0, '真实站点来源说明已记录（NMDC）');
+  /* 水质页真实站点：NMDC 台站不测水质要素 → 溶氧等如实 null，慢变量为空 */
+  const wobs = { site: 'cn_xmd', ensurePer: function () {}, activePer: { minutes: 120 },
+                 loadSeq: 0, isObsSite: water.methods.isObsSite, series: null };
+  water.methods.load.call(wobs);
+  await new Promise(function (r) { setTimeout(r, 0); });
+  await new Promise(function (r) { setTimeout(r, 0); });
+  assert(!!wobs.series && wobs.series.slow.length === 0,
+    '水质页真实站点慢变量（盐度/pH）为空（NMDC 台站不测，如实「—」）');
+  assert(wobs.series.fast[0].dissolved_oxygen === null &&
+         wobs.series.fast[0].light_intensity === null,
+    '水质页真实站点溶解氧/光照如实 null（无公开源，不编造）');
+  assert(wobs.series.fast[0].water_temp != null, '水质页真实站点水温有值（台站海温实测）');
+  delete sandbox.fetch;
+  /* 养殖站点 load：流式生成器 */
+  const farmInst = { site: 'site_01', ensurePer: function () {}, activePer: { minutes: 60 },
+                     loadSeq: 0, isObsSite: sea.methods.isObsSite };
+  sea.methods.load.call(farmInst);
+  assert(!!farmInst.series && farmInst.series.fast.length >= 2, '养殖站点 load 后拿到流式生成的窗口数据');
+  const wfarm = { site: 'site_01', ensurePer: function () {}, activePer: { minutes: 60 },
+                  loadSeq: 0, isObsSite: water.methods.isObsSite };
+  water.methods.load.call(wfarm);
+  assert(!!wfarm.series && wfarm.series.slow.length >= 2, '水质页养殖站点拿到含慢变量（盐度/pH）的窗口数据');
 }
 
 section('问题四：环境板块不再需要「原始数据明细 / 环境仿真控制」独立页面');
@@ -785,6 +835,65 @@ section('问题二：时序图异常点只标圆点、不显示数字');
   const windDots = sea.computed.windDots.call({ fast: [{ ts: 1, wind_speed: 18.0 }, { ts: 2, wind_speed: 8.0 }] });
   assert(windDots.length === 1 && windDots[0].itemStyle.color === '#991B1B',
     '风速异常点只标红色圆点（≥17.2 八级大风）');
+}
+
+section('问题一（换站）：真实站点换成中国三站（小麦岛/嵊山/遮浪）');
+{
+  /* 站点表：envSites 含中国三站，且均为观测站点（公开数据） */
+  const cn = sandbox.__ENV_CN__;
+  assert(cn.sites.length === 3, '内置中国台站共 3 个（黄海/东海/南海各一）');
+  const xmd = cn.byId['cn_xmd'];
+  assert(xmd && xmd.site_name === '小麦岛海洋站' && xmd.region.indexOf('黄海') >= 0,
+    'cn_xmd = 小麦岛海洋站（黄海）');
+  assert(cn.byId['cn_ssn'].site_name === '嵊山海洋站' && cn.byId['cn_ssn'].region.indexOf('东海') >= 0,
+    'cn_ssn = 嵊山海洋站（东海）');
+  assert(cn.byId['cn_zlg'].site_name === '遮浪海洋站' && cn.byId['cn_zlg'].region.indexOf('南海') >= 0,
+    'cn_zlg = 遮浪海洋站（南海）');
+  /* isObs / isObsSite：中国三站视为观测站点，site_01 为养殖站点 */
+  assert(sea.computed.isObs.call({ site: 'cn_xmd' }) === true, '海况页 isObs：cn_xmd 为观测站点');
+  assert(sea.computed.isObs.call({ site: 'site_01' }) === false, '海况页 isObs：site_01 为养殖站点');
+  assert(sea.methods.isObsSite('cn_zlg') === true && sea.methods.isObsSite('site_01') === false,
+    'isObsSite 判定中国站/养殖站正确');
+  assert(water.methods.isObsSite('cn_ssn') === true, '水质页 isObsSite 同样识别中国站');
+  /* 数据源面板（cnList）：三站元信息与 NMDC 来源说明 */
+  const cl = sea.computed.cnList.call({});
+  assert(cl.length === 3, '数据源面板列出 3 个中国台站');
+  assert(sea.template.indexOf('国家海洋科学数据中心（NMDC）') >= 0,
+    '数据源面板标题为 NMDC 中国海洋台站');
+  assert(sea.template.indexOf('重新加载本地数据') >= 0, '数据源面板提供「重新加载本地数据」（不再联网拉取）');
+  assert(sea.template.indexOf('数据时间范围') >= 0, '数据源面板表头含「数据时间范围」');
+  assert(sea.template.indexOf('cnList') >= 0, '数据源面板遍历 cnList（本地元信息）');
+  assert(sea.template.indexOf('envSites()') >= 0, '站点切换/调试面板遍历 envSites()（site_01 + 中国三站）');
+  /* srcLabel：真实站点文案为 NMDC 中国台站 */
+  assert(sea.computed.srcLabel.call({ isObs: true }).indexOf('NMDC 中国海洋台站实测') >= 0,
+    '真实站点来源标签为 NMDC 中国台站实测');
+  assert(sea.computed.srcLabel.call({ isObs: false }) === '仿真生成（模拟养殖站点）',
+    '养殖站点来源标签保持仿真');
+  /* 缺测如实标注：嵊山/遮浪漫高缺测 → 记录字段为 null（页面显示「—」，不编造） */
+  const rec = cn.cnRecord('cn_zlg', { ts: 1, wave_height: null, wind_speed: 2.0,
+                                      air_temp: 20.0, water_temp: 26.5 });
+  assert(rec.wave_height === null && rec.wind_speed === 2.0 && rec.water_temp === 26.5,
+    '缺测浪高如实 null，风速/水温保留实测值');
+  assert(rec.dissolved_oxygen === null && rec.salinity === null && rec.ph === null &&
+         rec.light_intensity === null && rec.current_speed === null,
+    '台站不测的水质要素全部如实 null（页面显示「—」）');
+  /* cnWindow：逐时数据按小时窗口取尾部 */
+  const d = { site_id: 'cn_xmd', records: [] };
+  for (let i = 0; i < 50; i++) { d.records.push({ ts: 1000 + i * 3600000, wave_height: 1.0,
+                                                  wind_speed: 3.0, air_temp: 12.0, water_temp: 10.0 }); }
+  const w = cn.cnWindow(d, 120);
+  assert(w.fast.length === 2 && w.fast[0].ts === 1000 + 48 * 3600000,
+    'cnWindow 按 120 分钟取尾部 2 条逐时数据（60 分钟/条）');
+  assert(w.slow.length === 0, '真实站点慢变量为空（台站无盐度/pH 源）');
+  /* cnRangeSlice：本地按时间区间过滤（不依赖后端接口） */
+  const sl = cn.cnRangeSlice(d, 1000 + 10 * 3600000, 1000 + 20 * 3600000);
+  assert(sl.length === 11 && sl[0].ts === 1000 + 10 * 3600000 && sl[10].ts === 1000 + 20 * 3600000,
+    'cnRangeSlice 本地过滤 [start,end] 区间共 11 条');
+  assert(sl[0].site_id === 'cn_xmd' && sl[0].source === 'public',
+    '本地过滤结果补齐 site_id 与 source=public');
+  /* 水质页慢变量为空 → 盐度/pH 卡片显示「—」（模板已用 ? : 防护） */
+  assert(water.template.indexOf('r.salinity == null ? \'—\'') >= 0, '水质页慢变量表盐度空值显示「—」');
+  assert(water.template.indexOf('NMDC') >= 0, '水质页说明标注 NMDC 台站不测水质要素');
 }
 
 section('验收第 6 条相关：模板 {{ }} 内无裸枚举字段（与 acceptance.py 同口径）');

@@ -82,6 +82,63 @@ HEAT_TARGET_C = 30.5      # 水温骤升目标（白天黑夜都能过 28.0 告�
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 FARM_PATH = os.path.join(ROOT, "data", "farm.json")
 CACHE_DIR = os.path.join(ROOT, "data", "ndbc_cache")
+CN_DATA_DIR = os.path.join(ROOT, "frontend", "pages", "env_data")
+
+# ----------------------------------------------------------------------
+# 中国海洋台站（2026-10 起环境板块真实站点由 NDBC 浮标换成中国台站：
+#   小麦岛 XMD（黄海·青岛）/ 嵊山 SSN（东海·嵊泗）/ 遮浪 ZLG（南海·汕尾）
+#   数据来自国家海洋科学数据中心（NMDC）dataSetId=4 中国台站逐时观测，
+#   由负责人下载后转存 frontend/pages/env_data/*.json（真实公开数据，离线可用）。
+#   说明：NMDC 台站仅提供 气温/风速/海温/风浪高/风浪周期 等要素；
+#   溶解氧 / 盐度 / pH / 光照强度 无公开逐时源，真实站点如实显示「—」，不编造。
+# ----------------------------------------------------------------------
+CN_SITES = [
+    {"site_id": "cn_xmd", "station_id": "XMD", "site_name": "小麦岛海洋站",
+     "region": "黄海（山东青岛）", "lat": "36.0N", "lon": "120.4E",
+     "kind": "obs", "source": "public", "file": "env_cn_xmd.json"},
+    {"site_id": "cn_ssn", "station_id": "SSN", "site_name": "嵊山海洋站",
+     "region": "东海（浙江嵊泗）", "lat": "30.8N", "lon": "122.8E",
+     "kind": "obs", "source": "public", "file": "env_cn_ssn.json"},
+    {"site_id": "cn_zlg", "station_id": "ZLG", "site_name": "遮浪海洋站",
+     "region": "南海（广东汕尾）", "lat": "22.7N", "lon": "115.6E",
+     "kind": "obs", "source": "public", "file": "env_cn_zlg.json"},
+]
+CN_SITE_BY_ID = {s["site_id"]: s for s in CN_SITES}
+
+
+def cn_site(site_id):
+    """按 site_id 找中国台站配置；找不到返回 None。"""
+    return CN_SITE_BY_ID.get(site_id)
+
+
+def _load_cn_data(site_id):
+    """读中国台站 JSON 数据文件（真实公开数据，离线可用）；失败返回 None。"""
+    s = cn_site(site_id)
+    if not s:
+        return None
+    try:
+        with open(os.path.join(CN_DATA_DIR, s["file"]), encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:                       # noqa: BLE001
+        return None
+
+
+def cn_ranges():
+    """中国台站数据时间范围（前端「数据时间范围」列）。"""
+    out = []
+    for s in CN_SITES:
+        d = _load_cn_data(s["site_id"])
+        if d and d.get("records"):
+            out.append({
+                "site_id": s["site_id"],
+                "station_id": s["station_id"],
+                "site_name": s["site_name"],
+                "count": len(d["records"]),
+                "first_ts": d["records"][0]["ts"],
+                "latest_ts": d["records"][-1]["ts"],
+                "source_detail": d.get("source_detail", ""),
+            })
+    return {"sites": out}
 
 
 # ----------------------------------------------------------------------
@@ -203,6 +260,32 @@ def env_series(site_id, minutes=60, storm=False, storm_type="all",
 # ----------------------------------------------------------------------
 # 精确历史区间查询（观测站点读 NDBC 缓存；养殖站点按区间模拟）
 # ----------------------------------------------------------------------
+def cn_sites():
+    """中国台站站点列表（供前端站点切换；不依赖 server.py /api/sites 的 NDBC 站）。"""
+    return {"sites": CN_SITES}
+
+
+def _records_to_public(site_id, recs):
+    """把中国台站/NDBC 缓存记录统一成平台公开数据结构；
+       台站不测字段一律 None（平台口径：不测就给「—」，不编造）。"""
+    return [{
+        "ts": r["ts"],
+        "ts_utc": r.get("ts_utc"),
+        "site_id": site_id,
+        "source": "public",
+        "quality": "good",
+        "wave_height": r.get("wave_height"),
+        "wind_speed": r.get("wind_speed"),
+        "air_temp": r.get("air_temp"),
+        "water_temp": r.get("water_temp"),
+        "current_speed": None,
+        "dissolved_oxygen": None,
+        "salinity": None,
+        "ph": None,
+        "light_intensity": None,
+    } for r in recs]
+
+
 def historical(site_id, start_ts, end_ts, max_points=720):
     """按 [start_ts, end_ts]（毫秒）返回历史时序。"""
     start_ts = int(start_ts or 0)
@@ -211,29 +294,29 @@ def historical(site_id, start_ts, end_ts, max_points=720):
         return {"site_id": site_id, "source": None, "count": 0, "records": [],
                 "note": "end_ts 必须大于 start_ts"}
 
+    # 中国台站（2026-10 换站后真实站点主源）：读本地 JSON 数据文件（离线可用）
+    cs = cn_site(site_id)
+    if cs:
+        d = _load_cn_data(site_id)
+        recs = (d or {}).get("records", [])
+        hits = [r for r in recs if start_ts <= r.get("ts", 0) <= end_ts]
+        out = _records_to_public(site_id, hits[-max_points:])
+        return {
+            "site_id": site_id,
+            "source": "public",
+            "source_detail": (d or {}).get("source_detail", "国家海洋科学数据中心（NMDC）中国台站逐时观测"),
+            "start_ts": start_ts,
+            "end_ts": end_ts,
+            "count": len(out),
+            "records": out,
+        }
+
     sid = station_id_of(site_id)
-    if sid:  # 观测站点：真实公开历史（NDBC 本地缓存）
+    if sid:  # NDBC 观测站点：真实公开历史（本地缓存）
         cache = _load_ndbc_cache(sid)
         recs = (cache or {}).get("records", [])
         hits = [r for r in recs if start_ts <= r.get("ts", 0) <= end_ts]
-        out = []
-        for r in hits[-max_points:]:
-            out.append({
-                "ts": r["ts"],
-                "ts_utc": r.get("ts_utc"),
-                "site_id": site_id,
-                "source": "public",
-                "quality": "good",
-                "wave_height": r.get("wave_height"),
-                "wind_speed": r.get("wind_speed"),
-                "air_temp": r.get("air_temp"),
-                "water_temp": r.get("water_temp"),
-                "current_speed": None,      # NDBC 不提供 → 平台口径：不测，不给仿真值
-                "dissolved_oxygen": None,
-                "salinity": None,
-                "ph": None,
-                "light_intensity": None,
-            })
+        out = _records_to_public(site_id, hits[-max_points:])
         return {
             "site_id": site_id,
             "source": "public",
@@ -337,6 +420,8 @@ def sim_toggle(body):
 # ----------------------------------------------------------------------
 def routes():
     return [
+        ("GET", "/api/env/cn-sites", "cn_sites()"),
+        ("GET", "/api/env/cn-ranges", "cn_ranges()"),
         ("GET", "/api/env/historical", "historical(query)"),
         ("GET", "/api/env/ndbc-ranges", "ndbc_ranges()"),
         ("GET", "/api/env/storm", "storm(query)"),

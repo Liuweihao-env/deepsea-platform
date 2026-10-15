@@ -106,6 +106,85 @@
   };
 
   /* ============================================================
+     中国海洋台站（2026-10 换站：真实站点由 NDBC 浮标换成中国台站）
+     ============================================================
+     三站（用户拍板去掉渤海）：
+       cn_xmd 小麦岛海洋站 XMD · 黄海（山东青岛）36.0N 120.4E
+       cn_ssn 嵊山海洋站   SSN · 东海（浙江嵊泗）30.8N 122.8E
+       cn_zlg 遮浪海洋站   ZLG · 南海（广东汕尾）22.7N 115.6E
+     数据来源：国家海洋科学数据中心（NMDC）dataSetId=4 中国台站逐时观测，
+       由负责人下载后转存 frontend/pages/env_data/*.json（真实公开数据，离线可用）。
+     说明：NMDC 台站仅提供 气温/风速/海温/风浪高/风浪周期 等要素；
+       溶解氧/盐度/pH/光照强度 无公开逐时源 → 真实站点如实显示「—」，不编造。
+       小麦岛浪高/周期齐全；嵊山/遮浪漫高/周期缺测（官方未观测）→ 如实「—」。
+     前端直接读静态 JSON（server.py 不可改、未挂载 env.py 路由，这是唯一
+     既离线可用又不产生 404 console error 的取数路径；如需统一走后端接口，
+     队长可挂载 backend/api/env.py 的 cn-sites/cn-ranges/historical 路由，
+     数据来源与结构完全一致）。
+     ============================================================ */
+  const __ENV_CN_SITES__ = [
+    { site_id: 'cn_xmd', station_id: 'XMD', site_name: '小麦岛海洋站', kind: 'obs',
+      region: '黄海（山东青岛）', lat: '36.0N', lon: '120.4E', file: 'env_cn_xmd.json' },
+    { site_id: 'cn_ssn', station_id: 'SSN', site_name: '嵊山海洋站', kind: 'obs',
+      region: '东海（浙江嵊泗）', lat: '30.8N', lon: '122.8E', file: 'env_cn_ssn.json' },
+    { site_id: 'cn_zlg', station_id: 'ZLG', site_name: '遮浪海洋站', kind: 'obs',
+      region: '南海（广东汕尾）', lat: '22.7N', lon: '115.6E', file: 'env_cn_zlg.json' }
+  ];
+  /* 站点 id → 站点配置 */
+  const __ENV_CN_BY_ID__ = {};
+  __ENV_CN_SITES__.forEach(function (s) { __ENV_CN_BY_ID__[s.site_id] = s; });
+  /* 本地 JSON 数据缓存（页面切换/站点切换复用，不重复拉取） */
+  const __ENV_CN_DATA__ = global.__ENV_CN_DATA__ || (global.__ENV_CN_DATA__ = {});
+  /* 站点列表 = 养殖站点（site_01，来自 API.sites()）+ 中国三站（内置） */
+  function envSites() {
+    const api = (global.API && global.API.sites) ? global.API.sites() : [];
+    const farm = api.filter(function (s) { return s && s.kind === 'farm'; });
+    return farm.concat(__ENV_CN_SITES__);
+  }
+  /* 加载中国台站 JSON（带缓存；失败返回 null，页面如实显示「—」） */
+  function loadCnData(siteId) {
+    const cfg = __ENV_CN_BY_ID__[siteId];
+    if (!cfg) return Promise.resolve(null);
+    if (__ENV_CN_DATA__[siteId]) return Promise.resolve(__ENV_CN_DATA__[siteId]);
+    if (typeof fetch !== 'function') return Promise.resolve(null);
+    return fetch('pages/env_data/' + cfg.file)
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (d) {
+        __ENV_CN_DATA__[siteId] = d;
+        return d;
+      })
+      .catch(function () { return null; });
+  }
+  /* 把 JSON 记录补齐成页面标准记录（缺测字段如实 null，source=public） */
+  function cnRecord(siteId, r) {
+    return {
+      ts: r.ts, site_id: siteId, source: 'public', quality: 'good',
+      wave_height: r.wave_height, wind_speed: r.wind_speed,
+      current_speed: null, air_temp: r.air_temp, water_temp: r.water_temp,
+      dissolved_oxygen: null, salinity: null, ph: null, light_intensity: null
+    };
+  }
+  /* 按分钟窗口取中国台站数据的尾部窗口（逐时数据：每小时一条） */
+  function cnWindow(d, minutes) {
+    const recs = (d && d.records) || [];
+    if (!recs.length) return { fast: [], slow: [] };
+    const win = Math.max(2, Math.round((minutes || 60) * 60 * 1000 / 3600000));
+    return { fast: recs.slice(-win).map(function (r) { return cnRecord(d.site_id, r); }), slow: [] };
+  }
+  /* 按 [start, end] 毫秒过滤中国台站全量记录（历史区间，本地完成，不依赖后端） */
+  function cnRangeSlice(d, start, end) {
+    const recs = (d && d.records) || [];
+    return recs.filter(function (r) { return r.ts >= start && r.ts <= end; })
+               .map(function (r) { return cnRecord(d.site_id, r); });
+  }
+  /* 供测试与后续扩展访问（页面内部直接用闭包函数） */
+  global.__ENV_CN__ = {
+    sites: __ENV_CN_SITES__, byId: __ENV_CN_BY_ID__, data: __ENV_CN_DATA__,
+    envSites: envSites, loadCnData: loadCnData, cnWindow: cnWindow,
+    cnRecord: cnRecord, cnRangeSlice: cnRangeSlice
+  };
+
+  /* ============================================================
      模拟养殖站点：流式仿真数据生成器（问题一 ~ 问题三）
      ============================================================
      为什么不用 API.env（mock / server 整窗重生成）？
@@ -243,7 +322,7 @@
   /* ============================================================
      海况页 /env/sea
      布局（自上而下）：
-       站点切换（顶部） → 数据来源（NDBC 直连） → 数值卡 → 时序 + 事件 →
+       站点切换（顶部） → 数据来源（NMDC 中国台站） → 数值卡 → 时序 + 事件 →
        异常界定指标 → 原始数据 → 调试面板（仿真控制）→ 底部操作条
      ============================================================ */
   PAGES['/env/sea'] = {
@@ -253,7 +332,7 @@
       const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = { seaPer: null, waterPer: null, site: 'site_01' });
       return { pageKey: 'sea', site: S.site || 'site_01', picked: null, series: null,
                tick: 0, unsub: null, timer: null,
-               refreshing: false, refreshMsg: '', refreshOk: null,
+               refreshing: false, refreshMsg: '', refreshOk: null, sourceDetail: '',
                per: S.seaPer, loadSeq: 0, chart: null,
                evOpen: false,
                /* 问题二：历史区间（真实站点公开数据可自定义时间查看更长远历史） */
@@ -280,17 +359,30 @@
         if (s && s.current) return s.current;
         return this.fast.length ? this.fast[this.fast.length - 1] : {};
       },
-      /* 当前站点是不是 NDBC 观测站点 —— 决定页面显示"实测"还是"仿真" */
+      /* 当前站点是不是中国台站（观测站点） —— 决定页面显示"实测"还是"仿真" */
       isObs: function () {
-        const sid = this.site;
-        const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
-        return !!(s && s.kind === 'obs');
+        return !!__ENV_CN_BY_ID__[this.site];
       },
-      /* NDBC 直连状态（读后端缓存，不联网） */
-      ndbc: function () { this.tick; return API.ndbcStatus(); },
-      ndbcList: function () { const n = this.ndbc; return (n && n.stations) || []; },
-      ndbcAny: function () {
-        return this.ndbcList.filter(function (s) { return s.has_cache; }).length;
+      /* 中国台站数据源信息（读本地 JSON 元信息，不联网） */
+      cnList: function () {
+        /* 显式依赖 this.tick：mounted 预载/「重新加载本地数据」完成后 tick++ 触发重算，
+           否则 computed 无响应式依赖会缓存旧值（面板一直显示 0 条） */
+        this.tick;
+        return __ENV_CN_SITES__.map(function (s) {
+          const d = __ENV_CN_DATA__[s.site_id];
+          return {
+            site_id: s.site_id, station_id: s.station_id, site_name: s.site_name,
+            region: s.region, lat: s.lat, lon: s.lon,
+            count: d ? (d.records || []).length : 0,
+            first_ts: d && d.records && d.records.length ? d.records[0].ts : null,
+            latest_ts: d && d.records && d.records.length ? d.records[d.records.length - 1].ts : null,
+            source_detail: d ? d.source_detail : ''
+          };
+        });
+      },
+      /* 是否有任意中国台站数据已加载 */
+      cnAny: function () {
+        return this.cnList.filter(function (s) { return s.count > 0; }).length;
       },
       /* 当前站点的独立状态（默认给一个，防止模板取到 undefined） */
       activePer: function () {
@@ -315,13 +407,13 @@
       /* 原始数据标题：实时窗口 / 历史区间 动态标注 */
       rawTitle: function () {
         const n = this.rawRows.length;
-        const tag = this.isObs ? 'NOAA NDBC 公开历史数据' : '仿真数据';
+        const tag = this.isObs ? '国家海洋科学数据中心（NMDC）中国台站实测' : '仿真数据';
         if (this.rangeMode) return '原始数据（历史区间 · ' + n + ' 条 · ' + tag + '）';
         return '原始数据（最近 ' + this.activePer.minutes + ' 分钟 · ' + n + ' 条 · ' + tag + '）';
       },
-      /* 数据来源：观测站点实时读的是本地缓存，不是每次渲染去联网 */
+      /* 数据来源：真实站点读本地 JSON 数据文件，不是每次渲染去联网 */
       srcLabel: function () {
-        if (this.isObs) return 'NOAA NDBC 公开浮标实测（读本地缓存）';
+        if (this.isObs) return 'NMDC 中国海洋台站实测（读本地数据文件）';
         return '仿真生成（模拟养殖站点）';
       },
       events: function () {
@@ -422,7 +514,7 @@
         if (!S.seaPer) S.seaPer = {};
         this.per = S.seaPer;
         const H = global.__ENV_HELPERS__;
-        API.sites().forEach(function (s) {
+        envSites().forEach(function (s) {
           if (!this.per[s.site_id]) this.per[s.site_id] = H.defaultPer();
         }.bind(this));
       },
@@ -432,9 +524,13 @@
         const p = this.activePer;
         const seq = ++this.loadSeq;
         if (this.isObsSite(this.site)) {
-          /* 观测站点：公开实测数据，不可模拟（问题一），原取数路径保持 */
-          API.resolve(API.env(this.site, p.minutes, {}),
-                      function (d) { if (seq === self.loadSeq) self.series = d; });
+          /* 中国台站：真实公开实测数据（NMDC 官方下载，本地 JSON，离线可用），
+             不可模拟（问题一）；按分钟窗口取尾部窗口 */
+          loadCnData(this.site).then(function (d) {
+            if (seq !== self.loadSeq || !d) return;
+            self.series = cnWindow(d, p.minutes);
+            self.sourceDetail = d.source_detail || '';
+          });
         } else {
           /* 养殖站点：流式仿真生成（问题一~三）——
              触发大风大浪/水温骤升只影响「接下来实时生成」的点；已生成点永不变；
@@ -446,20 +542,21 @@
       },
       siteName: function () {
         const sid = this.site;
-        const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
+        const s = envSites().filter(function (x) { return x.site_id === sid; })[0];
         return s ? s.site_name : sid;
       },
       /* 问题一：事件列表行内圆点颜色类（与公共 event-list 一致：bg-蓝/黄/橙/红） */
       lvClass: function (lv) { return 'bg-' + (lv || 'blue'); },
-      /* 问题一：观测站点（真实公开数据）不参与任何仿真控制 */
+      /* 问题一：中国台站（真实公开数据）不参与任何仿真控制 */
       isObsSite: function (sid) {
-        const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
-        return !!(s && s.kind === 'obs');
+        return !!__ENV_CN_BY_ID__[sid];
       },
       time: function (ts) {
         return new Date(ts).toLocaleString('zh-CN', { hour12: false });
       },
       fmtTs: function (ts) { return global.__ENV_HELPERS__.fmtTs(ts); },
+      /* 站点列表（养殖 site_01 + 中国三站），模板/方法共用 */
+      envSites: function () { return envSites(); },
       /* 界面不许裸英文（硬规矩 3）：来源 / 质量统一转中文 */
       srcCn: function (src) { return global.__ENV_CN__.srcCn(src); },
       qCn: function (q) { return global.__ENV_CN__.qCn(q); },
@@ -510,57 +607,51 @@
         const csv = H.toCsv(['时间', '站点', '来源', '质量', '浪高 (m)', '风速 (m/s)', '流速 (m/s)', '气温 (℃)'], rows);
         downloadCsv('海况原始数据_' + this.siteName() + '.csv', csv);
       },
-      /* 显式拉取最新 —— 全平台唯一的联网动作 */
+      /* 重新加载当前真实站点数据（读本地 JSON 数据文件；NMDC 为人工下载历史数据，
+         不提供在线拉取 —— 如需更新数据，由负责人重新下载后随仓库提交） */
       doRefresh: function () {
         const self = this;
         this.refreshing = true;
-        this.refreshMsg = '正在从 NOAA NDBC 拉取…';
+        this.refreshMsg = '正在重新加载本地数据…';
         this.refreshOk = null;
-        API.resolve(API.ndbcRefresh(), function (r) {
+        /* 清除缓存后重新读取，确保拿到最新文件内容 */
+        delete __ENV_CN_DATA__[this.site];
+        loadCnData(this.site).then(function (d) {
           self.refreshing = false;
-          if (r && r.ok_count > 0) {
+          if (d && d.records && d.records.length) {
             self.refreshOk = true;
-            self.refreshMsg = '已更新 ' + r.ok_count + ' 个浮标' +
-              (r.fail_count ? '（' + r.fail_count + ' 个失败）' : '') + ' —— 页面数据已刷新';
-          } else if (r && r.results && r.results.length) {
-            self.refreshOk = false;
-            const e = r.results[0].error || '未知错误';
-            self.refreshMsg = '拉取失败：' + e + '（不影响演示，页面仍读本地缓存）';
+            self.refreshMsg = '已重新加载 ' + d.records.length + ' 条真实观测数据（' +
+              (d.source_detail || '国家海洋科学数据中心 NMDC') + '）';
           } else {
             self.refreshOk = false;
-            self.refreshMsg = (r && r.error) || '拉取失败（不影响演示，页面仍读本地缓存）';
+            self.refreshMsg = '本地数据文件读取失败（不影响演示，页面仍显示已缓存数据）';
           }
+          self.tick++;   /* 触发 cnList 重算（面板数据条数/时间范围） */
           self.load();
         });
       },
-      /* 问题二：NDBC 数据时间范围（挂载 api/env.py 后精确；未挂载时估算并诚实标注）。
-         注意：不在 mount 时请求 ndbc-ranges（未挂载会 404 并产生浏览器 console error），
-         改为「查询历史」成功（证明后端已挂载）后再请求精确范围。 */
+      /* 中国台站数据时间范围（读本地 JSON 元信息，精确显示，不联网） */
       ndbcRangeText: function (s) {
-        const r = this.ranges && this.ranges[s.station_id];
-        if (r && r.first_ts_utc && r.latest_ts_utc) {
-          return r.first_ts_utc + ' ~ ' + r.latest_ts_utc + ' UTC';
-        }
-        if (s.latest_ts && s.count) {
-          const first = s.latest_ts - (s.count - 1) * 10 * 60 * 1000;
+        if (s.first_ts && s.latest_ts && s.count) {
           const H = global.__ENV_HELPERS__;
-          return '≈' + H.fmtTs(first) + ' ~ ' + H.fmtTs(s.latest_ts) + ' UTC（估算，挂载 api/env.py 后精确）';
+          return H.fmtTs(s.first_ts) + ' ~ ' + H.fmtTs(s.latest_ts) +
+            '（' + s.count + ' 条 · NMDC 实测）';
         }
-        return s.latest_ts_utc || '—';
+        return '—';
       },
       loadRanges: function () {
-        const self = this;
-        if (typeof fetch !== 'function') return;
-        fetch('/api/env/ndbc-ranges')
-          .then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
-          .then(function (d) {
-            const map = {};
-            (d.ranges || []).forEach(function (x) { map[x.station_id] = x; });
-            self.ranges = map;
-          })
-          .catch(function () { /* 未挂载：ndbcRangeText 用估算并标注 */ });
+        /* 数据时间范围直接来自本地 JSON（first_ts/latest_ts），无需后端接口 */
+        const map = {};
+        __ENV_CN_SITES__.forEach(function (s) {
+          const d = __ENV_CN_DATA__[s.site_id];
+          if (d && d.records && d.records.length) {
+            map[s.station_id] = { first_ts: d.records[0].ts, latest_ts: d.records[d.records.length - 1].ts, count: d.records.length };
+          }
+        });
+        this.ranges = map;
       },
-      /* 问题二：真实站点按自定义起止时间查询公开历史（后端 /api/env/historical，随 api/env.py 挂载） */
+      /* 问题二：真实站点按自定义起止时间查询公开历史 —— 本地从全量 JSON 过滤，
+         不依赖后端接口（server.py 未挂载也不会 404；离线可用） */
       queryRange: function () {
         const self = this;
         const st = Date.parse(this.rangeStart);
@@ -570,33 +661,33 @@
           return;
         }
         if (typeof fetch !== 'function') {
-          this.rangeMsg = '当前环境不支持联网查询（本地静态演示）——历史区间接口需队长挂载 backend/api/env.py 后可用';
+          this.rangeMsg = '当前环境不支持读取本地数据文件（本地静态演示受限）';
           return;
         }
         this.rangeMsg = '正在查询历史区间…';
-        fetch('/api/env/historical?site_id=' + this.site + '&start_ts=' + st + '&end_ts=' + en)
-          .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-          .then(function (d) {
-            if (d.count > 0) {
-              const recs = d.records;
-              self.rangeSeries = recs;
-              self.rangeMode = true;
-              /* 后端已挂载（查询成功）→ 顺带取精确「数据时间范围」 */
-              self.loadRanges();
-              self.rangeMsg = '已加载 ' + d.count + ' 条公开历史数据（' +
-                global.__ENV_HELPERS__.fmtTs(recs[0].ts) + ' ~ ' +
-                global.__ENV_HELPERS__.fmtTs(recs[recs.length - 1].ts) + '）';
-            } else {
-              self.rangeMode = false;
-              self.rangeSeries = null;
-              self.rangeMsg = '该时间区间内无数据（真实站点数据范围有限，见「数据时间范围」列）';
-            }
-          })
-          .catch(function (e) {
+        loadCnData(this.site).then(function (d) {
+          if (!d || !d.records || !d.records.length) {
             self.rangeMode = false;
-            self.rangeMsg = '历史区间接口不可用（' + e.message + '）——需队长在 server.py 挂载 backend/api/env.py 后生效（已在 PR 说明）；' +
-                           '当前可按「自定义分钟数」查看尾部窗口。';
-          });
+            self.rangeSeries = null;
+            self.rangeMsg = '真实站点数据未加载（检查 frontend/pages/env_data/ 数据文件）';
+            return;
+          }
+          const recs = cnRangeSlice(d, st, en);
+          if (recs.length) {
+            self.rangeSeries = recs;
+            self.rangeMode = true;
+            self.loadRanges();
+            self.rangeMsg = '已加载 ' + recs.length + ' 条公开历史数据（' +
+              global.__ENV_HELPERS__.fmtTs(recs[0].ts) + ' ~ ' +
+              global.__ENV_HELPERS__.fmtTs(recs[recs.length - 1].ts) + '）';
+          } else {
+            self.rangeMode = false;
+            self.rangeSeries = null;
+            self.rangeMsg = '该时间区间内无数据（真实站点数据范围见「数据时间范围」列，' +
+              global.__ENV_HELPERS__.fmtTs(d.records[0].ts) + ' ~ ' +
+              global.__ENV_HELPERS__.fmtTs(d.records[d.records.length - 1].ts) + '）';
+          }
+        });
       },
       /* 退出历史区间，回到实时尾部窗口 */
       exitRange: function () {
@@ -611,14 +702,14 @@
         if (m < 60) return Math.round(m) + ' 分钟前';
         return (m / 60).toFixed(1) + ' 小时前';
       },
-      /* 这一行浮标就是当前正在看的站点吗（用于高亮 + 「正在看」标记） */
+      /* 这一行中国台站就是当前正在看的站点吗（用于高亮 + 「正在看」标记） */
       isCurrentStation: function (s) {
-        const cur = API.sites().filter(function (x) { return x.site_id === this.site; }.bind(this))[0];
-        return !!(cur && cur.station_id === s.station_id);
+        const cur = envSites().filter(function (x) { return x.site_id === this.site; }.bind(this))[0];
+        return !!(cur && cur.site_id === s.site_id);
       },
-      /* 点浮标行直接切到该站点 —— 让「真实数据」一眼可及，不用去底部找下拉框 */
+      /* 点台站行直接切到该站点 —— 让「真实数据」一眼可及，不用去底部找下拉框 */
       gotoStation: function (s) {
-        const hit = API.sites().filter(function (x) { return x.station_id === s.station_id; })[0];
+        const hit = envSites().filter(function (x) { return x.site_id === s.site_id; })[0];
         if (hit) this.site = hit.site_id;
       },
       /* 可交互时序（问题 2）：缩放 / 框选 / 异常点标记。
@@ -689,14 +780,18 @@
       const self = this;
       const H = global.__ENV_HELPERS__;
       this.ensurePer();
-      /* 问题二：历史区间输入默认 最近 1 天（ndbc-ranges 不在此请求——未挂载会 404 产生 console error，
-         改为查询历史成功后惰性请求，见 queryRange） */
+      /* 问题二：历史区间输入默认 最近 1 天 */
       if (!this.rangeStart) {
         const en = new Date();
         const st = new Date(en.getTime() - 24 * 3600 * 1000);
         this.rangeStart = H.localInput(st);
         this.rangeEnd = H.localInput(en);
       }
+      /* 预热中国三站数据（读本地 JSON 元信息，供「数据时间范围」面板精确显示；
+         失败静默，页面显示「—」不报错） */
+      __ENV_CN_SITES__.forEach(function (s) {
+        loadCnData(s.site_id).then(function () { self.tick++; });
+      });
       this.unsub = API.subscribe(function () { self.tick++; });
       this.load();
       this.$nextTick(function () { self.renderChart(); });
@@ -730,14 +825,14 @@
     template: [
       '<div>',
       '  <page-head title="环境 · 海况"',
-      '    desc="浪高 / 风速 / 流速 / 气温。观测站点为 NOAA NDBC 公开浮标实测，养殖站点为仿真生成"',
+      '    desc="浪高 / 风速 / 流速 / 气温。中国台站为 NMDC 国家海洋科学数据中心实测数据，养殖站点为仿真生成"',
       '    :sources="isObs ? [\'public\'] : [\'simulated\']" />',
       '',
       '  <!-- 站点切换（顶部）：每个站点独立，切换互不影响 -->',
       '  <div class="card" style="margin-bottom:12px">',
       '    <div class="row" style="align-items:center;gap:8px">',
       '      <span class="small muted">站点：</span>',
-      '      <button v-for="s in API.sites()" :key="s.site_id"',
+      '      <button v-for="s in envSites()" :key="s.site_id"',
       '              :class="{ primary: site === s.site_id }" style="padding:3px 10px"',
       '              @click="setSite(s.site_id)">{{ s.site_name }}</button>',
       '      <span style="flex:1"></span>',
@@ -745,56 +840,56 @@
       '    </div>',
       '  </div>',
       '',
-      '  <!-- NDBC 直连面板：说明数据从哪来、缓存新不新、一键拉最新 -->',
+      '  <!-- 中国台站数据源面板：说明数据从哪来、时间范围、一键重新加载 -->',
       '  <div class="card" style="margin-bottom:12px">',
-      '    <div class="card-title">数据来源 · NOAA NDBC 直连</div>',
+      '    <div class="card-title">数据来源 · 国家海洋科学数据中心（NMDC）中国海洋台站</div>',
       '',
       '    <!-- ⚠️ 这块提示是必须的：默认站点是「模拟养殖站点」，数据本来就是仿真；',
-      '         真实浮标数据要切站点才有。不提示的话用户会以为"直连没生效"。 -->',
+      '         真实台站数据要切站点才有。不提示的话用户会以为"数据源没生效"。 -->',
       '    <div class="hint" style="margin-bottom:10px"',
       '         :style="isObs ? { background: \'#F0FDF4\', borderColor: \'#86EFAC\' } : { background: \'#FFFBEB\', borderColor: \'#FDE68A\' }">',
       '      <div style="font-size:14px">',
       '        当前站点：<b>{{ siteName() }}</b>',
-      '        <span v-if="isObs" style="color:#166534"> —— ✅ 正在显示 <b>NOAA NDBC 真实浮标实测数据</b></span>',
+      '        <span v-if="isObs" style="color:#166534"> —— ✅ 正在显示 <b>NMDC 中国海洋台站真实实测数据</b></span>',
       '        <span v-else style="color:#92400E"> —— ⚠️ 这是<b>模拟养殖站点，数据是仿真生成的</b></span>',
       '      </div>',
       '      <div v-if="!isObs" style="margin-top:6px">',
-      '        <b>想看真实浮标数据？</b>点下面任意一个浮标行，或点上方任意一个 <b>NDBC 观测站点</b>。',
+      '        <b>想看真实台站数据？</b>点下面任意一个台站行，或点上方任意一个 <b>中国台站</b>。',
       '      </div>',
       '    </div>',
       '',
       '    <div class="dt-wrap" style="max-height:220px">',
       '      <table class="dt">',
-      '        <thead><tr><th>浮标</th><th>海域</th><th>缓存条数</th><th>数据时间范围</th><th>抓取于</th><th></th></tr></thead>',
+      '        <thead><tr><th>台站</th><th>海域</th><th>坐标</th><th>数据条数</th><th>数据时间范围</th><th></th></tr></thead>',
       '        <tbody>',
-      '          <tr v-for="s in ndbcList" :key="s.station_id"',
+      '          <tr v-for="s in cnList" :key="s.site_id"',
       '              :style="{ background: isCurrentStation(s) ? \'#EFF6FF\' : \'\', cursor: \'pointer\' }"',
       '              @click="gotoStation(s)">',
-      '            <td class="mono">{{ s.station_id }}</td>',
-      '            <td class="small">{{ s.station.cn }}</td>',
+      '            <td class="small"><b>{{ s.site_name }}</b> <span class="muted mono">{{ s.station_id }}</span></td>',
+      '            <td class="small">{{ s.region }}</td>',
+      '            <td class="small mono">{{ s.lat }} {{ s.lon }}</td>',
       '            <td>{{ s.count }}</td>',
       '            <td class="small mono">{{ ndbcRangeText(s) }}</td>',
-      '            <td class="small">{{ ageText(s.age_minutes) }}</td>',
       '            <td class="small">',
       '              <span v-if="isCurrentStation(s)" style="color:#166534;font-weight:600">正在看</span>',
       '              <span v-else class="muted">点此切换 →</span>',
       '            </td>',
       '          </tr>',
-      '          <tr v-if="!ndbcList.length">',
+      '          <tr v-if="!cnList.length">',
       '            <td colspan="6" class="muted small">',
-      '              NDBC 状态需要后端 —— 请双击 <b>启动平台.bat</b> 打开。',
+      '              中国台站数据需要本地数据文件 —— 请双击 <b>启动平台.bat</b> 打开。',
       '            </td>',
       '          </tr>',
       '        </tbody>',
       '      </table>',
       '    </div>',
       '    <div class="hint" style="margin-top:10px">',
-      '      <b>页面读的是本地缓存，不是每次渲染去联网</b> —— 所以<b>拔掉网线也能演示</b>。',
-      '      只有点下面这个按钮才会联网。',
+      '      <b>页面读的是本地数据文件（NMDC 官方下载的逐时实测），不是每次渲染去联网</b> —— 所以<b>拔掉网线也能演示</b>。',
+      '      数据随仓库版本提交；如需更新数据，由负责人从 NMDC 重新下载后替换数据文件。',
       '    </div>',
       '    <div style="margin-top:8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">',
       '      <button class="primary" :disabled="refreshing" @click="doRefresh">',
-      '        {{ refreshing ? \'正在拉取…\' : \'立即拉取最新（联网）\' }}',
+      '        {{ refreshing ? \'正在加载…\' : \'重新加载本地数据\' }}',
       '      </button>',
       '      <span v-if="refreshMsg" class="small"',
       '            :style="{ color: refreshOk === false ? \'#991B1B\' : (refreshOk ? \'#166534\' : \'#6B7280\') }">',
@@ -897,9 +992,8 @@
       '    <div v-if="rangeMsg" class="hint" style="margin-top:8px">{{ rangeMsg }}</div>',
       '    <div class="hint" style="margin-top:8px">',
       '      时间显示为「年/月/日 时:分:秒」，原始数据表按<b>最新在上</b>排列（导出 CSV 保持时间正序）。',
-      '      切换「观测站点」后，本表即为 NOAA NDBC 公开历史实测数据；养殖站点为仿真数据。',
-      '      真实站点按日期区间（年/月/日 时:分）查询历史，需队长在 server.py 挂载 backend/api/env.py（已随 PR 提交说明）；',
-      '      未挂载时可按「自定义分钟数」查看最近窗口。',
+      '      切换「中国台站」后，本表即为 NMDC 国家海洋科学数据中心公开历史实测数据；养殖站点为仿真数据。',
+      '      真实站点按日期区间（年/月/日 时:分）查询历史 —— 数据读取自本地数据文件（离线可用，无需后端挂载）。',
       '    </div>',
       '    <div class="dt-wrap" style="margin-top:8px">',
       '      <table class="dt">',
@@ -932,7 +1026,7 @@
       '      <table class="dt">',
       '        <thead><tr><th>站点</th><th>类型</th><th>状态</th><th>当前模式</th><th>操作</th></tr></thead>',
       '        <tbody>',
-      '          <tr v-for="s in API.sites()" :key="s.site_id">',
+      '          <tr v-for="s in envSites()" :key="s.site_id">',
       '            <td class="small"><b>{{ s.site_name }}</b> <span class="muted mono">{{ s.site_id }}</span></td>',
       '            <td class="small">{{ s.kind === \'obs\' ? \'观测\' : \'养殖\' }}</td>',
       '            <td class="small">',
@@ -982,7 +1076,7 @@
       '    <span style="width:12px"></span>',
       '    <span class="small muted">站点</span>',
       '    <select v-model="site">',
-      '      <option v-for="s in API.sites()" :key="s.site_id" :value="s.site_id">{{ s.site_name }}</option>',
+      '      <option v-for="s in envSites()" :key="s.site_id" :value="s.site_id">{{ s.site_name }}</option>',
       '    </select>',
       '    <span style="flex:1"></span>',
       '    <span class="small muted">口径：{{ API.disclaimer }}</span>',
@@ -1003,8 +1097,8 @@
          仿真控制状态（per）两页各自独立（问题一：海况↔水质互不影响） */
       const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = { seaPer: null, waterPer: null, site: 'site_01' });
       return { pageKey: 'water', site: S.site || 'site_01', picked: null, series: null,
-               per: S.waterPer, loadSeq: 0, chart: null, timer: null,
-               evOpen: false,
+               per: S.waterPer, loadSeq: 0, chart: null, timer: null, sourceDetail: '',
+               tick: 0, evOpen: false,
                show: { water_temp: true, dissolved_oxygen: true, light_intensity: false,
                        salinity: true },
                /* 问题二：历史区间（真实站点公开数据可自定义时间查看更长远历史） */
@@ -1032,12 +1126,10 @@
       },
       pauseText: function () { return global.__ENV_HELPERS__.pausedText(this.per); },
       isObs: function () {
-        const sid = this.site;
-        const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
-        return !!(s && s.kind === 'obs');
+        return !!__ENV_CN_BY_ID__[this.site];
       },
       srcLabel: function () {
-        if (this.isObs) return 'NOAA NDBC 公开浮标实测（读本地缓存）';
+        if (this.isObs) return 'NMDC 中国海洋台站实测（读本地数据文件）';
         return '仿真生成（模拟养殖站点）';
       },
       /* 水温异常点（问题 2）：黄 ≥25.5（R-TEMP-02 偏高提示），红 ≥28.0（R-TEMP-01 水温上限告警） */
@@ -1101,9 +1193,9 @@
       slowRows: function () { return this.slow.slice().reverse(); },
       rawTitle: function () {
         const n = this.rawRows.length;
-        const tag = this.isObs ? 'NOAA NDBC 公开历史数据' : '仿真数据';
+        const tag = this.isObs ? '国家海洋科学数据中心（NMDC）中国台站实测' : '仿真数据';
         if (this.rangeMode) return '原始数据（历史区间 · ' + n + ' 条 · ' + tag + '）';
-        return '原始数据（最近 ' + this.activePer.minutes + ' 分钟 · ' + tag + '）';
+        return '原始数据（最近 ' + this.activePer.minutes + ' 分钟 · ' + n + ' 条 · ' + tag + '）';
       },
       topAlarm: function () { return this.alarms.length ? this.alarms[this.alarms.length - 1] : null; }
     },
@@ -1115,7 +1207,7 @@
         if (!S.waterPer) S.waterPer = {};
         this.per = S.waterPer;
         const H = global.__ENV_HELPERS__;
-        API.sites().forEach(function (s) {
+        envSites().forEach(function (s) {
           if (!this.per[s.site_id]) this.per[s.site_id] = H.defaultPer();
         }.bind(this));
       },
@@ -1125,9 +1217,14 @@
         const p = this.activePer;
         const seq = ++this.loadSeq;
         if (this.isObsSite(this.site)) {
-          /* 观测站点：公开实测数据，不可模拟（问题一），原取数路径保持 */
-          API.resolve(API.env(this.site, p.minutes, {}),
-                      function (d) { if (seq === self.loadSeq) self.series = d; });
+          /* 中国台站：真实公开实测数据（NMDC 官方下载，本地 JSON，离线可用），
+             不可模拟（问题一）；按分钟窗口取尾部窗口。
+             ⚠️ NMDC 台站不测水质要素（溶氧/盐度/pH/光照）——如实「—」，不编造 */
+          loadCnData(this.site).then(function (d) {
+            if (seq !== self.loadSeq || !d) return;
+            self.series = cnWindow(d, p.minutes);
+            self.sourceDetail = d.source_detail || '';
+          });
         } else {
           /* 养殖站点：流式仿真生成（问题一~三）——
              触发水温骤升/设备离线只影响「接下来实时生成」的点；已生成点永不变；
@@ -1138,17 +1235,17 @@
         }
       },
       setSite: function (sid) { this.site = sid; },
+      envSites: function () { return envSites(); },
       siteName: function () {
         const sid = this.site;
-        const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
+        const s = envSites().filter(function (x) { return x.site_id === sid; })[0];
         return s ? s.site_name : sid;
       },
       /* 问题一：事件列表行内圆点颜色类（与公共 event-list 一致：bg-蓝/黄/橙/红） */
       lvClass: function (lv) { return 'bg-' + (lv || 'blue'); },
-      /* 问题一：观测站点（真实公开数据）不参与任何仿真控制 */
+      /* 问题一：中国台站（真实公开数据）不参与任何仿真控制 */
       isObsSite: function (sid) {
-        const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
-        return !!(s && s.kind === 'obs');
+        return !!__ENV_CN_BY_ID__[sid];
       },
       time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
       fmtTs: function (ts) { return global.__ENV_HELPERS__.fmtTs(ts); },
@@ -1196,19 +1293,19 @@
         const csv = H.toCsv(['时间', '站点', '来源', '质量', '水温 (℃)', '溶解氧 (mg/L)', '光照 (lux)'], rows);
         downloadCsv('水质原始数据_' + this.siteName() + '.csv', csv);
       },
-      /* 问题二：真实站点按自定义起止时间查询公开历史（后端 /api/env/historical，随 api/env.py 挂载） */
+      /* 中国台站数据时间范围（读本地 JSON 元信息；水质页无数据源面板，仅用于状态标注） */
       loadRanges: function () {
-        const self = this;
-        if (typeof fetch !== 'function') return;
-        fetch('/api/env/ndbc-ranges')
-          .then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
-          .then(function (d) {
-            const map = {};
-            (d.ranges || []).forEach(function (x) { map[x.station_id] = x; });
-            self.ranges = map;
-          })
-          .catch(function () { /* 未挂载：ndbcRangeText 用估算并标注 */ });
+        const map = {};
+        __ENV_CN_SITES__.forEach(function (s) {
+          const d = __ENV_CN_DATA__[s.site_id];
+          if (d && d.records && d.records.length) {
+            map[s.station_id] = { first_ts: d.records[0].ts, latest_ts: d.records[d.records.length - 1].ts, count: d.records.length };
+          }
+        });
+        this.ranges = map;
       },
+      /* 问题二：真实站点按自定义起止时间查询公开历史 —— 本地从全量 JSON 过滤，
+         不依赖后端接口（server.py 未挂载也不会 404；离线可用） */
       queryRange: function () {
         const self = this;
         const st = Date.parse(this.rangeStart);
@@ -1218,31 +1315,33 @@
           return;
         }
         if (typeof fetch !== 'function') {
-          this.rangeMsg = '当前环境不支持联网查询（本地静态演示）——历史区间接口需队长挂载 backend/api/env.py 后可用';
+          this.rangeMsg = '当前环境不支持读取本地数据文件（本地静态演示受限）';
           return;
         }
         this.rangeMsg = '正在查询历史区间…';
-        fetch('/api/env/historical?site_id=' + this.site + '&start_ts=' + st + '&end_ts=' + en)
-          .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-          .then(function (d) {
-            if (d.count > 0) {
-              const recs = d.records;
-              self.rangeSeries = recs;
-              self.rangeMode = true;
-              self.rangeMsg = '已加载 ' + d.count + ' 条公开历史数据（' +
-                global.__ENV_HELPERS__.fmtTs(recs[0].ts) + ' ~ ' +
-                global.__ENV_HELPERS__.fmtTs(recs[recs.length - 1].ts) + '）';
-            } else {
-              self.rangeMode = false;
-              self.rangeSeries = null;
-              self.rangeMsg = '该时间区间内无数据（真实站点数据范围有限，见「数据时间范围」列）';
-            }
-          })
-          .catch(function (e) {
+        loadCnData(this.site).then(function (d) {
+          if (!d || !d.records || !d.records.length) {
             self.rangeMode = false;
-            self.rangeMsg = '历史区间接口不可用（' + e.message + '）——需队长在 server.py 挂载 backend/api/env.py 后生效（已在 PR 说明）；' +
-                           '当前可按「自定义分钟数」查看尾部窗口。';
-          });
+            self.rangeSeries = null;
+            self.rangeMsg = '真实站点数据未加载（检查 frontend/pages/env_data/ 数据文件）';
+            return;
+          }
+          const recs = cnRangeSlice(d, st, en);
+          if (recs.length) {
+            self.rangeSeries = recs;
+            self.rangeMode = true;
+            self.loadRanges();
+            self.rangeMsg = '已加载 ' + recs.length + ' 条公开历史数据（' +
+              global.__ENV_HELPERS__.fmtTs(recs[0].ts) + ' ~ ' +
+              global.__ENV_HELPERS__.fmtTs(recs[recs.length - 1].ts) + '）';
+          } else {
+            self.rangeMode = false;
+            self.rangeSeries = null;
+            self.rangeMsg = '该时间区间内无数据（真实站点数据范围见「数据时间范围」列，' +
+              global.__ENV_HELPERS__.fmtTs(d.records[0].ts) + ' ~ ' +
+              global.__ENV_HELPERS__.fmtTs(d.records[d.records.length - 1].ts) + '）';
+          }
+        });
       },
       /* 退出历史区间，回到实时尾部窗口 */
       exitRange: function () {
@@ -1343,14 +1442,17 @@
       const self = this;
       const H = global.__ENV_HELPERS__;
       this.ensurePer();
-      /* 问题二：历史区间输入默认 最近 1 天（ndbc-ranges 不在此请求——未挂载会 404 产生 console error，
-         改为查询历史成功后惰性请求，见 queryRange） */
+      /* 问题二：历史区间输入默认 最近 1 天 */
       if (!this.rangeStart) {
         const en = new Date();
         const st = new Date(en.getTime() - 24 * 3600 * 1000);
         this.rangeStart = H.localInput(st);
         this.rangeEnd = H.localInput(en);
       }
+      /* 预热中国三站数据（读本地 JSON 元信息；失败静默，页面显示「—」不报错） */
+      __ENV_CN_SITES__.forEach(function (s) {
+        loadCnData(s.site_id).then(function () { self.tick++; });
+      });
       this.load();
       this.$nextTick(function () { self.renderChart(); });
       /* 轮询：只刷新「未暂停」的当前站点；暂停站点冻结（站点独立）；
@@ -1383,14 +1485,14 @@
     template: [
       '<div>',
       '  <page-head title="环境 · 水质"',
-      '    desc="水温 / 溶解氧 5 秒；盐度 / pH 30 秒慢变量；光照强度 5 秒"',
-      '    :sources="[\'public\',\'simulated\']" />',
+      '    desc="水温 / 溶解氧 5 秒；盐度 / pH 30 秒慢变量；光照强度 5 秒。中国台站为 NMDC 实测（台站不测水质要素，如实显示「—」）"',
+      '    :sources="isObs ? [\'public\'] : [\'simulated\']" />',
       '',
       '  <!-- 站点切换（顶部）：每个站点独立，切换互不影响 -->',
       '  <div class="card" style="margin-bottom:12px">',
       '    <div class="row" style="align-items:center;gap:8px">',
       '      <span class="small muted">站点：</span>',
-      '      <button v-for="s in API.sites()" :key="s.site_id"',
+      '      <button v-for="s in envSites()" :key="s.site_id"',
       '              :class="{ primary: site === s.site_id }" style="padding:3px 10px"',
       '              @click="setSite(s.site_id)">{{ s.site_name }}</button>',
       '      <span style="flex:1"></span>',
@@ -1411,15 +1513,15 @@
       '',
       '  <div class="grid-stats">',
       '    <stat-card name="水温" field="water_temp" unit="℃" :value="last.water_temp"',
-      '               :quality="last.quality" :ts="last.ts" source="simulated" />',
+      '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '    <stat-card name="溶解氧" field="dissolved_oxygen" unit="mg/L" :value="last.dissolved_oxygen"',
-      '               :quality="last.quality" :ts="last.ts" source="simulated" />',
+      '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '    <stat-card name="盐度" field="salinity" unit="‰" :value="lastSlow.salinity"',
-      '               :quality="lastSlow.quality" :ts="lastSlow.ts" source="simulated" />',
+      '               :quality="lastSlow.quality" :ts="lastSlow.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '    <stat-card name="pH 值" field="ph" unit="" :value="lastSlow.ph"',
-      '               :quality="lastSlow.quality" :ts="lastSlow.ts" source="simulated" />',
+      '               :quality="lastSlow.quality" :ts="lastSlow.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '    <stat-card name="光照强度" field="light_intensity" unit="lux" :value="last.light_intensity"',
-      '               :quality="last.quality" :ts="last.ts" source="simulated" />',
+      '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '  </div>',
       '',
       '  <div class="split" style="margin-top:12px">',
@@ -1516,10 +1618,9 @@
       '    <div v-if="rangeMsg" class="hint" style="margin-top:8px">{{ rangeMsg }}</div>',
       '    <div class="hint" style="margin-top:8px">',
       '      时间显示为「年/月/日 时:分:秒」，原始数据表按<b>最新在上</b>排列（导出 CSV 保持时间正序）。',
-      '      快变量（水温 / 溶解氧 / 光照）5 秒一条，慢变量（盐度 / pH）30 秒一条。',
-      '      切换「观测站点」后即为 NOAA NDBC 公开历史实测数据（NDBC 不测水质，故溶氧 / 光照等为「—」）。',
-      '      真实站点按日期区间（年/月/日 时:分）查询历史，需队长在 server.py 挂载 backend/api/env.py（已随 PR 提交说明）；',
-      '      未挂载时可按「自定义分钟数」查看最近窗口。',
+      '      养殖站点：快变量（水温 / 溶解氧 / 光照）5 秒一条，慢变量（盐度 / pH）30 秒一条。',
+      '      中国台站（NMDC 实测）：台站不测水质要素（溶解氧 / 盐度 / pH / 光照均无公开逐时源），故如实显示「—」；',
+      '      仅水温为台站海温实测。真实站点按日期区间（年/月/日 时:分）查询历史 —— 数据读取自本地数据文件（离线可用，无需后端挂载）。',
       '    </div>',
       '    <div class="card-title" style="margin-top:10px;font-size:13px">快变量</div>',
       '    <div class="dt-wrap">',
@@ -1568,7 +1669,7 @@
       '      <table class="dt">',
       '        <thead><tr><th>站点</th><th>类型</th><th>状态</th><th>当前模式</th><th>操作</th></tr></thead>',
       '        <tbody>',
-      '          <tr v-for="s in API.sites()" :key="s.site_id">',
+      '          <tr v-for="s in envSites()" :key="s.site_id">',
       '            <td class="small"><b>{{ s.site_name }}</b> <span class="muted mono">{{ s.site_id }}</span></td>',
       '            <td class="small">{{ s.kind === \'obs\' ? \'观测\' : \'养殖\' }}</td>',
       '            <td class="small">',
@@ -1610,7 +1711,7 @@
       '    <span style="width:12px"></span>',
       '    <span class="small muted">站点</span>',
       '    <select v-model="site">',
-      '      <option v-for="s in API.sites()" :key="s.site_id" :value="s.site_id">{{ s.site_name }}</option>',
+      '      <option v-for="s in envSites()" :key="s.site_id" :value="s.site_id">{{ s.site_name }}</option>',
       '    </select>',
       '    <span style="flex:1"></span>',
       '    <span class="small muted">口径：{{ API.disclaimer }}</span>',
@@ -1639,6 +1740,9 @@
     URL.revokeObjectURL(a.href);
   }
   /* 供模板与 methods 共用（页面作用域内可直接引用） */
-  global.__ENV_CN__ = { srcCn: srcCn, qCn: qCn, downloadCsv: downloadCsv };
+  global.__ENV_CN__ = Object.assign(
+    global.__ENV_CN__ || {},
+    { srcCn: srcCn, qCn: qCn, downloadCsv: downloadCsv }
+  );
 
 })(window);
