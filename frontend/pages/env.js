@@ -401,18 +401,44 @@
         });
         return out;
       },
-      waveLines: function () {
+      /* 🔴 2026-10-15：警报线**只画数据量程附近的**。
+         踩到的坑：中国近海台站的浪高常年在 0.2~2 m（小麦岛 0.4~0.8 m），
+         而 markLine 的 yAxis: 9.0 会把 y 轴**强行撑到 12**，
+         结果真实曲线被压成贴着底边的一条直线 —— 图等于废了。
+         规则：只保留「不超过数据最大值 3 倍」的线，且至少留一条（免得一条都不画）。
+         大风大浪造故障时数据上到 4~5 m，三条线自然都会回来。 */
+      waveLinesAll: function () {
         return [
           { yAxis: 2.5, name: '蓝色警报 2.5m', lineStyle: { color: '#1D4ED8', type: 'dashed', width: 1 } },
           { yAxis: 4.0, name: '黄色警报 4.0m', lineStyle: { color: '#D97706', type: 'dashed', width: 1 } },
           { yAxis: 9.0, name: '红色警报 9.0m', lineStyle: { color: '#991B1B', type: 'dashed', width: 1 } }
         ];
       },
-      windLines: function () {
+      waveLines: function () {
+        return this.linesNearRange(this.waveLinesAll, 'wave_height');
+      },
+      windLinesAll: function () {
         return [{ yAxis: 17.2, name: '8 级大风 17.2m/s', lineStyle: { color: '#991B1B', type: 'dashed', width: 1 } }];
+      },
+      windLines: function () {
+        return this.linesNearRange(this.windLinesAll, 'wind_speed');
       }
     },
     methods: {
+      /* 只留量程附近的阈值线；一条都不满足时，退而留最靠近数据的那一条。
+         ⚠️ 这是**方法不是 computed** —— 它带参数（lines / field）。
+         computed 的 getter 不收参数，放错地方会报 lines.slice is not a function。 */
+      linesNearRange: function (lines, field) {
+        const vals = this.fast.map(function (r) { return r[field]; })
+                             .filter(function (v) { return v !== null && v !== undefined; });
+        if (!vals.length) return (lines || []).slice(0, 1);   // 没数据：留一条做刻度参考
+        const mx = Math.max.apply(null, vals);
+        const cap = Math.max(mx * 3, 1);
+        const keep = (lines || []).filter(function (l) { return l.yAxis <= cap; });
+        if (keep.length) return keep;
+        const nearest = (lines || []).slice().sort(function (a, b) { return a.yAxis - b.yAxis; })[0];
+        return nearest ? [nearest] : [];
+      },
       /* 站点独立状态兜底：API.sites() 可能晚于 data() 返回，这里补齐；
          问题一：仿真控制状态（per）按页面各自独立 —— 海况页用 seaPer，水质页用 waterPer，
          对海况页的操作不会影响水质页（暂停/大风大浪/骤升都互不影响）；
@@ -652,7 +678,7 @@
         }
         const H = global.__ENV_HELPERS__;
         inst.setOption({
-          grid: { left: 56, right: 20, top: 44, bottom: 44 },
+          grid: { left: 56, right: 56, top: 44, bottom: 44 },
           tooltip: { trigger: 'axis' },
           legend: { top: 0, textStyle: { fontSize: 12 } },
           xAxis: {
@@ -660,8 +686,14 @@
             axisLabel: { fontSize: 11, formatter: function (v) { return H.fmtShort(v); } },
             splitLine: { show: false }
           },
-          yAxis: { type: 'value', scale: true, axisLabel: { fontSize: 11 },
-                   splitLine: { lineStyle: { color: '#EEF2F6' } } },
+          /* 双 y 轴：左轴浪高（m），右轴风速（m/s）。
+             不这么分，量级差 10 倍的两个量会把浪高压没（见下面风速 series 的注释）。 */
+          yAxis: [
+            { type: 'value', scale: true, name: '浪高 m', nameTextStyle: { fontSize: 11 },
+              axisLabel: { fontSize: 11 }, splitLine: { lineStyle: { color: '#EEF2F6' } } },
+            { type: 'value', scale: true, name: '风速 m/s', nameTextStyle: { fontSize: 11 },
+              axisLabel: { fontSize: 11 }, splitLine: { show: false } }
+          ],
           /* 缩放 / 框选：inside 滚轮缩放，slider 拖拽框选时间轴 */
           dataZoom: [
             { type: 'inside', start: 0, end: 100 },
@@ -680,6 +712,13 @@
             },
             {
               name: '风速（m/s）', type: 'line', showSymbol: false, smooth: true,
+              /* 🔴 2026-10-15：风速改到**右轴**。
+                 踩到的坑：中国近海台站的浪高常年在 0.2~2 m，而风速能到 10 m/s 以上，
+                 两个量级差 10 倍还共用一个 y 轴 —— 风速把轴撑到 12，
+                 **浪高被压成贴着底边的一条线，等于看不见**。
+                 （仿真数据里浪高是 4.6 m，和风速量级接近，所以以前没暴露。）
+                 水质页早就是双轴（yAxisIndex），这里照同一套做。 */
+              yAxisIndex: 1,
               lineStyle: { width: 1.6, color: '#C2410C' }, itemStyle: { color: '#C2410C' },
               data: fast.map(function (r) { return [r.ts, r.wind_speed]; }),
               markLine: { silent: true, symbol: 'none',
