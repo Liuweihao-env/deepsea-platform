@@ -490,6 +490,7 @@
         feeding_intensity_cn: cn,
         water_temp: water,
         /* 智能板块算出来的建议值 —— 不再要鱼类提供 suggest_feed_kg_h */
+        suggest_kg: +Math.max(0.1, suggest).toFixed(1),
         suggest_kg_h: +Math.max(0.1, suggest).toFixed(1),
         day_total_kg: +(perDay * w).toFixed(1),
         times_per_day: times,

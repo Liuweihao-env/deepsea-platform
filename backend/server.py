@@ -585,6 +585,25 @@ def fish_positions_3d():
             pts.append({"x": round(x, 2), "y": round(y, 2), "z": round(z, 2), "s": s})
         return {"dims": DIMS, "points": pts, "mode": mode, "gen_status": gen}
 
+    # ---- 正常 / 密度骤降 / 摄食异常 的分布 ----
+    # 🔴 2026-10-15 队长修：这一段原来被错插到 fish_cameras() 的 return 之后，
+    #    成了**死代码** —— 结果是 fish_positions_3d() 在**默认（正常）场景下返回 None**，
+    #    三维热力图打开是一片空白，只有切到「鱼群聚集」造故障才有数据。
+    #    语法合法、页面能开、验收 9/9 也过 —— 光看代码或跑验收都发现不了，
+    #    是把函数**实际调了一遍**才抓到的。
+    for _ in range(n_points):
+        # 正常分布：围绕中心 (4.5, 5.2)，鱼群集中在中上层（Z 约 2.5~5.5）
+        x = min(9.9, max(0.1, 4.5 + r.gauss(0, 2.2)))
+        y = min(9.9, max(0.1, 5.2 + r.gauss(0, 2.2)))
+        z = min(7.9, max(0.1, 4.0 + r.gauss(0, 1.6)))
+        if mode == "feeding_abnormal":
+            # 多数静止（状态0），偶发个别异常红点
+            s = 2 if r.random() < 0.04 else 0
+        else:
+            s = 1 if r.random() < 0.18 else 0
+        pts.append({"x": round(x, 2), "y": round(y, 2), "z": round(z, 2), "s": s})
+    return {"dims": DIMS, "points": pts, "mode": mode, "gen_status": gen}
+
 
 def fish_cameras():
     """网箱摄像头状态（4 路，多角度）。
@@ -616,18 +635,6 @@ def fish_cameras():
             "ts": int(time.time() * 1000) if not offline else None,
         })
     return {"cameras": cams, "offline": offline}
-    for _ in range(n_points):
-        # 正常分布：围绕中心 (4.5, 5.2)，鱼群集中在中上层（Z 约 2.5~5.5）
-        x = min(9.9, max(0.1, 4.5 + r.gauss(0, 2.2)))
-        y = min(9.9, max(0.1, 5.2 + r.gauss(0, 2.2)))
-        z = min(7.9, max(0.1, 4.0 + r.gauss(0, 1.6)))
-        if mode == "feeding_abnormal":
-            # 多数静止（状态0），偶发个别异常红点
-            s = 2 if r.random() < 0.04 else 0
-        else:
-            s = 1 if r.random() < 0.18 else 0
-        pts.append({"x": round(x, 2), "y": round(y, 2), "z": round(z, 2), "s": s})
-    return {"dims": DIMS, "points": pts, "mode": mode, "gen_status": gen}
 
 
 def struct_series(minutes=60, storm=False):
@@ -720,6 +727,11 @@ def feed_decision():
         "feeding_intensity": intensity,
         "feeding_intensity_cn": cn,
         "water_temp": water,
+        # 🔴 2026-10-15 队长改：老师意见第 8 条要求 suggest_kg_h → suggest_kg
+        #    （单位从 kg/h 改成「建议总量 kg」）。李志成在前端做了映射，
+        #    但字段本身也该改名，否则接口文档和实现对不上。
+        #    两个名字都给，老前端不会被改坏。
+        "suggest_kg": round(max(0.1, per_day / times * w), 1),
         "suggest_kg_h": round(max(0.1, per_day / times * w), 1),
         "day_total_kg": round(per_day * w, 1),
         "times_per_day": times,

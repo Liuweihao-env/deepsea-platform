@@ -61,8 +61,7 @@
        这是「配置驱动」的落点：这里改了鱼种，全平台阈值跟着变。 */
     { group: '管理', owner: '场长 / 运维', items: [
       { path: '/mgmt/cages',       label: '网箱与站点',   ready: true },
-      { path: '/mgmt/species',     label: '鱼种档案',     ready: true },
-      { path: '/mgmt/ledger',      label: '存箱量台账',   ready: true },
+            { path: '/mgmt/ledger',      label: '存箱量台账',   ready: true },
       { path: '/mgmt/calibration', label: '标定与维护',   ready: true }
     ]}
   ];

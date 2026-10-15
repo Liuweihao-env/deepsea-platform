@@ -92,8 +92,9 @@
       load: function () {
         const self = this;
         API.resolve(API.feedDecision(), function (d) {
-          /* 后端字段仍叫 suggest_kg_h(单次建议量 kg)，前端统一映射为 suggest_kg（行2） */
-          self.dec = Object.assign({}, d, { suggest_kg: d.suggest_kg_h });
+          /* 后端现在返回 suggest_kg（单次建议量 kg）。
+             这层映射保留：老后端只给 suggest_kg_h 时也能跑，兼容。 */
+          self.dec = Object.assign({}, d, { suggest_kg: d.suggest_kg != null ? d.suggest_kg : d.suggest_kg_h });
         });
         API.resolve(API.feedRecords(), function (r) { self.records = r; });
       },
