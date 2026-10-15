@@ -1692,7 +1692,12 @@
          素材只用开放许可的，**必须标出处** —— 会议纪要第 3 条：
          「全删来源标签」**只对视频开例外**，这块别跟着删。
          走公共组件 <video-slot>（components.js），不各写一份。 */
-      '  <video-slot file="env_water.webm" title="水质与水下环境" desc="水下放流实拍 —— 水质与水下环境" license="Public domain（公有领域）" author="U.S. Fish and Wildlife Service（美国鱼类及野生动植物管理局）" source="https://commons.wikimedia.org/wiki/File:Underwater_View_of_Mussel_Release_(36324035925).webm" />',
+      /* 🔴 视频位（老师意见第 9 条）—— **素材待接入**（用户 2026-10-15 决定）。
+         结构已留好，素材找好后只需给 <video-slot> 补四个参数：
+           file / license / author / source
+         ⚠️ 素材定了**必须标出处** —— 会议纪要第 3 条：
+            「全删来源标签」**只对视频开例外**，这块别跟着删。 */
+      '  <video-slot title="水质与水下环境" desc="水下放流实拍 —— 水质与水下环境" />',
     ].join('\n')
   };
 

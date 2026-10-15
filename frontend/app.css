@@ -389,3 +389,35 @@ select, input[type=text], input[type=datetime-local] {
   border-radius: 3px;
 }
 .vslot-credit a { color: var(--c-info); }
+
+/* 视频位占位区：素材还没接入时显示，而不是破图/黑框 */
+.vslot-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  padding: 22px;
+  text-align: center;
+  border: 2px dashed #C7CDD4;
+  border-radius: 6px;
+  background: #F8FAFC;
+  color: #4B5563;
+}
+.vslot-empty-icon {
+  width: 44px;
+  height: 44px;
+  margin-bottom: 10px;
+  border-radius: 50%;
+  background: #E5E7EB;
+  color: #9CA3AF;
+  font-size: 17px;
+  line-height: 44px;
+  text-align: center;
+}
+.vslot-empty code {
+  padding: 1px 5px;
+  background: #EDF0F3;
+  border-radius: 3px;
+  font-size: 12px;
+}

@@ -726,7 +726,12 @@
          素材只用开放许可的，**必须标出处** —— 会议纪要第 3 条：
          「全删来源标签」**只对视频开例外**，这块别跟着删。
          走公共组件 <video-slot>（components.js），不各写一份。 */
-      '  <video-slot file="struct_cage.webm" title="网箱结构与海上布局" desc="马耳他圣保罗湾海上养殖网箱 —— 网箱结构与布局" license="CC BY-SA 3.0" author="Frank Vincentz" source="https://commons.wikimedia.org/wiki/File:Malta_-_St._Paul%27s_Bay_-_Bay%2BFish_farms_(Keppel)_01_(0)_ies.webm" />',
+      /* 🔴 视频位（老师意见第 9 条）—— **素材待接入**（用户 2026-10-15 决定）。
+         结构已留好，素材找好后只需给 <video-slot> 补四个参数：
+           file / license / author / source
+         ⚠️ 素材定了**必须标出处** —— 会议纪要第 3 条：
+            「全删来源标签」**只对视频开例外**，这块别跟着删。 */
+      '  <video-slot title="网箱结构与海上布局" desc="马耳他圣保罗湾海上养殖网箱 —— 网箱结构与布局" />',
     ].join('\n')
   };
 

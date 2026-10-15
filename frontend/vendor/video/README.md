@@ -5,33 +5,43 @@
 >
 > ⚠️ 会议纪要第 3 条：**「全删来源标签」只对视频开例外** —— 视频必须标出处。
 
-| 板块 | 页面 | 文件 | 许可 | 作者 | 体积 |
-|---|---|---|---|---|---|
-| 鱼类 | `/fish/monitor` | `fish_monitor.webm` | Public domain（公有领域） | USFWS Pacific（美国鱼类及野生动植物管理局太平洋区） | 1.28 MB |
-| 环境 | `/env/water` | `env_water.webm` | Public domain（公有领域） | U.S. Fish and Wildlife Service（美国鱼类及野生动植物管理局） | 0.96 MB |
-| 结构安全 | `/struct/overview` | `struct_cage.webm` | CC BY-SA 3.0 | Frank Vincentz | 1.88 MB |
+## 现状：**素材待接入**
 
-**合计 4.12 MB**
+2026-10-15 队长试选的三段素材，**用户看后全部否掉**，已删除。
+**视频位结构保留**，等素材定了再填。
 
-## 出处明细
+## 怎么补素材（两步）
 
-### 鱼类（`/fish/monitor`）
-- 文件：`frontend/vendor/video/fish_monitor.webm`
-- 内容：奇努克鲑在养殖池中 —— 真实养殖环境
-- 许可：Public domain（公有领域）
-- 作者：USFWS Pacific（美国鱼类及野生动植物管理局太平洋区）
-- 来源：https://commons.wikimedia.org/wiki/File:Spring_Chinook_Salmon_in_Holding_Ponds_(5514473081).webm
+1. 把视频文件放进本目录：`frontend/vendor/video/`
+2. 在对应页面的 `<video-slot>` 上补四个参数：
 
-### 环境（`/env/water`）
-- 文件：`frontend/vendor/video/env_water.webm`
-- 内容：水下放流实拍 —— 水质与水下环境
-- 许可：Public domain（公有领域）
-- 作者：U.S. Fish and Wildlife Service（美国鱼类及野生动植物管理局）
-- 来源：https://commons.wikimedia.org/wiki/File:Underwater_View_of_Mussel_Release_(36324035925).webm
+```
+<video-slot
+  file="你的文件名.mp4"          ← 只要文件名，不用写路径
+  title="现场视频"
+  desc="一句话说明画面内容"
+  license="Public domain"        ← 许可
+  author="作者 / 机构"            ← 作者
+  source="https://来源页URL"      ← 来源页
+/>
+```
 
-### 结构安全（`/struct/overview`）
-- 文件：`frontend/vendor/video/struct_cage.webm`
-- 内容：马耳他圣保罗湾海上养殖网箱 —— 网箱结构与布局
-- 许可：CC BY-SA 3.0
-- 作者：Frank Vincentz
-- 来源：https://commons.wikimedia.org/wiki/File:Malta_-_St._Paul%27s_Bay_-_Bay%2BFish_farms_(Keppel)_01_(0)_ies.webm
+**不用改组件、不用改结构。**
+
+## 硬要求
+
+| 项 | 要求 |
+|---|---|
+| 单条体积 | **< 3 MB** |
+| 三段合计 | **< 6 MB** |
+| 格式 | mp4（H.264）或 webm |
+| 许可 | **只用开放许可**：CC-BY / 公有领域 / 政府公开影像 |
+| 出处 | **必须标**（许可 / 作者 / 来源页），这是承诺书要求的 |
+
+## 三个位置
+
+| 板块 | 页面 | 状态 |
+|---|---|---|
+| 鱼类 | `/fish/monitor` 鱼类监测总览 | ⬜ 素材待接入 |
+| 环境 | `/env/water` 环境·水质 | ⬜ 素材待接入 |
+| 结构安全 | `/struct/overview` 结构安全·网箱结构总览 | ⬜ 素材待接入 |

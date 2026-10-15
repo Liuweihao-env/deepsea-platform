@@ -257,15 +257,19 @@
      「四个人各写一份、抄歪了」的亏（来源标签、阈值表都是）。 */
   C.VideoSlot = {
     props: {
-      file:    { type: String, required: true },   /* vendor/video/ 下的文件名 */
+      /* 🔴 file **可选** —— 空着就渲染「待接入」占位区（2026-10-15 用户要求：
+         先把接口留出来，素材找好再填）。填的时候把文件丢进
+         frontend/vendor/video/，这里写文件名即可，**不用改结构**。 */
+      file:    { type: String, default: '' },
       title:   { type: String, default: '现场视频' },
       desc:    { type: String, default: '' },
-      license: { type: String, required: true },   /* 许可，如 Public domain */
-      author:  { type: String, required: true },   /* 作者 / 机构 */
-      source:  { type: String, required: true }    /* 来源页 URL */
+      license: { type: String, default: '' },   /* 许可，如 Public domain（素材定了再填） */
+      author:  { type: String, default: '' },   /* 作者 / 机构（素材定了再填） */
+      source:  { type: String, default: '' }    /* 来源页 URL（素材定了再填） */
     },
     computed: {
-      src: function () { return 'vendor/video/' + this.file; }
+      src: function () { return 'vendor/video/' + this.file; },
+      hasVideo: function () { return !!this.file; }
     },
     mounted: function () {
       /* 🔴 必须在这里手动 muted + play() —— 这是 Vue 的一个坑：
@@ -287,9 +291,22 @@
       '<div class="card">' +
       '  <div class="card-title">{{ title }}</div>' +
       '  <div class="small muted" v-if="desc" style="margin:-4px 0 8px">{{ desc }}</div>' +
-      '  <video ref="v" class="vslot" :src="src" autoplay muted loop playsinline' +
+      '  <video v-if="hasVideo" ref="v" class="vslot" :src="src" autoplay muted loop playsinline' +
       '         preload="metadata"></video>' +
-      '  <div class="vslot-credit">' +
+      '  <!-- 素材还没接入时显示占位区，而不是破图/黑框 -->' +
+      '  <div v-else class="vslot-empty">' +
+      '    <div class="vslot-empty-icon">▶</div>' +
+      '    <div><b>视频位已预留，素材待接入</b></div>' +
+      '    <div class="small muted" style="margin-top:6px;line-height:1.7">' +
+      '      把视频文件放进 <code>frontend/vendor/video/</code>，<br>' +
+      '      再在本页给 <code>&lt;video-slot&gt;</code> 填上 ' +
+      '      <code>file</code> / <code>license</code> / <code>author</code> / <code>source</code> 四个参数即可。' +
+      '    </div>' +
+      '    <div class="small muted" style="margin-top:6px">' +
+      '      要求：单条 &lt; 3 MB、合计 &lt; 6 MB、mp4 或 webm、**只用开放许可素材**。' +
+      '    </div>' +
+      '  </div>' +
+      '  <div v-if="hasVideo" class="vslot-credit">' +
       '    <b>素材出处</b>（承诺书要求标注，此处不适用「全平台删来源字样」）：' +
       '    许可 <b>{{ license }}</b> ｜ 作者 {{ author }} ｜' +
       '    <a :href="source" target="_blank" rel="noopener">来源页</a>' +
