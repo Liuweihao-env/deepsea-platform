@@ -1687,7 +1687,12 @@
       '  <threshold-table owner="环境" />',
       /* 🔴 2026-10-15 队长加：环境的阈值（水温 / 溶解氧）—— 从「参数配置」按 owner 拆回来。
          数据在 components.js 的 C.THRESHOLDS（单一事实来源），
-         本页只按 owner 过滤显示自己那几条。 */
+         本页只按 owner 过滤显示自己那几条。 */,
+      /* 🔴 视频位（老师意见第 9 条）：环境·水质 的常驻播放区。
+         素材只用开放许可的，**必须标出处** —— 会议纪要第 3 条：
+         「全删来源标签」**只对视频开例外**，这块别跟着删。
+         走公共组件 <video-slot>（components.js），不各写一份。 */
+      '  <video-slot file="env_water.webm" title="水质与水下环境" desc="水下放流实拍 —— 水质与水下环境" license="Public domain（公有领域）" author="U.S. Fish and Wildlife Service（美国鱼类及野生动植物管理局）" source="https://commons.wikimedia.org/wiki/File:Underwater_View_of_Mussel_Release_(36324035925).webm" />',
     ].join('\n')
   };
 

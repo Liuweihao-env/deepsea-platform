@@ -288,6 +288,9 @@ const TABS = [
      数据在 components.js 的 C.THRESHOLDS —— **单一事实来源**，
      避免四个人各抄一份抄歪（这正是老师第 3 条「阈值按 owner 拆回各板块」的落法）。 */
   app.component('threshold-table', C.ThresholdTable);
+  /* 视频位（老师意见第 9 条）：三块门面页各一个常驻播放区。
+     ⚠️ 视频**必须标出处** —— 「全删来源标签」只对视频开例外。 */
+  app.component('video-slot', C.VideoSlot);
   app.mount('#app');
 
   window.ROUTER = Router;

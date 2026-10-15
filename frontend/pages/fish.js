@@ -261,7 +261,12 @@
       '    <span style="flex:1"></span>',
       '    <span class="small muted">本期不做：FCR / 活跃度 / 体长离散度 / 死亡个体数（裁定 5）</span>',
       '  </div>',
-      '</div>'
+      '</div>',
+      /* 🔴 视频位（老师意见第 9 条）：鱼类·监测总览 的常驻播放区。
+         素材只用开放许可的，**必须标出处** —— 会议纪要第 3 条：
+         「全删来源标签」**只对视频开例外**，这块别跟着删。
+         走公共组件 <video-slot>（components.js），不各写一份。 */
+      '  <video-slot file="fish_monitor.webm" title="鱼类养殖现场" desc="奇努克鲑在养殖池中 —— 真实养殖环境" license="Public domain（公有领域）" author="USFWS Pacific（美国鱼类及野生动植物管理局太平洋区）" source="https://commons.wikimedia.org/wiki/File:Spring_Chinook_Salmon_in_Holding_Ponds_(5514473081).webm" />',
     ].join('\n')
   };
 

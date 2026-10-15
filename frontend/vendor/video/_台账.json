@@ -1,0 +1,32 @@
+[
+  {
+    "board": "鱼类",
+    "page": "/fish/monitor",
+    "file": "fish_monitor.webm",
+    "license": "Public domain（公有领域）",
+    "author": "USFWS Pacific（美国鱼类及野生动植物管理局太平洋区）",
+    "source": "https://commons.wikimedia.org/wiki/File:Spring_Chinook_Salmon_in_Holding_Ponds_(5514473081).webm",
+    "desc": "奇努克鲑在养殖池中 —— 真实养殖环境",
+    "size_mb": 1.28
+  },
+  {
+    "board": "环境",
+    "page": "/env/water",
+    "file": "env_water.webm",
+    "license": "Public domain（公有领域）",
+    "author": "U.S. Fish and Wildlife Service（美国鱼类及野生动植物管理局）",
+    "source": "https://commons.wikimedia.org/wiki/File:Underwater_View_of_Mussel_Release_(36324035925).webm",
+    "desc": "水下放流实拍 —— 水质与水下环境",
+    "size_mb": 0.96
+  },
+  {
+    "board": "结构安全",
+    "page": "/struct/overview",
+    "file": "struct_cage.webm",
+    "license": "CC BY-SA 3.0",
+    "author": "Frank Vincentz",
+    "source": "https://commons.wikimedia.org/wiki/File:Malta_-_St._Paul%27s_Bay_-_Bay%2BFish_farms_(Keppel)_01_(0)_ies.webm",
+    "desc": "马耳他圣保罗湾海上养殖网箱 —— 网箱结构与布局",
+    "size_mb": 1.88
+  }
+]

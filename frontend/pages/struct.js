@@ -721,7 +721,12 @@
       '    <a href="#/struct/detail"><button>查看监测详情</button></a>',
       '    <a href="#/struct/alarm"><button>查看灾害预警</button></a>',
       '  </div>',
-      '</div>'
+      '</div>',
+      /* 🔴 视频位（老师意见第 9 条）：结构安全·网箱结构总览 的常驻播放区。
+         素材只用开放许可的，**必须标出处** —— 会议纪要第 3 条：
+         「全删来源标签」**只对视频开例外**，这块别跟着删。
+         走公共组件 <video-slot>（components.js），不各写一份。 */
+      '  <video-slot file="struct_cage.webm" title="网箱结构与海上布局" desc="马耳他圣保罗湾海上养殖网箱 —— 网箱结构与布局" license="CC BY-SA 3.0" author="Frank Vincentz" source="https://commons.wikimedia.org/wiki/File:Malta_-_St._Paul%27s_Bay_-_Bay%2BFish_farms_(Keppel)_01_(0)_ies.webm" />',
     ].join('\n')
   };
 

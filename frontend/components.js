@@ -240,6 +240,63 @@
       '</div>'
   };
 
+  /* ---------- 视频位 VideoSlot（老师意见 2026-10-09 第 9 条）----------
+     老师原话：「鱼类、水质、结构各加一个放视频的接口（真实养殖环境视频）」，
+     三块**门面页**各加**常驻播放区**；素材**只用开放许可**的并**标出处**。
+
+     方案 C（队长 2026-10-15 拍板）：短视频 + 静态托管
+       · 单条 < 3 MB、三段合计 < 6 MB（实际 4.12 MB）
+       · 文件放 frontend/vendor/video/，**随包走** —— 断网也能演示
+       · 静音自动循环，演示时不需要人点
+
+     ⚠️ **必须标出处** —— 会议纪要第 3 条：承诺书写明「不侵犯任何第三方著作权」，
+        所以「全平台删除来源字样」**只对视频开例外**，视频的许可/作者/来源必须留在页面上。
+        这一块**不要**跟着删来源标签一起删。
+
+     做成公共组件而不是三份拷贝：这个项目已经反复吃过
+     「四个人各写一份、抄歪了」的亏（来源标签、阈值表都是）。 */
+  C.VideoSlot = {
+    props: {
+      file:    { type: String, required: true },   /* vendor/video/ 下的文件名 */
+      title:   { type: String, default: '现场视频' },
+      desc:    { type: String, default: '' },
+      license: { type: String, required: true },   /* 许可，如 Public domain */
+      author:  { type: String, required: true },   /* 作者 / 机构 */
+      source:  { type: String, required: true }    /* 来源页 URL */
+    },
+    computed: {
+      src: function () { return 'vendor/video/' + this.file; }
+    },
+    mounted: function () {
+      /* 🔴 必须在这里手动 muted + play() —— 这是 Vue 的一个坑：
+         模板里写 muted 属性**不可靠**。Vue 是「先创建元素、再设属性」，
+         而浏览器的自动播放判定发生在元素创建的那一刻 —— 那一刻还没静音，
+         于是 autoplay 被策略拦掉，视频停在第一帧不动。
+         实测：只写 muted 属性时 paused=true；在这里显式设 muted 并 play() 才行。 */
+      const v = this.$refs.v;
+      if (!v) return;
+      v.muted = true;
+      const go = function () {
+        const pr = v.play();
+        if (pr && pr.catch) pr.catch(function () { /* 策略仍拦就让它停在首帧，不报错 */ });
+      };
+      go();
+      v.addEventListener('loadeddata', go);   /* 有些浏览器要等数据到了才让播 */
+    },
+    template:
+      '<div class="card">' +
+      '  <div class="card-title">{{ title }}</div>' +
+      '  <div class="small muted" v-if="desc" style="margin:-4px 0 8px">{{ desc }}</div>' +
+      '  <video ref="v" class="vslot" :src="src" autoplay muted loop playsinline' +
+      '         preload="metadata"></video>' +
+      '  <div class="vslot-credit">' +
+      '    <b>素材出处</b>（承诺书要求标注，此处不适用「全平台删来源字样」）：' +
+      '    许可 <b>{{ license }}</b> ｜ 作者 {{ author }} ｜' +
+      '    <a :href="source" target="_blank" rel="noopener">来源页</a>' +
+      '  </div>' +
+      '</div>'
+  };
+
   /* ---------- 3.2 时序曲线卡 TimeSeriesChart ----------
      状态：① 正常 ② 无数据（"暂无数据"占位，不白屏）③ 单点（散点） */
   C.TrendChart = {
