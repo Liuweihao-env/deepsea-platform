@@ -513,15 +513,19 @@ def check_script_encoding():
 
 
 # ======================================================================
-# 附加 4：NDBC 直连 + 断网可演示（任务 5）
+# 附加 4：中国近海台站数据源 + 断网可演示
 #
 #   这一条守的是**一个设计性质**，不是某个功能：
-#     「后端负责拉，前端负责读本地」—— 页面渲染永远不联网。
-#   所以现场拔掉网线，平台照样打开、数据照样显示。
+#     「数据在仓库里，页面渲染永远不联网」—— 拔掉网线照样打开、照样显示。
 #
-#   2026-10-06 踩过的两个坑，也一并锁在这里：
+#   🔴 2026-10-15 从 NDBC 改成中国近海台站（NMDC）。
+#      依据：老师意见（2026-10-09 会上定，第 5 条）——「环境站点换成中国近海」。
+#      ndbc.py 仍在仓库里（备用数据源，切回去只改 /api/env 一行），但默认走 nmdis。
+#
+#   锁在这里的坑：
 #     · /api/sites 被包成 {"sites": [...]}，前端判 Array.isArray → 站点下拉**一直是空的**
-#     · 观测站点如果拿仿真值补齐缺失字段，"NDBC 真实数据"这句话就成了谎
+#     · 台站不测的字段如果拿仿真值补齐，"中国近海台站实测"这句话就成了谎
+#     · nmdis.py 一旦出现网络调用，"断网也能演示"就不再成立
 # ======================================================================
 def check_ndbc(base):
     import time as _t
@@ -535,18 +539,18 @@ def check_ndbc(base):
         problems.append("/api/sites 返回的不是数组（是 %s）—— 前端站点下拉会空掉"
                         % type(sites).__name__)
 
-    # 2) NDBC 缓存状态
+    # 2) 中国近海台站入库状态
     try:
-        st = get(base, "/api/ndbc/status")
+        st = get(base, "/api/nmdis/status")
     except Exception as e:                                  # noqa: BLE001
         st = None
-        problems.append("取不到 /api/ndbc/status：%s" % e)
+        problems.append("取不到 /api/nmdis/status：%s" % e)
 
     cached = []
     if st:
         cached = [s for s in st.get("stations", []) if s.get("has_cache")]
 
-    # 3) 观测站点返回真实数据，且**缺失字段是 null 不是编的**
+    # 3) 观测站点返回真实数据，且**台站不测的字段是 null 不是编的**
     obs = [s for s in (sites or []) if isinstance(s, dict) and s.get("kind") == "obs"]
     real_ok, null_ok, detail = False, False, ""
     if obs:
@@ -555,76 +559,82 @@ def check_ndbc(base):
         env = get(base, "/api/env?site_id=%s&minutes=60" % sid)
         dt_ms = (_t.time() - t0) * 1000
         detail = "站点 %s 响应 %.0f ms" % (sid, dt_ms)
-        if env.get("source") == "public" and "NDBC" in (env.get("source_detail") or ""):
+        sd = env.get("source_detail") or ""
+        if env.get("source") == "public" and ("NMDC" in sd or "中国" in sd):
             real_ok = True
-        # 浮标不测的字段必须是 None —— 拿仿真值补齐就违规
+        # 台站/水质都不提供的字段必须是 None —— 拿仿真值补齐就违规
+        #   current_speed / light_intensity：中国公开源里没有连续观测
+        #   dissolved_oxygen / salinity / ph：由 waterquality.py 走**慢变量**给，
+        #                                     不该出现在快变量里
         recs = env.get("fast") or []
         if recs:
             lacks = ["current_speed", "dissolved_oxygen", "salinity", "ph", "light_intensity"]
             null_ok = all(r.get(f) is None for r in recs for f in lacks)
-        # 4) 读缓存必须快 —— 联网抓一次要 2~5 秒，读本地是毫秒级
+        # 4) 读本地入库文件必须快 —— 联网抓一次要 2~5 秒，读本地是毫秒级
         if dt_ms > 800:
             problems.append("观测站点响应 %.0f ms，太慢 —— 可能在渲染时联网了" % dt_ms)
+        # 4b) 必须带真实观测时间（延时数据的关键：不能让人以为是"现在"）
+        ow = env.get("observation_window") or {}
+        if not ow.get("last"):
+            problems.append("观测站点没返回 observation_window.last —— "
+                            "延时数据必须显示真实观测时间")
 
-    # 5) 静态守则：整个 ndbc 模块里，只有 fetch() 允许碰网络
-    ndbc_src = ""
-    p = os.path.join(ROOT, "backend", "datasource", "public", "ndbc.py")
-    if os.path.exists(p):
+    # 5) 静态守则：nmdis.py **一次网络调用都不许有**（它是纯读本地文件的模块）
+    p = os.path.join(ROOT, "backend", "datasource", "public", "nmdis.py")
+    if not os.path.exists(p):
+        problems.append("nmdis.py 不存在")
+    else:
         with open(p, encoding="utf-8") as f:
-            ndbc_src = f.read()
-    net_calls = ndbc_src.count("urlopen(")
-    fetch_body = ""
-    m = re.search(r"^def fetch\(.*?\n(?=\ndef |\n# ---)", ndbc_src, re.S | re.M)
-    if m:
-        fetch_body = m.group(0)
-    if net_calls and fetch_body.count("urlopen(") != net_calls:
-        problems.append("ndbc.py 里有 %d 处 urlopen，但只有 %d 处在 fetch() 内 —— "
-                        "渲染路径可能联网了" % (net_calls, fetch_body.count("urlopen(")))
-    if "urlopen" not in fetch_body and net_calls:
-        problems.append("ndbc.py 的网络调用不在 fetch() 内")
+            src = f.read()
+        for bad in ("urlopen(", "requests.", "socket."):
+            if bad in src:
+                problems.append("nmdis.py 里出现了 %r —— 它是纯本地数据源，不该联网" % bad)
 
     # 6) 🔴 **真的把网断掉试一次** —— 这是「断网也能演示」唯一算数的证据。
-    #    把 ndbc 模块的 urlopen 换成必抛异常的假函数，再问它要数据：
+    #    把 urlopen 换成必抛异常的假函数，再问它要数据：
     #    仍然出得来 → 证明渲染路径根本不碰网络。
     offline_proof = ""
     try:
         sys.path.insert(0, os.path.join(ROOT, "backend", "datasource", "public"))
-        import ndbc as _n                                  # noqa: PLC0415
-        orig = _n.urllib.request.urlopen
+        import urllib.request as _u
+        import nmdis as _m                                 # noqa: PLC0415
+        orig = _u.urlopen
 
         def _boom(*a, **k):
             raise RuntimeError("网络已被切断（模拟断网）")
 
-        _n.urllib.request.urlopen = _boom
+        _u.urlopen = _boom
         try:
-            env_off = _n.as_env({"site_id": "site_02", "station_id": "42001"}, 60)
+            env_off = _m.as_env({"site_id": "site_03", "station_id": "XMD"}, 60)
         finally:
-            _n.urllib.request.urlopen = orig
+            _u.urlopen = orig
         if env_off and env_off.get("fast"):
             last = env_off["fast"][-1]
-            offline_proof = ("断网模拟下仍取到 %d 个点（水温 %s）"
-                             % (len(env_off["fast"]), last.get("water_temp")))
+            ow = env_off.get("observation_window") or {}
+            offline_proof = ("断网模拟下仍取到 %d 个点（水温 %s，观测窗口 %s ~ %s）"
+                             % (len(env_off["fast"]), last.get("water_temp"),
+                                ow.get("first") or "—", ow.get("last") or "—"))
         else:
             problems.append("断网模拟下取不到数据 —— 说明渲染路径依赖网络")
     except Exception as e:                                  # noqa: BLE001
         problems.append("断网模拟测试本身失败：%s" % e)
 
     if not problems and real_ok and cached:
-        rec(8, "NDBC 直连 + 断网可演示", PASS,
-            "/api/sites 是裸数组（防回归）；%d 个浮标有本地缓存；观测站点返回实测数据"
-            "（缺失字段给 null 不编）；%s；**%s** —— 现场拔网线不影响演示"
+        rec(8, "中国近海台站 + 断网可演示", PASS,
+            "/api/sites 是裸数组（防回归）；%d 个台站有入库数据；观测站点返回中国近海实测数据"
+            "（不测的字段给 null 不编）；%s；**%s** —— 现场拔网线不影响演示"
             % (len(cached), detail, offline_proof))
     elif not obs:
-        rec(8, "NDBC 直连 + 断网可演示", WARN, "没有观测站点，跳过")
+        rec(8, "中国近海台站 + 断网可演示", WARN, "没有观测站点，跳过")
     else:
         if not real_ok:
-            problems.append("观测站点没有返回 NDBC 实测数据")
+            problems.append("观测站点没有返回中国近海台站实测数据")
         if not cached:
-            problems.append("没有任何浮标缓存 —— 先跑一次 "
-                            "`python backend/datasource/public/ndbc.py` 建缓存")
+            problems.append("没有任何台站入库数据 —— 先跑 "
+                            "`python tools/parse_nmdis.py <原始文件目录>` 建库")
         if not null_ok:
-            problems.append("浮标不测的字段没有给 null —— 疑似拿仿真值补齐了")
-        rec(8, "NDBC 直连 + 断网可演示", FAIL, "；".join(problems))
+            problems.append("台站不测的字段没有给 null —— 疑似拿仿真值补齐了")
+        rec(8, "中国近海台站 + 断网可演示", FAIL, "；".join(problems))
 
 
 

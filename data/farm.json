@@ -164,27 +164,44 @@
     },
     {
       "site_id": "site_02",
-      "site_name": "NDBC 观测站点 42001",
+      "site_name": "中国近海观测站点 · 芝罘岛（渤海海峡）",
       "kind": "obs",
-      "latitude": 25.92,
-      "longitude": -89.64,
-      "station_id": "42001"
+      "latitude": 37.6,
+      "longitude": 121.4,
+      "station_id": "ZFD",
+      "sea": "渤海海峡",
+      "sea_note": "渤海与黄海的分界是【蓬莱角—老铁山角】连线，NMDC 的 14 个台站没有一个在渤海内部。本平台以渤海海峡的芝罘岛代表渤海这一格，页面如实标注；水质另取渤海内部监测点（东营片区）。",
+      "data_source": "NMDC 中国台站观测数据 dataSetId=4"
     },
     {
       "site_id": "site_03",
-      "site_name": "NDBC 观测站点 46001",
+      "site_name": "中国近海观测站点 · 小麦岛（黄海）",
       "kind": "obs",
-      "latitude": 56.3,
-      "longitude": -148.02,
-      "station_id": "46001"
+      "latitude": 36.0,
+      "longitude": 120.4,
+      "station_id": "XMD",
+      "sea": "黄海",
+      "data_source": "NMDC 中国台站观测数据 dataSetId=4"
     },
     {
       "site_id": "site_04",
-      "site_name": "NDBC 观测站点 51001",
+      "site_name": "中国近海观测站点 · 嵊山（东海）",
       "kind": "obs",
-      "latitude": 24.45,
-      "longitude": -162.0,
-      "station_id": "51001"
+      "latitude": 30.8,
+      "longitude": 122.8,
+      "station_id": "SSN",
+      "sea": "东海",
+      "data_source": "NMDC 中国台站观测数据 dataSetId=4"
+    },
+    {
+      "site_id": "site_05",
+      "site_name": "中国近海观测站点 · 遮浪（南海）",
+      "kind": "obs",
+      "latitude": 22.7,
+      "longitude": 115.6,
+      "station_id": "ZLG",
+      "sea": "南海",
+      "data_source": "NMDC 中国台站观测数据 dataSetId=4"
     }
   ],
   "_台账说明": [

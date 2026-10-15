@@ -243,7 +243,7 @@
   /* ============================================================
      海况页 /env/sea
      布局（自上而下）：
-       站点切换（顶部） → 数据来源（NDBC 直连） → 数值卡 → 时序 + 事件 →
+       站点切换（顶部） → 数据来源（中国近海台站） → 数值卡 → 时序 + 事件 →
        异常界定指标 → 原始数据 → 调试面板（仿真控制）→ 底部操作条
      ============================================================ */
   PAGES['/env/sea'] = {
@@ -280,13 +280,13 @@
         if (s && s.current) return s.current;
         return this.fast.length ? this.fast[this.fast.length - 1] : {};
       },
-      /* 当前站点是不是 NDBC 观测站点 —— 决定页面显示"实测"还是"仿真" */
+      /* 当前站点是不是中国近海观测站点 —— 决定页面显示"实测"还是"仿真" */
       isObs: function () {
         const sid = this.site;
         const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
         return !!(s && s.kind === 'obs');
       },
-      /* NDBC 直连状态（读后端缓存，不联网） */
+      /* 观测数据源状态（读后端入库数据，不联网） */
       ndbc: function () { this.tick; return API.ndbcStatus(); },
       ndbcList: function () { const n = this.ndbc; return (n && n.stations) || []; },
       ndbcAny: function () {
@@ -315,13 +315,13 @@
       /* 原始数据标题：实时窗口 / 历史区间 动态标注 */
       rawTitle: function () {
         const n = this.rawRows.length;
-        const tag = this.isObs ? 'NOAA NDBC 公开历史数据' : '仿真数据';
+        const tag = this.isObs ? '中国近海台站实测数据' : '仿真数据';
         if (this.rangeMode) return '原始数据（历史区间 · ' + n + ' 条 · ' + tag + '）';
         return '原始数据（最近 ' + this.activePer.minutes + ' 分钟 · ' + n + ' 条 · ' + tag + '）';
       },
       /* 数据来源：观测站点实时读的是本地缓存，不是每次渲染去联网 */
       srcLabel: function () {
-        if (this.isObs) return 'NOAA NDBC 公开浮标实测（读本地缓存）';
+        if (this.isObs) return '中国近海台站实测（本地入库，不联网）';
         return '仿真生成（模拟养殖站点）';
       },
       events: function () {
@@ -514,13 +514,13 @@
       doRefresh: function () {
         const self = this;
         this.refreshing = true;
-        this.refreshMsg = '正在从 NOAA NDBC 拉取…';
+        this.refreshMsg = '正在拉取…';
         this.refreshOk = null;
         API.resolve(API.ndbcRefresh(), function (r) {
           self.refreshing = false;
           if (r && r.ok_count > 0) {
             self.refreshOk = true;
-            self.refreshMsg = '已更新 ' + r.ok_count + ' 个浮标' +
+            self.refreshMsg = '已更新 ' + r.ok_count + ' 个站点' +
               (r.fail_count ? '（' + r.fail_count + ' 个失败）' : '') + ' —— 页面数据已刷新';
           } else if (r && r.results && r.results.length) {
             self.refreshOk = false;
@@ -533,20 +533,28 @@
           self.load();
         });
       },
-      /* 问题二：NDBC 数据时间范围（2026-10-09 队长已挂载 api/env.py，取的是精确值）。
-         注意：不在 mount 时请求 ndbc-ranges（未挂载会 404 并产生浏览器 console error），
-         改为「查询历史」成功（证明后端已挂载）后再请求精确范围。 */
+      /* 观测数据的真实时间范围。
+         🔴 2026-10-15：观测站点换成中国近海台站（NMDC）后，**时区从 UTC 改成北京时间**——
+            NMDC 的台站数据本来就是按北京时间（UTC+8）上报的（已验证：气温在本地
+            12~15 时最高、20~23 时最低，符合昼夜规律）。
+            所以这里优先用后端返回的 first_local / last_local，标「北京时间」。
+            ndbc-ranges 那条老路（UTC）保留给切回 NDBC 的情况。 */
       ndbcRangeText: function (s) {
+        // 中国近海台站：后端直接给了本地时间的首末观测时刻
+        if (s.first_local && s.last_local) {
+          return s.first_local + ' ~ ' + s.last_local + '（北京时间）';
+        }
         const r = this.ranges && this.ranges[s.station_id];
         if (r && r.first_ts_utc && r.latest_ts_utc) {
           return r.first_ts_utc + ' ~ ' + r.latest_ts_utc + ' UTC';
         }
+        // 兜底：只给了 latest_ts 的时候按 10 分钟间隔反推（NDBC 的粒度）
         if (s.latest_ts && s.count) {
           const first = s.latest_ts - (s.count - 1) * 10 * 60 * 1000;
           const H = global.__ENV_HELPERS__;
-          return H.fmtTs(first) + ' ~ ' + H.fmtTs(s.latest_ts) + ' UTC（实测覆盖范围）';
+          return H.fmtTs(first) + ' ~ ' + H.fmtTs(s.latest_ts) + '（实测覆盖范围）';
         }
-        return s.latest_ts_utc || '—';
+        return s.latest_ts_utc || s.last_local || '—';
       },
       loadRanges: function () {
         const self = this;
@@ -611,12 +619,12 @@
         if (m < 60) return Math.round(m) + ' 分钟前';
         return (m / 60).toFixed(1) + ' 小时前';
       },
-      /* 这一行浮标就是当前正在看的站点吗（用于高亮 + 「正在看」标记） */
+      /* 这一行台站就是当前正在看的站点吗（用于高亮 + 「正在看」标记） */
       isCurrentStation: function (s) {
         const cur = API.sites().filter(function (x) { return x.site_id === this.site; }.bind(this))[0];
         return !!(cur && cur.station_id === s.station_id);
       },
-      /* 点浮标行直接切到该站点 —— 让「真实数据」一眼可及，不用去底部找下拉框 */
+      /* 点台站行直接切到该站点 —— 让「真实数据」一眼可及，不用去底部找下拉框 */
       gotoStation: function (s) {
         const hit = API.sites().filter(function (x) { return x.station_id === s.station_id; })[0];
         if (hit) this.site = hit.site_id;
@@ -730,7 +738,7 @@
     template: [
       '<div>',
       '  <page-head title="环境 · 海况"',
-      '    desc="浪高 / 风速 / 流速 / 气温。观测站点为 NOAA NDBC 公开浮标实测，养殖站点为仿真生成"',
+      '    desc="浪高 / 风速 / 流速 / 气温。观测站点为中国近海台站（NMDC）实测，养殖站点为仿真生成"',
       '    :sources="isObs ? [\'public\'] : [\'simulated\']" />',
       '',
       '  <!-- 站点切换（顶部）：每个站点独立，切换互不影响 -->',
@@ -745,36 +753,41 @@
       '    </div>',
       '  </div>',
       '',
-      '  <!-- NDBC 直连面板：说明数据从哪来、缓存新不新、一键拉最新 -->',
+      '  <!-- 数据来源面板：说明数据从哪来、入库多少条、观测到什么时候 -->',
       '  <div class="card" style="margin-bottom:12px">',
-      '    <div class="card-title">数据来源 · NOAA NDBC 直连</div>',
+      '    <div class="card-title">数据来源 · 中国近海台站观测数据（NMDC）</div>',
       '',
       '    <!-- ⚠️ 这块提示是必须的：默认站点是「模拟养殖站点」，数据本来就是仿真；',
-      '         真实浮标数据要切站点才有。不提示的话用户会以为"直连没生效"。 -->',
+      '         真实台站数据要切站点才有。不提示的话用户会以为"没生效"。 -->',
       '    <div class="hint" style="margin-bottom:10px"',
       '         :style="isObs ? { background: \'#F0FDF4\', borderColor: \'#86EFAC\' } : { background: \'#FFFBEB\', borderColor: \'#FDE68A\' }">',
       '      <div style="font-size:14px">',
       '        当前站点：<b>{{ siteName() }}</b>',
-      '        <span v-if="isObs" style="color:#166534"> —— ✅ 正在显示 <b>NOAA NDBC 真实浮标实测数据</b></span>',
+      '        <span v-if="isObs" style="color:#166534"> —— ✅ 正在显示 <b>中国近海台站实测数据</b></span>',
       '        <span v-else style="color:#92400E"> —— ⚠️ 这是<b>模拟养殖站点，数据是仿真生成的</b></span>',
       '      </div>',
       '      <div v-if="!isObs" style="margin-top:6px">',
-      '        <b>想看真实浮标数据？</b>点下面任意一个浮标行，或点上方任意一个 <b>NDBC 观测站点</b>。',
+      '        <b>想看真实台站数据？</b>点下面任意一行，或点上方任意一个 <b>中国近海观测站点</b>。',
+      '      </div>',
+      '      <div style="margin-top:6px;color:#92400E">',
+      '        ⏱ <b>这是月度更新的延时数据，不是实时。</b>所以本页的「当前值」是',
+      '        <b>最近一次观测</b>的值，卡片上显示的就是它的真实观测时间。',
+      '        NMDC 没有匿名直链，<b>「立即拉取最新」已撤掉</b>。',
       '      </div>',
       '    </div>',
       '',
-      '    <div class="dt-wrap" style="max-height:220px">',
+      '    <div class="dt-wrap" style="max-height:240px">',
       '      <table class="dt">',
-      '        <thead><tr><th>浮标</th><th>海域</th><th>缓存条数</th><th>数据时间范围</th><th>抓取于</th><th></th></tr></thead>',
+      '        <thead><tr><th>站码</th><th>站点</th><th>海区</th><th>入库条数</th><th>观测时间范围</th><th></th></tr></thead>',
       '        <tbody>',
       '          <tr v-for="s in ndbcList" :key="s.station_id"',
       '              :style="{ background: isCurrentStation(s) ? \'#EFF6FF\' : \'\', cursor: \'pointer\' }"',
       '              @click="gotoStation(s)">',
       '            <td class="mono">{{ s.station_id }}</td>',
       '            <td class="small">{{ s.station.cn }}</td>',
+      '            <td class="small">{{ s.station.sea || s.sea }}</td>',
       '            <td>{{ s.count }}</td>',
       '            <td class="small mono">{{ ndbcRangeText(s) }}</td>',
-      '            <td class="small">{{ ageText(s.age_minutes) }}</td>',
       '            <td class="small">',
       '              <span v-if="isCurrentStation(s)" style="color:#166534;font-weight:600">正在看</span>',
       '              <span v-else class="muted">点此切换 →</span>',
@@ -782,24 +795,21 @@
       '          </tr>',
       '          <tr v-if="!ndbcList.length">',
       '            <td colspan="6" class="muted small">',
-      '              NDBC 状态需要后端 —— 请双击 <b>启动平台.bat</b> 打开。',
+      '              台站数据状态需要后端 —— 请双击 <b>启动平台.bat</b> 打开。',
       '            </td>',
       '          </tr>',
       '        </tbody>',
       '      </table>',
       '    </div>',
       '    <div class="hint" style="margin-top:10px">',
-      '      <b>页面读的是本地缓存，不是每次渲染去联网</b> —— 所以<b>拔掉网线也能演示</b>。',
-      '      只有点下面这个按钮才会联网。',
+      '      <b>数据已在仓库里，页面读本地文件，完全不联网</b> —— 所以<b>拔掉网线也能演示</b>。',
+      '      来源：国家海洋科学数据中心（NMDC）「中国台站观测数据」，需注册登录下载，',
+      '      <b>下载一次入库随仓库走</b>；页面显示的就是入库数据的真实观测时间。',
       '    </div>',
-      '    <div style="margin-top:8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">',
-      '      <button class="primary" :disabled="refreshing" @click="doRefresh">',
-      '        {{ refreshing ? \'正在拉取…\' : \'立即拉取最新（联网）\' }}',
-      '      </button>',
-      '      <span v-if="refreshMsg" class="small"',
-      '            :style="{ color: refreshOk === false ? \'#991B1B\' : (refreshOk ? \'#166534\' : \'#6B7280\') }">',
-      '        {{ refreshMsg }}',
-      '      </span>',
+      '    <div class="hint" style="margin-top:6px">',
+      '      <b>关于「渤海」这一格：</b>渤海与黄海的分界是蓬莱角—老铁山角连线，',
+      '      NMDC 的 14 个台站<b>没有一个在渤海内部</b>。本平台以<b>渤海海峡的芝罘岛</b>代表，',
+      '      如实标注；水质另取渤海内部监测点。<b>不假装「渤海里有浮标」。</b>',
       '    </div>',
       '  </div>',
       '',
@@ -897,8 +907,8 @@
       '    <div v-if="rangeMsg" class="hint" style="margin-top:8px">{{ rangeMsg }}</div>',
       '    <div class="hint" style="margin-top:8px">',
       '      时间显示为「年/月/日 时:分:秒」，原始数据表按<b>最新在上</b>排列（导出 CSV 保持时间正序）。',
-      '      切换「观测站点」后，本表即为 NOAA NDBC 公开历史实测数据；养殖站点为仿真数据。',
-      '      真实站点按日期区间（年/月/日 时:分）查询历史，数据来自 NOAA NDBC 公开浮标实测库；',
+      '      切换「观测站点」后，本表即为中国近海台站（NMDC）实测数据；养殖站点为仿真数据。',
+      '      真实站点按日期区间（年/月/日 时:分）查询历史，数据来自 NMDC 中国台站观测数据库；',
       '      未挂载时可按「自定义分钟数」查看最近窗口。',
       '    </div>',
       '    <div class="dt-wrap" style="margin-top:8px">',
@@ -1037,7 +1047,7 @@
         return !!(s && s.kind === 'obs');
       },
       srcLabel: function () {
-        if (this.isObs) return 'NOAA NDBC 公开浮标实测（读本地缓存）';
+        if (this.isObs) return '中国近海台站实测（本地入库，不联网）';
         return '仿真生成（模拟养殖站点）';
       },
       /* 水温异常点（问题 2）：黄 ≥25.5（R-TEMP-02 偏高提示），红 ≥28.0（R-TEMP-01 水温上限告警） */
@@ -1101,7 +1111,7 @@
       slowRows: function () { return this.slow.slice().reverse(); },
       rawTitle: function () {
         const n = this.rawRows.length;
-        const tag = this.isObs ? 'NOAA NDBC 公开历史数据' : '仿真数据';
+        const tag = this.isObs ? '中国近海台站实测数据' : '仿真数据';
         if (this.rangeMode) return '原始数据（历史区间 · ' + n + ' 条 · ' + tag + '）';
         return '原始数据（最近 ' + this.activePer.minutes + ' 分钟 · ' + tag + '）';
       },
@@ -1517,8 +1527,8 @@
       '    <div class="hint" style="margin-top:8px">',
       '      时间显示为「年/月/日 时:分:秒」，原始数据表按<b>最新在上</b>排列（导出 CSV 保持时间正序）。',
       '      快变量（水温 / 溶解氧 / 光照）5 秒一条，慢变量（盐度 / pH）30 秒一条。',
-      '      切换「观测站点」后即为 NOAA NDBC 公开历史实测数据（NDBC 不测水质，故溶氧 / 光照等为「—」）。',
-      '      真实站点按日期区间（年/月/日 时:分）查询历史，数据来自 NOAA NDBC 公开浮标实测库；',
+      '      切换「观测站点」后即为中国近海台站（NMDC）实测数据；溶氧 / pH 另由水质数据源按月提供，流速 / 光照为「—」。',
+      '      真实站点按日期区间（年/月/日 时:分）查询历史，数据来自 NMDC 中国台站观测数据库；',
       '      未挂载时可按「自定义分钟数」查看最近窗口。',
       '    </div>',
       '    <div class="card-title" style="margin-top:10px;font-size:13px">快变量</div>',

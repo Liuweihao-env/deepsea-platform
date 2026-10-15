@@ -20,12 +20,23 @@
         教训：**批量改代码时，锚点没匹配上必须报错，不能静默跳过。** */
   const MOCK_SERIES_SUBS = [];
 
-  /* ---------- 站点（接口文档 8.1） ---------- */
+  /* ---------- 站点（接口文档 8.1） ----------
+     🔴 2026-10-15：观测站点从 NOAA NDBC（美国海域）换成**中国近海**四站。
+        依据：老师意见（2026-10-09 会上定，第 5 条）——「环境站点换成中国近海，
+        站点数 3 → 4（四大海区各一）」。
+        真实数据在后台（backend/datasource/public/nmdis.py，NMDC 台站观测数据）；
+        这里只是**纯前端兜底模式**（双击 index.html 没有后端时）用的站点表，
+        数值仍是仿真 —— 页面上会标"需要后端"。
+
+     ⚠️ 「渤海」这一格：渤海与黄海的分界是【蓬莱角—老铁山角】连线，NMDC 的 14 个
+        台站没有一个在渤海内部。本平台以**渤海海峡的芝罘岛**代表渤海这一格，
+        如实标注；水质另取渤海内部监测点。**不假装「渤海里有浮标」。** */
   const SITES = [
     { site_id: 'site_01', site_name: '模拟养殖站点',   kind: 'farm',   latitude: 26.10, longitude: 119.90, farming_depth_m: 20 },
-    { site_id: 'site_02', site_name: 'NDBC 观测站点 42001', kind: 'obs', latitude: 25.92, longitude: -89.64, farming_depth_m: 0 },
-    { site_id: 'site_03', site_name: 'NDBC 观测站点 46001', kind: 'obs', latitude: 56.30, longitude: -148.02, farming_depth_m: 0 },
-    { site_id: 'site_04', site_name: 'NDBC 观测站点 51001', kind: 'obs', latitude: 24.45, longitude: -162.00, farming_depth_m: 0 }
+    { site_id: 'site_02', site_name: '中国近海观测站点 · 芝罘岛（渤海海峡）', kind: 'obs', station_id: 'ZFD', sea: '渤海海峡', latitude: 37.6, longitude: 121.4, farming_depth_m: 0 },
+    { site_id: 'site_03', site_name: '中国近海观测站点 · 小麦岛（黄海）',   kind: 'obs', station_id: 'XMD', sea: '黄海',   latitude: 36.0, longitude: 120.4, farming_depth_m: 0 },
+    { site_id: 'site_04', site_name: '中国近海观测站点 · 嵊山（东海）',     kind: 'obs', station_id: 'SSN', sea: '东海',   latitude: 30.8, longitude: 122.8, farming_depth_m: 0 },
+    { site_id: 'site_05', site_name: '中国近海观测站点 · 遮浪（南海）',     kind: 'obs', station_id: 'ZLG', sea: '南海',   latitude: 22.7, longitude: 115.6, farming_depth_m: 0 }
   ];
 
   /* ---------- 确定性伪随机：保证不同人打开看到的曲线一致 ---------- */

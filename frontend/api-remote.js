@@ -135,16 +135,23 @@
     }
   });
 
-  /* NDBC 直连状态。**只读缓存状态，不在渲染时联网** ——
-     联网只在用户点「立即拉取最新」时发生（M.ndbcRefresh）。 */
+  /* 观测数据源状态。**只读本地入库状态，不在渲染时联网。**
+     🔴 2026-10-15：观测站点从 NOAA NDBC（美国海域）换成**中国近海**四站
+        （NMDC 中国台站观测数据）。依据：老师意见 2026-10-09 会上定第 5 条。
+        · 接口从 /api/ndbc/status 换成 /api/nmdis/status
+          （后端 nmdis.status() 的字段**照 ndbc 的形状对齐过**，所以这里几乎不用改）
+        · NMDC 是**月度更新的延时数据且无匿名直链**，所以
+          **「立即拉取最新」已撤掉** —— M.ndbcRefresh 保留但页面不再挂按钮。
+        · 想切回 NDBC：把下面这行换回 '/api/ndbc/status' 即可（后端两条路由都在）。 */
   M.ndbcStatus = function () { return M._ndbc || null; };
   function pullNdbcStatus() {
-    get('/api/ndbc/status').then(function (d) {
+    get('/api/nmdis/status').then(function (d) {
       if (d && Array.isArray(d.stations)) { M._ndbc = d; M._bump(); }
     });
   }
   pullNdbcStatus();
 
+  /* 保留：切回 NDBC 时还用得上。当前页面上没有触发入口。 */
   M.ndbcRefresh = function (stations) {
     var body = {};
     if (stations && stations.length) body.stations = stations;
@@ -153,6 +160,16 @@
       return r;
     });
   };
+
+  /* 海水水质（pH / 溶解氧 …）—— 来自国家海洋环境监测中心的公开系统。
+     月度点位均值，不是连续读数；网络不通时返回 null，页面照实提示。 */
+  M.waterQuality = function () { return M._wq || null; };
+  function pullWaterQuality() {
+    get('/api/water?site_id=site_03&months=60').then(function (d) {
+      if (d && Array.isArray(d.records)) { M._wq = d; M._bump(); }
+    });
+  }
+  pullWaterQuality();
 
   /* ---------- 管理板块：养殖生产配置 ----------
      这一块是"配置驱动"的落点：网箱养什么鱼，全平台的阈值与参数就跟着变。

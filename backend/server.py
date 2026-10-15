@@ -54,6 +54,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "datasource", "public"))
 import ndbc                                                  # noqa: E402
 
+# 中国近海台站数据源（backend/datasource/public/nmdis.py）
+#   🔴 2026-10-15 起，观测站点的**默认数据源**。
+#   与 ndbc.py 接口一致 —— 要切回 NDBC，把下面 /api/env 里的 nmdis 换成 ndbc 即可。
+import nmdis                                                 # noqa: E402
+
+# 海水水质数据源（backend/datasource/public/waterquality.py）
+#   补 NMDC 台站没有的 pH / 溶解氧。来源是生态环境部国家海洋环境监测中心的公开系统。
+import waterquality                                          # noqa: E402
+
 # 养殖生产配置（管理板块）：网箱养什么鱼、存箱量台账、设备标定
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import farm as farmmod                                       # noqa: E402
@@ -231,21 +240,38 @@ SITES = [
      "latitude": 26.10, "longitude": 119.90, "farming_depth_m": 20,
      # 主养种：大黄鱼（福建宁德一带的主养鱼种，与站点位置 26.1N/119.9E 对得上）
      "species": "大黄鱼", "stock_init_count": 1200, "stock_init_size_g": 420},
-    # site_02：原为 41001（EAST HATTERAS，美国东海岸），2026-10-06 更换。
-    # 原因：41001 是**停用站** —— 在 NDBC 在册（有经纬度）但 met=n / currents=n，
-    # 所有数据文件实测 404，连站点页都没有。平台上写着它的编号，评委一查就穿帮。
-    # 换成的 42001 实测数据新鲜完整（风速 199/200、水温 196、浪高 103 行有值）。
-    # 选它的理由：与 46001 形成**最大温差（11.5↔30.2℃）和最大海况反差（3.5↔0.4 m）**，
-    # 且暖水场景更接近中国南海的实际养殖条件。
-    {"site_id": "site_02", "site_name": "NDBC 观测站点 42001", "kind": "obs",
-     "station_id": "42001",
-     "latitude": 25.92, "longitude": -89.64, "farming_depth_m": 0},
-    {"site_id": "site_03", "site_name": "NDBC 观测站点 46001", "kind": "obs",
-     "station_id": "46001",
-     "latitude": 56.30, "longitude": -148.02, "farming_depth_m": 0},
-    {"site_id": "site_04", "site_name": "NDBC 观测站点 51001", "kind": "obs",
-     "station_id": "51001",
-     "latitude": 24.45, "longitude": -162.00, "farming_depth_m": 0},
+    # ------------------------------------------------------------------
+    # 🔴 2026-10-15：观测站点从 NOAA NDBC（美国海域）整体换成**中国近海**四站。
+    #    依据：老师意见（2026-10-09 会上定，第 5 条）——「环境站点换成中国近海，
+    #    站点数 3 → 4（四大海区各一）」。
+    #    数据源：国家海洋科学数据中心（NMDC）中国台站观测数据 dataSetId=4，
+    #    需注册登录后下载，**一次性入库随仓库走**，运行时不联网（铁律 R1）。
+    #    模块：backend/datasource/public/nmdis.py（与 ndbc.py 并列，ndbc.py 未改动，
+    #    想切回 NDBC 只需把下面 /api/env 里的 nmdis 换回 ndbc）。
+    #
+    # ⚠️ 关于「渤海」这一格：渤海与黄海的分界是【蓬莱角—老铁山角】连线，
+    #    NMDC 的 14 个台站**没有一个在渤海内部**（芝罘岛/老虎滩/小长山全在连线以东）。
+    #    水质数据也把烟台的点标成「黄海」，互相印证。
+    #    所以本平台以**渤海海峡的芝罘岛**代表渤海这一格，页面如实标注；
+    #    水质另取**渤海内部**的监测点（东营片区），见 waterquality.py。
+    #    **两边都如实标注，不假装「渤海里有浮标」。**
+    #
+    # ⚠️ 时间口径：NMDC 是**月度更新的延时数据**，不是准实时。
+    #    所以平台上不再写「实时」，统一改「**最新观测**」；
+    #    「立即拉取最新」按钮也已撤掉（没有匿名直链）。
+    # ------------------------------------------------------------------
+    {"site_id": "site_02", "site_name": "中国近海观测站点 · 芝罘岛（渤海海峡）",
+     "kind": "obs", "station_id": "ZFD", "sea": "渤海海峡",
+     "latitude": 37.6, "longitude": 121.4, "farming_depth_m": 0},
+    {"site_id": "site_03", "site_name": "中国近海观测站点 · 小麦岛（黄海）",
+     "kind": "obs", "station_id": "XMD", "sea": "黄海",
+     "latitude": 36.0, "longitude": 120.4, "farming_depth_m": 0},
+    {"site_id": "site_04", "site_name": "中国近海观测站点 · 嵊山（东海）",
+     "kind": "obs", "station_id": "SSN", "sea": "东海",
+     "latitude": 30.8, "longitude": 122.8, "farming_depth_m": 0},
+    {"site_id": "site_05", "site_name": "中国近海观测站点 · 遮浪（南海）",
+     "kind": "obs", "station_id": "ZLG", "sea": "南海",
+     "latitude": 22.7, "longitude": 115.6, "farming_depth_m": 0},
 ]
 
 STEP_FAST = 5 * 1000        # 快变量 5 秒
@@ -1053,14 +1079,22 @@ class Handler(BaseHTTPRequestHandler):
             off = one("offline", "0") in ("1", "true")
             off_from = one("offline_from", "")
 
-            # 观测站点：返回 **NDBC 实测数据**（接口文档 8.2 的对外口径靠这里坐实）。
+            # 观测站点：返回**中国近海台站实测数据**（NMDC）。
             # 只在「没有造故障注入」时走真实数据 —— 造故障是对仿真的操作，
             # 往真实数据里注入假故障会让「真实」两个字失效。
             if not (storm or heat or off or off_from):
                 s = next((x for x in SITES if x["site_id"] == site), None)
                 if s and s.get("kind") == "obs":
-                    real = ndbc.as_env(s, minutes)
+                    # 🔴 默认数据源 = 中国近海台站（nmdis）。
+                    #    要切回 NOAA NDBC，把下一行换成 ndbc.as_env(s, minutes) 即可。
+                    real = nmdis.as_env(s, minutes)
                     if real:
+                        # 水质（pH / 溶解氧 …）由另一个数据源补进慢变量序列。
+                        # 它是**月度点位均值**，不是连续读数 —— 每条记录都带 month
+                        # 和 cadence="monthly"，页面必须照实显示。
+                        slow, wq_meta = waterquality.as_slow(s["site_id"])
+                        real["slow"] = slow
+                        real["water_quality"] = wq_meta
                         return self._json(real)
 
             return self._json(env_series(site, minutes, storm, heat,
@@ -1095,8 +1129,32 @@ class Handler(BaseHTTPRequestHandler):
             })
 
         # NDBC 直连：状态查询 + 显式拉取
+        #   ⚠️ 2026-10-15 起观测站点默认走**中国近海台站**，NDBC 退居备用数据源。
+        #      这两个接口保留（切回 NDBC 时还用得上），但页面上已不再挂「立即拉取最新」。
         if p == "/api/ndbc/status":
             return self._json(ndbc.status())
+
+        # 中国近海台站数据源状态（当前默认）
+        if p == "/api/nmdis/status":
+            return self._json(nmdis.status())
+
+        # 海水水质数据源状态（pH / 溶解氧 …）
+        if p == "/api/water/status":
+            return self._json(waterquality.status())
+
+        # 水质月度序列（水质页直接用）
+        if p == "/api/water":
+            sid = one("site_id", "site_03")
+            months = int(one("months", "60"))
+            slow, meta = waterquality.as_slow(sid, months)
+            return self._json({
+                "site_id": sid,
+                "count": len(slow),
+                "note": ("附近监测点的**月度均值**，不是养殖现场实测；"
+                         "月度不连续，缺的月份就是缺，**不插值**"),
+                "meta": meta,
+                "records": slow,
+            })
 
         # ---------- 环境板块扩展接口（刘伟豪的 backend/api/env.py）----------
         # 他的 PR 说明里写着「需队长在 server.py 挂载 backend/api/env.py」——
