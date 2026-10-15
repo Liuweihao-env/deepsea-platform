@@ -721,4 +721,198 @@
     ].join('\n')
   };
 
+  /* ============================================================
+     /ai/crane —— 起重设备页（2026-10-12 按反馈行4新增）
+     查证依据：中集来福士（CIMC Raffles）官网深远海渔业产品页载明，
+       经海001/002/003/006、长鲸一号等大型坐底式网箱（68×68m）
+       每座配「网衣绞车（提网绞车）」10–20 台，平台另带克令吊。
+       出处：https://www.cimc-raffles.com/list-17-1.html
+     本页只做命令闭环：提升/下放/回转/停止 → 命令状态机四态 →
+       超时重试 → 失败升级报警（R-CMD-01）。
+     设备实时状态未接入（API.devices 无 crane_01），按"不编数据"原则显示 —。
+     ============================================================ */
+  PAGES['/ai/crane'] = {
+    data: function () {
+      return {
+        tick: 0, pendingAction: '', inject: '', confirmOpen: false,
+        showSteps: false, unsub: null, sendMsg: ''
+      };
+    },
+    computed: {
+      commands: function () {
+        this.tick;
+        return API.commands().filter(function (c) { return c.command_type === 'crane'; });
+      },
+      latest: function () {
+        this.tick;
+        return this.commands.length ? this.commands[0] : null;
+      },
+      steps: function () {
+        this.tick;
+        const c = this.latest;
+        if (!c) return [];
+        return c.history.map(function (h) {
+          return { t: new Date(h.ts).toLocaleTimeString('zh-CN', { hour12: false }), s: h.status };
+        });
+      },
+      badEnd: function () {
+        this.tick;
+        const c = this.latest;
+        return !!(c && ['failed', 'escalated'].indexOf(c.command_status) >= 0);
+      }
+    },
+    methods: {
+      load: function () { this.tick++; },
+      statusCn: function (s) {
+        return { created: '已创建', sent: '已发出', acknowledged: '已收到回执', success: '成功',
+                 timeout: '超时', retrying: '重试中', failed: '失败', escalated: '升级报警',
+                 cancelled: '已停止' }[s] || s;
+      },
+      actionCn: function (a) {
+        return { up: '提升（提网）', down: '下放（放网）', rotate: '回转', stop: '停止' }[a] || a;
+      },
+      cmdTime: function (c) {
+        const ts = c.created_ts || (c.history && c.history.length ? c.history[0].ts : null);
+        return ts ? new Date(ts).toLocaleString('zh-CN', { hour12: false }) : '—';
+      },
+      ask: function (a) { this.pendingAction = a; this.confirmOpen = true; },
+      cancel: function () { this.confirmOpen = false; },
+      confirm: function () {
+        this.confirmOpen = false;
+        const self = this;
+        this.sendMsg = '';
+        API.sendCommand('crane_01', 'crane',
+          { action: this.pendingAction },
+          this.inject ? { inject: this.inject } : {})
+          .then(function (cmd) {
+            if (cmd && cmd.command_id) {
+              self.lastSent = cmd;
+              self.load();
+            } else {
+              /* post() 不检查 HTTP 状态码，404 时 resolve 错误体。
+                 后端设备表暂无 crane_01（server.py PLATFORM.devices）会拒绝。
+                 按"不静默失败"原则如实提示；PR 里请队长补这台设备。 */
+              self.sendMsg = '命令未生效：后端返回「' +
+                ((cmd && (cmd.msg || cmd.error || cmd.detail || cmd.message)) || '未知错误') +
+                '」——crane_01 尚未在后端设备表注册，需队长在 PLATFORM.devices 补一行起重设备后才能走状态机。';
+            }
+          })
+          .catch(function (e) {
+            self.sendMsg = '命令未生效：' + (e && e.message ? e.message : '网络错误');
+          });
+      }
+    },
+    mounted: function () {
+      this.load();
+      this.unsub = API.bind(this, this.load);
+    },
+    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    template: [
+      '<div>',
+      '  <page-head title="智能 · 起重设备"',
+      '    desc="网衣绞车 / 克令吊命令闭环 —— 提升 / 下放 / 回转 / 停止，走命令状态机四态，超时重试、失败升级报警"',
+      '    :sources="[\'public\']" />',
+      '',
+      '  <div class="hint" style="margin-bottom:12px">',
+      '    <b>查证依据（可追溯）</b>：中集来福士（CIMC Raffles）官网深远海渔业产品页载明，',
+      '    经海 001/002/003/006、长鲸一号等大型坐底式网箱（68×68 m）每座配',
+      '    <b>网衣绞车（提网绞车）10–20 台</b>，平台另带克令吊。',
+      '    <div class="small" style="margin-top:4px">出处：',
+      '      <a href="https://www.cimc-raffles.com/list-17-1.html" target="_blank">cimc-raffles.com · 深远海渔业产品页</a>',
+      '    </div>',
+      '    <div class="small muted" style="margin-top:6px">本页<b>只做命令闭环</b>：设备实时状态未接入（API.devices 无此设备），按"不编数据"原则状态显示 —。</div>',
+      '  </div>',
+      '',
+      '  <div class="grid-stats">',
+      '    <stat-card name="起重设备" field="device" unit="" value="网衣绞车/克令吊" source="public" />',
+      '    <stat-card name="设备在线" field="online" unit="" value="—" source="public" />',
+      '    <stat-card name="运行状态" field="run_state" unit="" value="—" source="public" />',
+      '    <stat-card name="累计命令" field="cmd_count" unit="条" :value="commands.length" source="simulated" />',
+      '  </div>',
+      '',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title">动作下发（先选动作 → 二次确认 → 看状态机）</div>',
+      '    <div class="row" style="gap:10px;flex-wrap:wrap">',
+      '      <button @click="ask(\'up\')">提升（提网）</button>',
+      '      <button @click="ask(\'down\')">下放（放网）</button>',
+      '      <button @click="ask(\'rotate\')">回转</button>',
+      '      <button @click="ask(\'stop\')">停止</button>',
+      '    </div>',
+      '    <div v-if="sendMsg" class="hint small" style="margin-top:10px;background:#FEF2F2;border-color:#FECACA;color:#991B1B">{{ sendMsg }}</div>',
+      '  </div>',
+      '',
+      '  <div class="split" style="margin-top:12px">',
+      '    <div>',
+      '      <div class="card">',
+      '        <div class="card-title">命令状态机</div>',
+      '        <div v-if="!latest" class="todo">还没有下发过起重命令</div>',
+      '        <div v-else>',
+      '          <command-flow :status="latest.command_status" />',
+      '          <div class="kv" style="margin-top:12px">',
+      '            <span class="k">命令号</span><span class="mono">{{ latest.command_id }}</span>',
+      '            <span class="k">动作</span><span>{{ actionCn(latest.params && latest.params.action) }}</span>',
+      '            <span class="k">超时 / 重试</span><span>{{ latest.timeout_ms }} ms / 最多 {{ latest.max_retry }} 次</span>',
+      '            <span class="k">失败原因</span>',
+      '            <span :style="{ color: latest.fail_reason ? \'#991B1B\' : \'#6B7280\' }">{{ latest.fail_reason || \'—\' }}</span>',
+      '          </div>',
+      '          <div v-if="badEnd" class="hint" style="margin-top:10px;background:#FEF2F2;border-color:#FECACA">',
+      '            <b>命令失败已升级报警</b> —— 已进告警中心（不允许静默失败）。',
+      '            <a href="#/alarm">去告警中心看 →</a>',
+      '          </div>',
+      '          <div class="small muted" style="margin-top:10px;cursor:pointer" @click="showSteps = !showSteps">',
+      '            状态变更时间线 {{ showSteps ? \'▾\' : \'▸\' }}</div>',
+      '          <div v-if="showSteps" class="events">',
+      '            <div v-for="(s, i) in steps" :key="i" class="row-item" style="cursor:default">',
+      '              <span class="t">{{ s.t }}</span><span class="d">{{ statusCn(s.s) }}</span>',
+      '            </div>',
+      '          </div>',
+      '        </div>',
+      '      </div>',
+      '',
+      '      <div class="card">',
+      '        <div class="card-title">造故障（验证闭环用）</div>',
+      '        <div class="row" style="gap:8px">',
+      '          <label class="small"><input type="radio" value="" v-model="inject"> 正常</label>',
+      '          <label class="small"><input type="radio" value="timeout" v-model="inject"> 命令超时</label>',
+      '          <label class="small"><input type="radio" value="offline" v-model="inject"> 设备离线</label>',
+      '        </div>',
+      '      </div>',
+      '    </div>',
+      '',
+      '    <div>',
+      '      <div class="card">',
+      '        <div class="card-title">起重命令历史（{{ commands.length }} 条）</div>',
+      '        <div v-if="!commands.length" class="todo">暂无记录</div>',
+      '        <div v-else class="events" style="max-height:420px;overflow:auto">',
+      '          <div v-for="c in commands" :key="c.command_id" class="row-item" style="cursor:default">',
+      '            <span class="t">{{ cmdTime(c) }}</span>',
+      '            <span class="d">',
+      '              <b>{{ actionCn(c.params && c.params.action) }}</b>',
+      '              · <span class="mono small">{{ c.command_id }}</span>',
+      '              · <span :style="{ color: c.command_status === \'success\' ? \'#166534\' : (c.fail_reason ? \'#991B1B\' : \'#6B7280\') }">{{ statusCn(c.command_status) }}</span>',
+      '            </span>',
+      '          </div>',
+      '        </div>',
+      '      </div>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <div v-if="confirmOpen" style="position:fixed;inset:0;background:rgba(17,24,39,.45);display:flex;align-items:center;justify-content:center;z-index:50">',
+      '    <div class="card" style="width:380px">',
+      '      <div class="card-title">确认下发起重命令？</div>',
+      '      <div class="kv">',
+      '        <span class="k">设备</span><span class="mono">crane_01（网衣绞车/克令吊）</span>',
+      '        <span class="k">动作</span><span>{{ actionCn(pendingAction) }}</span>',
+      '        <span class="k">超时</span><span>5000 ms，最多重试 3 次</span>',
+      '      </div>',
+      '      <div class="row" style="justify-content:flex-end;margin-top:14px">',
+      '        <button @click="cancel">取消</button>',
+      '        <button class="primary" @click="confirm">确认下发</button>',
+      '      </div>',
+      '    </div>',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
+
 })(window);
