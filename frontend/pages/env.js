@@ -1688,7 +1688,11 @@
       '    <span style="flex:1"></span>',
       '    <span class="small muted">口径：{{ API.disclaimer }}</span>',
       '  </div>',
-      '</div>'
+      '</div>',
+      '  <threshold-table owner="环境" />',
+      /* 🔴 2026-10-15 队长加：环境的阈值（水温 / 溶解氧）—— 从「参数配置」按 owner 拆回来。
+         数据在 components.js 的 C.THRESHOLDS（单一事实来源），
+         本页只按 owner 过滤显示自己那几条。 */
     ].join('\n')
   };
 

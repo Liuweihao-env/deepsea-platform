@@ -1052,94 +1052,11 @@
       '    </div>',
       '  </div>',
       '  <div v-if="!fishRules.length" class="hint" style="margin-top:12px">鱼种配置尚未加载，水温规则暂不展示。</div>',
-      '</div>'
-    ].join('\n')
-  };
-
-  PAGES['/struct/energy'] = {
-    data: function () { return { minutes: 60, series: [] }; },
-    computed: {
-      last: function () { return this.series.length ? this.series[this.series.length - 1] : {}; },
-      charts: function () {
-        return [
-          { name: '光伏发电功率', unit: 'kW', data: this.series.map(function (r) { return [r.ts, r.pv_power]; }) },
-          { name: '总功耗', unit: 'kW', data: this.series.map(function (r) { return [r.ts, r.total_power]; }) }
-        ];
-      },
-      socCharts: function () {
-        return [{ name: '储能电量', unit: '%', data: this.series.map(function (r) { return [r.ts, r.battery_soc]; }) }];
-      },
-      socLevel: function () {
-        const s = this.last.battery_soc;
-        if (s === undefined) return 'blue';
-        return s < 10 ? 'red' : s < 20 ? 'yellow' : 'blue';
-      },
-      powerPriorityText: function () {
-        if (!this.last.critical_device_id || this.last.power_priority === undefined || this.last.power_priority === null) return '—';
-        return this.last.critical_device_id + ' · 优先级 ' + this.last.power_priority;
-      },
-      criticalPowerText: function () {
-        const v = this.last.critical_device_power_status;
-        return typeof CN.powerSupplyStatus === 'function' ? CN.powerSupplyStatus(v) : '—';
-      }
-    },
-    methods: {
-      load: function () {
-        const self = this;
-        API.resolve(API.struct(this.minutes), function (d) { self.series = d; });
-      },
-      lvCn: function (l) { return { blue: '正常', yellow: '低电量', red: '严重低电量' }[l] || l; }
-    },
-    mounted: function () {
-      /* API.bind：数据变化重算 + 定时刷新曲线 */
-      this.unsub = API.bind(this, this.load);
-      this.load();
-    },
-    beforeUnmount: function () { if (this.unsub) { this.unsub(); this.unsub = null; } },
-    watch: { minutes: function () { this.load(); } },
-    template: [
-      '<div class="struct-page">',
-      '  <page-head title="结构安全 · 能源保障"',
-      '    desc="光伏 / 储能 / 功耗。<b>kWh 是能量、kW 是功率</b> —— 两者差一个时间维度（裁定 N3）"',
-      '    :sources="[\'simulated\']" />',
-      '',
-      '  <div class="grid-stats">',
-      '    <stat-card name="光伏发电功率" field="pv_power" unit="kW" :value="last.pv_power" source="simulated" />',
-      '    <stat-card name="今日发电量" field="pv_energy_today" unit="kWh" :value="last.pv_energy_today" source="simulated" />',
-      '    <stat-card name="储能电量百分比" field="battery_soc" unit="%" :value="last.battery_soc" source="simulated" />',
-      '    <stat-card name="储能电量（能量）" field="battery_energy" unit="kWh" :value="last.battery_energy" source="simulated" />',
-      '    <stat-card name="电池总容量" field="battery_capacity_kwh" unit="kWh" :value="last.battery_capacity_kwh" source="demo" />',
-      '    <stat-card name="总功耗" field="total_power" unit="kW" :value="last.total_power" source="simulated" />',
-      '    <stat-card name="能源自给率" field="energy_self_sufficiency" unit="%" :value="last.energy_self_sufficiency" :digits="0" source="simulated" />',
-      '    <stat-card name="低电量状态" field="low_battery_status" unit="" :value="lvCn(socLevel)" source="simulated" />',
-      '  </div>',
-      '',
-      '  <div class="split" style="margin-top:12px">',
-      '    <trend-chart title="光伏发电与总功耗" :series="charts" />',
-      '    <trend-chart title="储能电量变化" :series="socCharts"',
-      '      :thresholds="[{value:20,label:\'低电量黄线 20%\',color:\'#92400E\'},{value:10,label:\'严重低电量红线 10%\',color:\'#991B1B\'}]" />',
-      '  </div>',
-      '',
-      '  <div class="card" style="margin-top:12px">',
-      '    <div class="card-title">关键设备供电优先级</div>',
-      '    <div class="grid-stats">',
-      '      <stat-card name="关键设备与优先级" field="critical_device_id / power_priority" unit="" :value="powerPriorityText" source="simulated" :ts="last.ts" />',
-      '      <stat-card name="关键设备供电状态" field="critical_device_power_status" unit="" :value="criticalPowerText" source="simulated" :ts="last.ts" />',
-      '    </div>',
-      '    <div v-if="!last.critical_device_id || last.power_priority === undefined" class="small muted" style="margin-top:8px">当前结构接口尚未提供关键设备编号和优先级配置，因此暂显示 —。</div>',
-      '  </div>',
-      '',
-      '  <div class="hint" style="margin-top:12px">',
-      '    换算关系：<code>battery_energy = battery_soc / 100 × battery_capacity_kwh</code>。',
-      '    有容量的好处是能源保障页能显示「<b>还剩 x kWh</b>」，而不是只有「剩 y%」—— 后者说不出还剩多少电。',
-      '  </div>',
-      '',
-      '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
-      '    <time-range v-model="minutes" />',
-      '    <span style="flex:1"></span>',
-      '    <span class="small muted">低电量两条线：20% 黄、10% 红</span>',
-      '  </div>',
-      '</div>'
+      '</div>',
+      '  <threshold-table owner="结构安全" />',
+      /* 🔴 2026-10-15 队长加：结构安全的阈值（锚泊张力 / 网箱倾斜）—— 从「参数配置」按 owner 拆回来。
+         数据在 components.js 的 C.THRESHOLDS（单一事实来源），
+         本页只按 owner 过滤显示自己那几条。 */
     ].join('\n')
   };
 

@@ -427,4 +427,364 @@
     ].join('\n')
   };
 
+
+
+/* 🔴 2026-10-15 队长搬：老师意见 2026-10-09 第 3 条 —— 拆掉「跨板块」，
+   /alarm 从跨板块**挪进管理**（/alarm → /mgmt/alarm）。源码原样搬过来，只改了路由键。 */
+  PAGES['/mgmt/alarm'] = {
+    data: function () { return { tick: 0, fLevel: '', fStatus: '', fType: '', unsub: null,
+      /* 🔴 2026-10-15 队长加：追溯查询并进来了 —— 点一行就地展开三段，不再跳页。
+         原来 /trace 是一整页，老师第 3 条要求删除，能力并入告警中心。 */
+      picked: null }; },
+    computed: {
+      all: function () { this.tick; return API.alarms(); },
+      types: function () {
+        const s = {};
+        this.all.forEach(function (a) { s[a.alarm_type] = 1; });
+        return Object.keys(s);
+      },
+      rows: function () {
+        const self = this;
+        return this.all.filter(function (a) {
+          if (self.fLevel && a.risk_level !== self.fLevel) return false;
+          if (self.fStatus && a.alarm_status !== self.fStatus) return false;
+          if (self.fType && a.alarm_type !== self.fType) return false;
+          return true;
+        });
+      },
+      counts: function () {
+        const c = { red: 0, orange: 0, yellow: 0, blue: 0 };
+        this.all.forEach(function (a) { if (c[a.risk_level] !== undefined) c[a.risk_level]++; });
+        return c;
+      }
+    },
+    methods: {
+      lvCn: function (l) { return { blue: '蓝色', yellow: '黄色', orange: '橙色', red: '红色' }[l] || l; },
+      lvCls: function (l) { return 'bg-' + (l || 'blue'); },
+      typeCn: function (t) {
+        return { tension: '锚泊张力', tilt: '网箱倾斜', net_damage: '网衣破损',
+                 deformation: '结构形变', low_battery: '低电量', power_supply: '供电异常' }[t] || t;
+      },
+      stCn: function (s) { return { active: '活跃', acknowledged: '已确认', recovered: '已恢复' }[s] || s; },
+      hdCn: function (s) { return { pending: '待处置', handling: '处置中', handled: '已处置', failed: '处置失败' }[s] || s; },
+      time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
+      /* 点一行 → 就地展开/收起三段（原来是跳去 /trace 整页） */
+      pick: function (a) {
+        this.picked = (this.picked && this.picked.alarm_event_id === a.alarm_event_id) ? null : a;
+      },
+      /* 快照里的 ts 是毫秒数，直接甩原始 JSON 不好看 —— 按通用规范格式化成时间 */
+      snapRows: function (a) {
+        const snap = (a && a.trigger_snapshot) || {};
+        const self = this;
+        return Object.keys(snap).map(function (k) {
+          let v = snap[k];
+          if (typeof v === 'number' && /ts|time/i.test(k) && v > 1e11) v = self.time(v);
+          if (v === null || v === undefined) v = '—';
+          return { k: k, v: String(v) };
+        });
+      },
+      cfCn: function (s2) { return { unconfirmed: '未确认', confirmed: '已确认' }[s2] || s2 || '—'; }
+    },
+    mounted: function () {
+      const self = this;
+      this.unsub = API.subscribe(function () { self.tick++; });
+    },
+    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    template: [
+      '<div>',
+      '  <page-head title="管理 · 告警中心"',
+      '    desc="顶层统一做一套（裁定 11 B 案），各板块只提供 <code>alarm_event</code> —— 灾害预警、投喂动作、鱼类异常都进这里"',
+      '    :sources="[\'simulated\']" />',
+      '',
+      '  <div class="grid-stats">',
+      '    <stat-card name="红色预警" unit="条" :value="counts.red" :digits="0" source="simulated" />',
+      '    <stat-card name="橙色预警" unit="条" :value="counts.orange" :digits="0" source="simulated" />',
+      '    <stat-card name="黄色预警" unit="条" :value="counts.yellow" :digits="0" source="simulated" />',
+      '    <stat-card name="蓝色预警" unit="条" :value="counts.blue" :digits="0" source="simulated" />',
+      '  </div>',
+      '',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="row" style="align-items:center">',
+      '      <span class="small muted">等级</span>',
+      '      <select v-model="fLevel"><option value="">全部</option><option value="red">红色</option><option value="orange">橙色</option><option value="yellow">黄色</option><option value="blue">蓝色</option></select>',
+      '      <span class="small muted">状态</span>',
+      '      <select v-model="fStatus"><option value="">全部</option><option value="active">活跃</option><option value="acknowledged">已确认</option><option value="recovered">已恢复</option></select>',
+      '      <span class="small muted">类型</span>',
+      '      <select v-model="fType"><option value="">全部</option><option v-for="t in types" :key="t" :value="t">{{ typeCn(t) }}</option></select>',
+      '      <span style="flex:1"></span>',
+      '      <span class="small muted">共 {{ rows.length }} 条</span>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <div class="card">',
+      '    <div class="card-title">告警列表（<b>点一行就地展开追溯三段</b>）</div>',
+      '    <div v-if="!rows.length" class="todo">没有符合条件的告警</div>',
+      '    <div v-else class="dt-wrap">',
+      '      <table class="dt">',
+      '        <thead><tr><th>事件编号</th><th>等级</th><th>类型</th><th>规则</th><th>预警时间</th><th>状态</th><th>处置</th><th>追溯</th></tr></thead>',
+      '        <tbody>',
+      '          <template v-for="a in rows" :key="a.alarm_event_id">',
+      '          <tr @click="pick(a)" style="cursor:pointer"',
+      '              :style="picked && picked.alarm_event_id === a.alarm_event_id ? { background: \'#EFF6FF\' } : {}">',
+      '            <td class="mono">{{ a.alarm_event_id }}</td>',
+      '            <td><span class="dot" :class="lvCls(a.risk_level)"></span>{{ lvCn(a.risk_level) }}</td>',
+      '            <td>{{ typeCn(a.alarm_type) }}</td>',
+      '            <td><span class="mono small">{{ a.rule_id }}</span> {{ a.rule_name }}</td>',
+      '            <td>{{ time(a.alarm_ts) }}</td>',
+      '            <td>{{ stCn(a.alarm_status) }}</td>',
+      '            <td>{{ hdCn(a.handle_status) }}</td>',
+      '            <td class="small" style="color:#2F5496">',
+      '              {{ picked && picked.alarm_event_id === a.alarm_event_id ? \'收起 ▲\' : \'展开追溯 ▼\' }}',
+      '            </td>',
+      '          </tr>',
+      '',
+      '          <!-- 追溯三段：原来 /trace 那一页的能力，就地展开（老师第 3 条） -->',
+      '          <tr v-if="picked && picked.alarm_event_id === a.alarm_event_id">',
+      '            <td colspan="8" style="background:#F8FAFC;padding:12px 14px">',
+      '              <div class="kv" style="margin-bottom:10px">',
+      '                <span class="k">规则编号</span><span class="mono">{{ picked.rule_id }}</span>',
+      '                <span class="k">规则条件</span><span class="mono">{{ picked.rule_condition }}</span>',
+      '                <span class="k">组合条件</span><span class="mono">{{ picked.combine_condition || \'—\' }}</span>',
+      '                <span class="k">预警等级</span><span>{{ lvCn(picked.risk_level) }}预警</span>',
+      '                <span class="k">预警时间</span><span>{{ time(picked.alarm_ts) }}</span>',
+      '              </div>',
+      '              <div class="card-title" style="font-size:13px">① 哪条数据触发的</div>',
+      '              <div class="kv">',
+      '                <span class="k">触发字段</span><span class="mono">{{ picked.trigger_field }}</span>',
+      '                <span class="k">触发值</span><span><b>{{ picked.trigger_value }}</b></span>',
+      '                <span class="k">触发阈值</span><span>{{ picked.trigger_threshold }}</span>',
+      '              </div>',
+      '              <div class="card-title" style="font-size:13px;margin-top:10px">② 触发数据快照</div>',
+      '              <div class="kv">',
+      '                <template v-for="r in snapRows(picked)" :key="r.k">',
+      '                  <span class="k mono">{{ r.k }}</span><span>{{ r.v }}</span>',
+      '                </template>',
+      '              </div>',
+      '              <div class="card-title" style="font-size:13px;margin-top:10px">③ 结果如何</div>',
+      '              <div class="kv">',
+      '                <span class="k">处置建议</span><span>{{ picked.handling_advice }}</span>',
+      '                <span class="k">处置状态</span><span>{{ hdCn(picked.handle_status) }}</span>',
+      '                <span class="k">确认状态</span><span>{{ cfCn(picked.confirm_status) }}</span>',
+      '                <span class="k">恢复时间</span><span>{{ picked.recover_ts ? time(picked.recover_ts) : \'尚未恢复\' }}</span>',
+      '              </div>',
+      '              <div class="row" style="margin-top:10px">',
+      '                <a href="#/mgmt/handle"><button>去处置中心 →</button></a>',
+      '              </div>',
+      '            </td>',
+      '          </tr>',
+      '          </template>',
+      '        </tbody>',
+      '      </table>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <div class="hint" style="margin-top:12px">',
+      '    <b>答辩卖点</b>：一个告警中心能看到所有板块的异常。',
+      '    告警分级规则由结构安全提供，页面与通用组件由顶层统一维护 —— 避免出现四个告警页。',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
+
+
+/* 🔴 2026-10-15 队长搬：老师意见 2026-10-09 第 3 条 —— 拆掉「跨板块」，
+   /handle 从跨板块**挪进管理**（/handle → /mgmt/handle）。源码原样搬过来，只改了路由键。 */
+  PAGES['/mgmt/handle'] = {
+    data: function () { return { tick: 0, picked: null, unsub: null }; },
+    computed: {
+      alarms: function () { return API.alarms(); },
+      pending: function () {
+        return this.alarms.filter(function (a) { return a.handle_status !== 'handled'; });
+      },
+      commands: function () { this.tick; return API.commands(); }
+    },
+    methods: {
+      time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
+      lvCls: function (lv) { return 'bg-' + (lv || 'blue'); },
+      statusCn: function (s) {
+        return { pending: '待处置', handling: '处置中', handled: '已处置', failed: '处置失败' }[s] || s;
+      },
+      confirmCn: function (s) { return s === 'confirmed' ? '已确认' : '未确认'; },
+      pick: function (a) { this.picked = a; },
+      /* 处置动作 = 下发一条命令，走同一套状态机 */
+      act: function (a, type) {
+        this.picked = a;
+        a.handle_status = 'handling';
+        API.sendCommand('feeder_01', type, { from_alarm: a.alarm_event_id }, {});
+      },
+      confirmAlarm: function (a) {
+        a.confirm_status = 'confirmed';
+        a.confirm_ts = Date.now();
+        a.alarm_status = 'acknowledged';
+        a.handle_status = 'handled';
+      }
+    },
+    mounted: function () {
+      const self = this;
+      this.unsub = API.subscribe(function () { self.tick++; });
+      if (this.pending.length) this.picked = this.pending[0];
+    },
+    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    template: [
+      '<div>',
+      '  <page-head title="跨板块 · 处置中心"',
+      '    desc="所有处置动作走智能板块的<b>同一套指令状态机</b>（裁定 11 B 案：顶层统一）"',
+      '    :sources="[\'simulated\']" />',
+      '',
+      '  <div class="row" style="align-items:flex-start">',
+      '    <div class="card" style="flex:0 0 380px">',
+      '      <div class="card-title">待处置（{{ pending.length }} 条）</div>',
+      '      <div v-if="!pending.length" class="todo">没有待处置的告警</div>',
+      '      <div class="events">',
+      '        <div v-for="a in pending" :key="a.alarm_event_id" class="row-item" @click="pick(a)"',
+      '             :style="{ background: picked && picked.alarm_event_id === a.alarm_event_id ? \'#F1F5F9\' : \'\' }">',
+      '          <span class="dot" :class="lvCls(a.risk_level)"></span>',
+      '          <span class="d">',
+      '            <span class="mono">{{ a.alarm_event_id }}</span> {{ a.rule_name }}',
+      '            <div class="small muted">{{ statusCn(a.handle_status) }} · {{ confirmCn(a.confirm_status) }}</div>',
+      '          </span>',
+      '        </div>',
+      '      </div>',
+      '    </div>',
+      '',
+      '    <div style="flex:1;min-width:0">',
+      '      <div v-if="!picked" class="todo">左侧选一条告警</div>',
+      '      <div v-else>',
+      '        <div class="card">',
+      '          <div class="card-title">处置：{{ picked.alarm_event_id }}</div>',
+      '          <div class="kv">',
+      '            <span class="k">告警</span><span>{{ picked.rule_name }}</span>',
+      '            <span class="k">建议</span><span>{{ picked.handling_advice }}</span>',
+      '            <span class="k">处置状态</span><span>{{ statusCn(picked.handle_status) }}</span>',
+      '            <span class="k">确认状态</span><span>{{ confirmCn(picked.confirm_status) }}</span>',
+      '          </div>',
+      '          <div class="row" style="margin-top:12px">',
+      '            <button class="primary" @click="act(picked, \'feed\')">执行处置（下发命令）</button>',
+      '            <button @click="confirmAlarm(picked)">确认告警（人工）</button>',
+      '            <a href="#/ai/feed"><button>看状态机详情 →</button></a>',
+      '          </div>',
+      '          <div class="small muted" style="margin-top:8px">',
+      '            处置动作不是"点一下就当做完" —— 它下发一条命令，<b>走状态机、等回执</b>，链路与自动投喂完全一致。',
+      '          </div>',
+      '        </div>',
+      '',
+      '        <div class="card">',
+      '          <div class="card-title">本次会话下发的命令（{{ commands.length }} 条）</div>',
+      '          <div v-if="!commands.length" class="todo">还没有下发过命令</div>',
+      '          <div v-else class="dt-wrap" style="max-height:300px">',
+      '            <table class="dt">',
+      '              <thead><tr><th>命令号</th><th>类型</th><th>状态</th><th>重试</th><th>失败原因</th></tr></thead>',
+      '              <tbody>',
+      '                <tr v-for="c in commands" :key="c.command_id">',
+      '                  <td class="mono">{{ c.command_id }}</td><td>{{ CN.commandType(c.command_type) }}</td>',
+      '                  <td>{{ statusCn(c.command_status) }}</td><td>{{ c.retry_count }}</td>',
+      '                  <td :style="{ color: c.fail_reason ? \'#991B1B\' : \'#6B7280\' }">{{ c.fail_reason || \'—\' }}</td>',
+      '                </tr>',
+      '              </tbody>',
+      '            </table>',
+      '          </div>',
+      '        </div>',
+      '      </div>',
+      '    </div>',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
+
+
+/* 🔴 2026-10-15 队长搬：老师意见 2026-10-09 第 7 条 ——
+   能源保障页从结构安全**挪进管理**（/struct/energy → /mgmt/energy），
+   储能阈值 battery_soc 20%/10% 与 R-BAT-01/02 规则随页面一并转出。
+   源码原样搬过来，只改了路由键。 */
+  PAGES['/mgmt/energy'] = {
+    data: function () { return { minutes: 60, series: [] }; },
+    computed: {
+      last: function () { return this.series.length ? this.series[this.series.length - 1] : {}; },
+      charts: function () {
+        return [
+          { name: '光伏发电功率', unit: 'kW', data: this.series.map(function (r) { return [r.ts, r.pv_power]; }) },
+          { name: '总功耗', unit: 'kW', data: this.series.map(function (r) { return [r.ts, r.total_power]; }) }
+        ];
+      },
+      socCharts: function () {
+        return [{ name: '储能电量', unit: '%', data: this.series.map(function (r) { return [r.ts, r.battery_soc]; }) }];
+      },
+      socLevel: function () {
+        const s = this.last.battery_soc;
+        if (s === undefined) return 'blue';
+        return s < 10 ? 'red' : s < 20 ? 'yellow' : 'blue';
+      },
+      powerPriorityText: function () {
+        if (!this.last.critical_device_id || this.last.power_priority === undefined || this.last.power_priority === null) return '—';
+        return this.last.critical_device_id + ' · 优先级 ' + this.last.power_priority;
+      },
+      criticalPowerText: function () {
+        const v = this.last.critical_device_power_status;
+        return typeof CN.powerSupplyStatus === 'function' ? CN.powerSupplyStatus(v) : '—';
+      }
+    },
+    methods: {
+      load: function () {
+        const self = this;
+        API.resolve(API.struct(this.minutes), function (d) { self.series = d; });
+      },
+      lvCn: function (l) { return { blue: '正常', yellow: '低电量', red: '严重低电量' }[l] || l; }
+    },
+    mounted: function () {
+      /* API.bind：数据变化重算 + 定时刷新曲线 */
+      this.unsub = API.bind(this, this.load);
+      this.load();
+    },
+    beforeUnmount: function () { if (this.unsub) { this.unsub(); this.unsub = null; } },
+    watch: { minutes: function () { this.load(); } },
+    template: [
+      '<div class="struct-page">',
+      '  <page-head title="结构安全 · 能源保障"',
+      '    desc="光伏 / 储能 / 功耗。<b>kWh 是能量、kW 是功率</b> —— 两者差一个时间维度（裁定 N3）"',
+      '    :sources="[\'simulated\']" />',
+      '',
+      '  <div class="grid-stats">',
+      '    <stat-card name="光伏发电功率" field="pv_power" unit="kW" :value="last.pv_power" source="simulated" />',
+      '    <stat-card name="今日发电量" field="pv_energy_today" unit="kWh" :value="last.pv_energy_today" source="simulated" />',
+      '    <stat-card name="储能电量百分比" field="battery_soc" unit="%" :value="last.battery_soc" source="simulated" />',
+      '    <stat-card name="储能电量（能量）" field="battery_energy" unit="kWh" :value="last.battery_energy" source="simulated" />',
+      '    <stat-card name="电池总容量" field="battery_capacity_kwh" unit="kWh" :value="last.battery_capacity_kwh" source="demo" />',
+      '    <stat-card name="总功耗" field="total_power" unit="kW" :value="last.total_power" source="simulated" />',
+      '    <stat-card name="能源自给率" field="energy_self_sufficiency" unit="%" :value="last.energy_self_sufficiency" :digits="0" source="simulated" />',
+      '    <stat-card name="低电量状态" field="low_battery_status" unit="" :value="lvCn(socLevel)" source="simulated" />',
+      '  </div>',
+      '',
+      '  <div class="split" style="margin-top:12px">',
+      '    <trend-chart title="光伏发电与总功耗" :series="charts" />',
+      '    <trend-chart title="储能电量变化" :series="socCharts"',
+      '      :thresholds="[{value:20,label:\'低电量黄线 20%\',color:\'#92400E\'},{value:10,label:\'严重低电量红线 10%\',color:\'#991B1B\'}]" />',
+      '  </div>',
+      '',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title">关键设备供电优先级</div>',
+      '    <div class="grid-stats">',
+      '      <stat-card name="关键设备与优先级" field="critical_device_id / power_priority" unit="" :value="powerPriorityText" source="simulated" :ts="last.ts" />',
+      '      <stat-card name="关键设备供电状态" field="critical_device_power_status" unit="" :value="criticalPowerText" source="simulated" :ts="last.ts" />',
+      '    </div>',
+      '    <div v-if="!last.critical_device_id || last.power_priority === undefined" class="small muted" style="margin-top:8px">当前结构接口尚未提供关键设备编号和优先级配置，因此暂显示 —。</div>',
+      '  </div>',
+      '',
+      '  <div class="hint" style="margin-top:12px">',
+      '    换算关系：<code>battery_energy = battery_soc / 100 × battery_capacity_kwh</code>。',
+      '    有容量的好处是能源保障页能显示「<b>还剩 x kWh</b>」，而不是只有「剩 y%」—— 后者说不出还剩多少电。',
+      '  </div>',
+      '',
+      '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
+      '    <time-range v-model="minutes" />',
+      '    <span style="flex:1"></span>',
+      '    <span class="small muted">低电量两条线：20% 黄、10% 红</span>',
+      '  </div>',
+      '</div>',
+      '  <threshold-table owner="管理" />',
+      /* 🔴 2026-10-15 队长加：能源保障的阈值（储能电量）—— 随能源保障页从结构安全转入管理。
+         数据在 components.js 的 C.THRESHOLDS（单一事实来源），
+         本页只按 owner 过滤显示自己那几条。 */
+    ].join('\n')
+  };
+
 })(window);

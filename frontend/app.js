@@ -38,7 +38,6 @@
     { group: '结构安全', owner: '邓宇涵', items: [
       { path: '/struct/overview', label: '结构安全总览', ready: false },
       { path: '/struct/alarm',  label: '灾害分级预警', ready: true },
-      { path: '/struct/energy', label: '能源保障', ready: true },
       { path: '/struct/detail', label: '监测详情', ready: false },
       { path: '/struct/rules',  label: '规则配置', ready: false },
       { path: '/struct/fault',  label: '造故障工具', ready: false }
@@ -56,20 +55,21 @@
          这正是约定里"需要改公共文件就写在 PR 描述里、队长来改"的那一步。 */
       { path: '/ai/crane', label: '起重设备', ready: true }
     ]},
-    { group: '跨板块', owner: '顶层统一', items: [
-      { path: '/alarm',  label: '告警中心', ready: true },
-      { path: '/handle', label: '处置中心', ready: true },
-      { path: '/trace',  label: '追溯查询', ready: true },
-      { path: '/config', label: '参数配置', ready: true }
-    ]},
-    /* 管理板块 —— 养殖生产视角（场长用），与上面「参数配置」的技术参数视角区分开：
-         参数配置 = 阈值/规则（工程师改，很少动）
-         管理板块 = 哪个网箱养什么鱼、放了多少、设备标定到没到期（每批鱼都变）
-       这是「配置驱动」的落点：这里改了鱼种，全平台阈值跟着变。 */
+    /* 🔴 2026-10-15 队长改：**拆掉「跨板块」**（老师意见 2026-10-09 第 3 条）
+         告警中心 / 处置中心  → 挪进「管理」
+         追溯查询           → 删除（能力并进告警中心：点一行就地展开三段）
+         参数配置           → 整页拆解（阈值按 owner 拆回各板块 / 判断规则已并入
+                              /struct/rules / 鱼种参数库已并入 鱼类·鱼种档案）
+       原来的「跨板块」组已整组移除。 */
+    /* 管理板块 —— 养殖生产视角（场长用）。
+       现在它还接管了原来「跨板块」的告警/处置，以及结构安全的能源保障。 */
     { group: '管理', owner: '场长 / 运维', items: [
       { path: '/mgmt/cages',       label: '网箱与站点',   ready: true },
-            { path: '/mgmt/ledger',      label: '存箱量台账',   ready: true },
-      { path: '/mgmt/calibration', label: '标定与维护',   ready: true }
+      { path: '/mgmt/ledger',      label: '存箱量台账',   ready: true },
+      { path: '/mgmt/calibration', label: '标定与维护',   ready: true },
+      { path: '/mgmt/energy',      label: '能源保障',     ready: true },
+      { path: '/mgmt/alarm',       label: '告警中心',     ready: true },
+      { path: '/mgmt/handle',      label: '处置中心',     ready: true }
     ]}
   ];
 
@@ -105,7 +105,8 @@
     { key: 'env',      label: '环境', first: '/env/sea' },
     { key: 'struct',   label: '结构安全', first: '/struct/overview' },
     { key: 'ai',       label: '智能', first: '/ai/feed' },
-    { key: 'global',   label: '跨板块', first: '/alarm' },
+    /* 🔴 2026-10-15 队长删：拆掉「跨板块」（老师第 3 条）。告警/处置已挪进「管理」，
+       追溯查询删除，参数配置拆解。侧边菜单里的 MENU 也同步删了那一组。 */
     /* 管理板块 —— 养殖生产视角（场长用）。
        放在最后：它是配置类不是监控类。 */
     { key: 'mgmt',     label: '管理', first: '/mgmt/cages' }
@@ -227,6 +228,11 @@
   app.component('command-flow', C.CommandFlow);
   app.component('page-head', C.PageHead);
   app.component('help-dot', C.HelpDot);   /* 阈值依据：灰色问号 + 悬停看解释与出处 */
+  /* 🔴 2026-10-15 队长加：阈值表从「参数配置」整页拆出来后做成公共组件，
+     各板块用 <threshold-table owner="环境" /> 只显示自己那几条。
+     数据在 components.js 的 C.THRESHOLDS —— **单一事实来源**，
+     避免四个人各抄一份抄歪（这正是老师第 3 条「阈值按 owner 拆回各板块」的落法）。 */
+  app.component('threshold-table', C.ThresholdTable);
   app.mount('#app');
 
   window.ROUTER = Router;
