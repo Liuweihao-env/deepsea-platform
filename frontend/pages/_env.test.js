@@ -868,13 +868,19 @@ section('问题一~三（新）：海况时序四指标 / 指标框上移 / 水�
   assert((seaTpl.match(/stat-card name="浪高"/g) || []).length === 1,
     '海况页数值卡只保留一份（原位置重复块已删除）');
 
-  /* 问题二：水质页预留视频位（先留空不放内容，未来接监控实时画面） */
+  /* 问题二（新）：水质页海水监控视频位 —— 已接入海面监控素材，autoplay+muted+loop 自动循环播放 */
   const watTpl = water.template;
-  assert(watTpl.indexOf('海水监控视频（预留）') >= 0,
-    '水质页含「海水监控视频（预留）」卡片标题');
-  assert(watTpl.indexOf('视频位已预留') >= 0,
-    '视频位说明文案已写入（当前未接入，暂无画面）');
-  const videoPos = watTpl.indexOf('海水监控视频（预留）');
+  assert(watTpl.indexOf('海水监控视频') >= 0 && watTpl.indexOf('（预留）') < 0,
+    '水质页视频卡标题已改为「海水监控视频」（预留占位已移除）');
+  assert(watTpl.indexOf('<video') >= 0 && watTpl.indexOf('</video>') >= 0,
+    '视频位已填入 <video> 播放器');
+  assert(watTpl.indexOf('autoplay') >= 0 && watTpl.indexOf('muted') >= 0,
+    '视频自动播放且静音（autoplay + muted，符合浏览器自动播放策略）');
+  assert(watTpl.indexOf('loop') >= 0 && watTpl.indexOf('playsinline') >= 0,
+    '视频循环播放且内联播放（loop + playsinline，模拟监控不间断画面）');
+  assert(watTpl.indexOf('pages/env_data/seawater_monitor.mp4') >= 0,
+    '视频源指向本地海面监控素材 env_data/seawater_monitor.mp4');
+  const videoPos = watTpl.indexOf('海水监控视频');
   const waterStatsPos = watTpl.indexOf('<div class="grid-stats">');
   const waterChartPos = watTpl.indexOf('水质时序（可缩放');
   assert(videoPos > waterStatsPos && videoPos < waterChartPos,
