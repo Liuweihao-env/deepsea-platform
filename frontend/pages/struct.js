@@ -529,16 +529,12 @@
       '    />',
       '',
       '  <div class="grid-stats">',
-      '    <stat-card name="当前最高预警等级" unit="" :value="worst.text" />',
+      '    <stat-card class="is-primary is-status" name="当前最高预警等级" unit="" :value="worst.text" />',
       '    <stat-card name="本时段告警条数" unit="条" :value="hits.length" :digits="0" />',
       '    <stat-card name="锚泊张力占设计值" field="tension_pct" unit="%" :value="last.tension_pct" />',
-      '    <stat-card name="网绳拉力" field="net_tension" unit="kN" :value="last.net_tension" />',
-      '    <stat-card name="浪高" field="wave_height" unit="m" :value="envLast.wave_height" :quality="envLast.quality" :ts="envLast.ts" />',
-      '    <stat-card name="风速" field="wind_speed" unit="m/s" :value="envLast.wind_speed" :quality="envLast.quality" :ts="envLast.ts" />',
-      '    <stat-card name="流速" field="current_speed" unit="m/s" :value="envLast.current_speed" :quality="envLast.quality" :ts="envLast.ts" />',
       '    <stat-card name="网箱横滚角" field="tilt_roll" unit="°" :value="last.tilt_roll" />',
-      '    <stat-card name="网箱俯仰角" field="tilt_pitch" unit="°" :value="last.tilt_pitch" />',
       '  </div>',
+      '  <div class="hero-note">此处统计所选时间窗内的计算结果；导航角标统计未恢复告警，二者口径不同。</div>',
       '  <div class="small muted" style="margin-top:8px">{{ netRuleText }}。该线按历史数据识别拉力升高，不代表网衣材料极限或破损结论。</div>',
       '',
       '  <div class="split" style="margin-top:12px">',
@@ -575,6 +571,13 @@
       '    </div>',
       '  </div>',
       '',
+      '  <details class="secondary-details"><summary>其余结构与海况指标</summary><div class="grid-stats">',
+      '    <stat-card name="网绳拉力" field="net_tension" unit="kN" :value="last.net_tension" />',
+      '    <stat-card name="浪高" field="wave_height" unit="m" :value="envLast.wave_height" :quality="envLast.quality" :ts="envLast.ts" />',
+      '    <stat-card name="风速" field="wind_speed" unit="m/s" :value="envLast.wind_speed" :quality="envLast.quality" :ts="envLast.ts" />',
+      '    <stat-card name="流速" field="current_speed" unit="m/s" :value="envLast.current_speed" :quality="envLast.quality" :ts="envLast.ts" />',
+      '    <stat-card name="网箱俯仰角" field="tilt_pitch" unit="°" :value="last.tilt_pitch" />',
+      '</div></details>',
       '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
       '    <time-range v-model="minutes" />',
       '    <span style="flex:1"></span>',
@@ -687,33 +690,33 @@
       '    />',
       '',
       '  <div class="grid-stats">',
-      '    <stat-card name="当前风险等级" field="risk_level" unit="" :value="riskText" :ts="last.ts" />',
+      '    <stat-card class="is-primary is-status" name="当前风险等级" field="risk_level" unit="" :value="riskText" :ts="last.ts" />',
       '    <stat-card name="锚链张力" field="anchor_tension" unit="kN" :value="last.anchor_tension" :ts="last.ts" />',
       '    <stat-card name="网绳拉力" field="net_tension" unit="kN" :value="last.net_tension" :ts="last.ts" />',
       '    <stat-card name="倾斜角合量" field="tilt_angle" unit="°" :value="last.tilt_angle" :ts="last.ts" />',
       '  </div>',
       '',
-      '  <div class="split" style="margin-top:12px">',
+      '  <div class="workspace-grid">',
+      '  <div style="margin-top:12px">',
+      '    <trend-chart title="结构安全关键趋势（张力占比与倾斜角）" :series="charts" />',
+      '  </div>',
+      '',
+      '    <div class="card">',
+      '      <div class="card-title">网箱外观示意模型</div>',
+      cageModelMarkup(),
+      '    </div>',
+      '  </div>',
       '    <div class="card">',
       '      <div class="card-title">子系统状态灯</div>',
       '      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:10px">',
-      '        <div v-for="item in subsystemItems" :key="item.field" style="min-height:116px;padding:12px 8px;border:1px solid var(--line);border-radius:8px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:space-between">',
+      '        <div v-for="item in subsystemItems" :key="item.field" style="min-height:82px;padding:10px 8px;border:1px solid var(--line);border-radius:8px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:space-between">',
       '          <div style="font-weight:600">{{ item.label }}</div>',
-      '          <span :style="{backgroundColor: lightColor(item.tone)}" style="display:block;width:68px;height:30px;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.16)" :aria-label="item.text"></span>',
+      '          <span :style="{backgroundColor: lightColor(item.tone)}" style="display:block;width:12px;height:12px;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,.16)" :aria-label="item.text"></span>',
       '          <div class="small" :class="{muted:item.tone === \'muted\'}">{{ item.text }}</div>',
       '        </div>',
       '      </div>',
       '    </div>',
-      '    <div class="card">',
-      '      <div class="card-title">网箱三维模型</div>',
-      cageModelMarkup(),
-      '    </div>',
-      '  </div>',
       '  <div class="small muted" style="margin-top:8px">{{ netRuleText }}仅提示拉力升高，不代表网衣破损或已达到材料强度极限；试行规则未经现场标定。</div>',
-      '',
-      '  <div style="margin-top:12px">',
-      '    <trend-chart title="结构安全关键趋势（张力占比与倾斜角）" :series="charts" />',
-      '  </div>',
       '',
       '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
       '    <time-range v-model="minutes" />',
@@ -722,16 +725,7 @@
       '    <a href="#/struct/alarm"><button>查看灾害预警</button></a>',
       '  </div>',
       '</div>',
-      /* 🔴 视频位（老师意见第 9 条）：结构安全·网箱结构总览 的常驻播放区。
-         素材只用开放许可的，**必须标出处** —— 会议纪要第 3 条：
-         「全删来源标签」**只对视频开例外**，这块别跟着删。
-         走公共组件 <video-slot>（components.js），不各写一份。 */
-      /* 🔴 视频位（老师意见第 9 条）—— **素材待接入**（用户 2026-10-15 决定）。
-         结构已留好，素材找好后只需给 <video-slot> 补四个参数：
-           file / license / author / source
-         ⚠️ 素材定了**必须标出处** —— 会议纪要第 3 条：
-            「全删来源标签」**只对视频开例外**，这块别跟着删。 */
-      '  <video-slot title="网箱结构与海上布局" desc="马耳他圣保罗湾海上养殖网箱 —— 网箱结构与布局" />',
+      '  <video-slot title="网箱结构与海上布局" desc="马耳他圣保罗湾海上养殖网箱 —— 网箱结构与布局" />'
     ].join('\n')
   };
 
@@ -778,7 +772,7 @@
   }
 
   PAGES['/struct/detail'] = {
-    data: function () { return { minutes: 60, series: [], demoBaseTs: Date.now(), unsub: null }; },
+    data: function () { return { section: 'anchor', minutes: 60, series: [], demoBaseTs: Date.now(), unsub: null }; },
     computed: {
       last: function () { return this.series.length ? this.series[this.series.length - 1] : {}; },
       displaySeries: function () {
@@ -913,7 +907,12 @@
       '    />',
       '  <div v-if="demoFieldsText" class="hint" style="margin-bottom:12px;background:#EFF6FF;border-color:#BFDBFE">页面演示数据：{{ demoFieldsText }}。仅用于展示布局与趋势，不代表实测或真实破损；模拟器提供对应字段后自动切换为接口数据。</div>',
       '',
-      '  <section class="card">',
+      '  <div class="section-tabs" role="group" aria-label="监测分组">',
+      '    <button :class="{primary: section === \'anchor\'}" :aria-pressed="section === \'anchor\'" @click="section = \'anchor\'">锚链张力</button>',
+      '    <button :class="{primary: section === \'net\'}" :aria-pressed="section === \'net\'" @click="section = \'net\'">网衣监测</button>',
+      '    <button :class="{primary: section === \'posture\'}" :aria-pressed="section === \'posture\'" @click="section = \'posture\'">形变与姿态</button>',
+      '  </div>',
+      '  <section v-if="section === \'anchor\'" class="card">',
       '    <div class="card-title">一、锚链张力监测</div>',
       '    <div class="grid-stats">',
       '      <stat-card name="锚链张力" field="anchor_tension" unit="kN" :value="last.anchor_tension" :ts="last.ts" />',
@@ -923,7 +922,7 @@
       '    <div class="small muted" style="margin-top:8px">张力占设计值达到 80% / 95% 时，预警页分别标记黄色 / 红色；锚点编号和逐锚点张力尚未由当前接口提供。</div>',
       '  </section>',
       '',
-      '  <section class="card" style="margin-top:12px">',
+      '  <section v-if="section === \'net\'" class="card" style="margin-top:12px">',
       '    <div class="card-title">二、网衣监测</div>',
       '    <div class="grid-stats">',
       '      <stat-card name="网绳拉力" field="net_tension" unit="kN" :value="last.net_tension" :ts="last.ts" />',
@@ -963,7 +962,7 @@
       '    </div>',
       '  </section>',
       '',
-      '  <section class="card" style="margin-top:12px">',
+      '  <section v-if="section === \'posture\'" class="card" style="margin-top:12px">',
       '    <div class="card-title">三、结构形变与姿态监测</div>',
       '    <div class="grid-stats">',
       '      <stat-card name="横滚角" field="tilt_roll" unit="°" :value="last.tilt_roll" :ts="last.ts" />',
@@ -1046,17 +1045,17 @@
     beforeUnmount: function () { if (this.unsub) { this.unsub(); this.unsub = null; } },
     template: [
       '<div class="struct-page">',
-      '  <page-head title="结构安全 · 规则配置" desc="查看当前结构风险判断规则及其依据。下表为只读说明；阈值已在下方「阈值配置（结构安全）」里列全（原「参数配置」页已按老师意见拆解）。" />',
+      '  <page-head title="结构安全 · 规则配置" desc="查看规则的触发条件、等级与依据；当前为只读说明，试运行规则需现场标定。" />',
       '  <div class="hint" style="margin-bottom:12px">网衣目前按最近一小时真实拉力建立试运行线，正式风险或破损状态字段优先；试运行线只表示拉力相对升高，不证明网衣破损。样本不足时仍显示“待判定”。储能低电量规则保留在能源保障页，不参与结构总览和灾害预警的风险等级。</div>',
       '  <div class="card">',
       '    <div class="card-title">当前判断规则</div>',
-      '    <div class="dt-wrap">',
+      '    <div class="dt-wrap" style="max-height:580px">',
       '      <table class="dt">',
-      '        <thead><tr><th>编号</th><th>规则</th><th>触发条件</th><th>等级</th><th>取数字段</th><th>依据与说明</th></tr></thead>',
+      '        <thead><tr><th>编号</th><th>规则</th><th>触发条件</th><th>等级</th><th>依据与取数字段</th></tr></thead>',
       '        <tbody>',
       '          <tr v-for="(r, i) in rows" :key="r.id + i">',
       '            <td class="mono">{{ r.id }}</td><td>{{ r.name }}</td><td>{{ r.condition }}</td>',
-      '            <td>{{ r.level }}</td><td class="small">{{ r.source }}</td><td class="small">{{ r.basis }}</td>',
+      '            <td>{{ r.level }}</td><td class="small"><details><summary>查看依据</summary><p>{{ r.basis }}</p><span class="mono">{{ r.source }}</span></details></td>',
       '          </tr>',
       '        </tbody>',
       '      </table>',
@@ -1064,10 +1063,7 @@
       '  </div>',
       '  <div v-if="!fishRules.length" class="hint" style="margin-top:12px">鱼种配置尚未加载，水温规则暂不展示。</div>',
       '</div>',
-      '  <threshold-table owner="结构安全" />',
-      /* 🔴 2026-10-15 队长加：结构安全的阈值（锚泊张力 / 网箱倾斜）—— 从「参数配置」按 owner 拆回来。
-         数据在 components.js 的 C.THRESHOLDS（单一事实来源），
-         本页只按 owner 过滤显示自己那几条。 */
+      '  <threshold-table owner="结构安全" />'
     ].join('\n')
   };
 

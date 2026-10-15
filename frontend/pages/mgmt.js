@@ -151,6 +151,7 @@
       '      </div>',
       '    </div>',
       '',
+      '    <details class="secondary-details"><summary>鱼种配置与生效范围</summary>',
       '    <div class="card">',
       '      <div class="card-title">为什么「鱼种」要放在管理板块</div>',
       '      <div class="small">',
@@ -163,6 +164,7 @@
       '        两处口径永远一致，不会再出现「改了这处漏了那处」。',
       '      </div>',
       '    </div>',
+      '    </details>',
       '  </template>',
       '</div>'
     ].join('\n')
@@ -254,8 +256,8 @@
       '    </div>',
       '',
       '    <div class="grid-stats">',
-      '      <stat-card name="期末存箱量" field="stock" unit="尾" :value="sum.current_count" />',
-      '      <stat-card name="放养尾数" field="init" unit="尾" :value="sum.init_count" />',
+      '      <stat-card class="is-primary" :digits="0" name="期末存箱量" field="stock" unit="尾" :value="sum.current_count" />',
+      '      <stat-card :digits="0" name="放养尾数" field="init" unit="尾" :value="sum.init_count" />',
       '      <stat-card name="累计存活率" field="survival" unit="%" :value="sum.survival_pct" />',
       '      <stat-card name="计划起捕" field="harvest" unit="" :value="sum.plan_harvest" />',
       '    </div>',
@@ -309,7 +311,7 @@
     },
     computed: {
       d: function () { this.tick; return API.farmDevices(); },
-      devices: function () { const x = this.d; return (x && x.devices) || []; },
+      devices: function () { const x = this.d; const rank = { overdue: 0, never: 1, soon: 2, ok: 3, na: 4 }; return ((x && x.devices) || []).slice().sort(function (a, b) { return (rank[a.cal_status.state] ?? 5) - (rank[b.cal_status.state] ?? 5); }); },
       s: function () { const x = this.d; return (x && x.summary) || {}; }
     },
     methods: {
@@ -354,7 +356,7 @@
     template: [
       '<div>',
       '  <page-head title="管理 · 标定与维护"',
-      '    desc="设备台账与<b>计量标定</b>状态 —— 把「未经现场标定」从弱点变成可管理的项"',
+      '    desc="先处理超期与未标定设备，再查看有效期和标定记录"',
       '    />',
       '',
       '  <div v-if="!devices.length" class="card">',
@@ -364,10 +366,10 @@
       '',
       '  <template v-else>',
       '    <div class="grid-stats">',
-      '      <stat-card name="设备总数" field="devices" unit="台" :value="s.device_count" />',
-      '      <stat-card name="标定有效" field="ok" unit="台" :value="s.cal_ok" />',
-      '      <stat-card name="即将到期" field="soon" unit="台" :value="s.cal_soon" />',
-      '      <stat-card name="已超期" field="overdue" unit="台" :value="s.cal_overdue" />',
+      '      <stat-card class="is-primary is-critical" :digits="0" name="已超期" field="overdue" unit="台" :value="s.cal_overdue" />',
+      '      <stat-card :digits="0" name="即将到期" field="soon" unit="台" :value="s.cal_soon" />',
+      '      <stat-card :digits="0" name="标定有效" field="ok" unit="台" :value="s.cal_ok" />',
+      '      <stat-card :digits="0" name="设备总数" field="devices" unit="台" :value="s.device_count" />',
       '    </div>',
       '',
       '    <div v-if="msg" class="hint" style="margin-bottom:12px"',
@@ -410,17 +412,6 @@
       '          </tbody>',
       '        </table>',
       '      </div>',
-      '      <div class="hint small" style="margin-top:10px">',
-      '        <b>这一页解决什么问题</b>：其他页面上写着「经验阈值，<b>未经现场标定</b>」——',
-      '        这是我们的弱点。有了标定台账，它就从「<i>我们没标定</i>」变成',
-      '        「<b>我们有标定计划与周期，只是还没到现场执行</b>」。',
-      '        <br><br>',
-      '        <b>注意区分三件事，不能混为一谈</b>：',
-      '        ① <b>阈值有没有依据</b>（有，见参数配置页的问号）；',
-      '        ② <b>传感器准不准</b>（本页，标定管的就是这个）；',
-      '        ③ <b>数据是实测还是仿真</b>（海况页的来源标签）。',
-      '        答辩时被问「凭什么定 5°/15°」，答的是 ①；被问「你的传感器准吗」，答的是 ②。',
-      '      </div>',
       '    </div>',
       '  </template>',
       '</div>'
@@ -450,8 +441,12 @@
           if (self.fStatus && a.alarm_status !== self.fStatus) return false;
           if (self.fType && a.alarm_type !== self.fType) return false;
           return true;
+        }).sort(function (a, b) {
+          const rank = { red: 4, orange: 3, yellow: 2, blue: 1 };
+          return Number(a.alarm_status === 'recovered') - Number(b.alarm_status === 'recovered') || (rank[b.risk_level] || 0) - (rank[a.risk_level] || 0) || b.alarm_ts - a.alarm_ts;
         });
       },
+      unresolved: function () { return this.all.filter(function (a) { return a.alarm_status !== 'recovered'; }); },
       counts: function () {
         const c = { red: 0, orange: 0, yellow: 0, blue: 0 };
         this.all.forEach(function (a) { if (c[a.risk_level] !== undefined) c[a.risk_level]++; });
@@ -473,6 +468,14 @@
         this.picked = (this.picked && this.picked.alarm_event_id === a.alarm_event_id) ? null : a;
       },
       /* 快照里的 ts 是毫秒数，直接甩原始 JSON 不好看 —— 按通用规范格式化成时间 */
+      fieldText: function (field) {
+        return { tension_pct: '张力占设计值（%）', anchor_tension: '锚泊张力（kN）',
+          tilt_roll: '横滚角（°）', tilt_pitch: '俯仰角（°）', tilt_angle: '倾斜角（°）',
+          battery_soc: '储能电量（%）', battery_energy: '剩余能量（kWh）',
+          wave_height: '浪高（m）', wind_speed: '风速（m/s）', water_temp: '水温（℃）',
+          net_tension: '网绳拉力（kN）', dissolved_oxygen: '溶解氧（mg/L）',
+          ts: '观测时间', site_id: '站点', device_id: '设备' }[field] || field;
+      },
       snapRows: function (a) {
         const snap = (a && a.trigger_snapshot) || {};
         const self = this;
@@ -480,7 +483,7 @@
           let v = snap[k];
           if (typeof v === 'number' && /ts|time/i.test(k) && v > 1e11) v = self.time(v);
           if (v === null || v === undefined) v = '—';
-          return { k: k, v: String(v) };
+          return { k: k, label: self.fieldText(k), v: String(v) };
         });
       },
       cfCn: function (s2) { return { unconfirmed: '未确认', confirmed: '已确认' }[s2] || s2 || '—'; }
@@ -493,16 +496,15 @@
     template: [
       '<div>',
       '  <page-head title="管理 · 告警中心"',
-      '    desc="顶层统一做一套（裁定 11 B 案），各板块只提供 <code>alarm_event</code> —— 灾害预警、投喂动作、鱼类异常都进这里"',
+      '    desc="未恢复告警优先，按严重程度排列；展开可核查触发数据和处置结果"',
       '    />',
       '',
       '  <div class="grid-stats">',
-      '    <stat-card name="红色预警" unit="条" :value="counts.red" :digits="0" />',
-      '    <stat-card name="橙色预警" unit="条" :value="counts.orange" :digits="0" />',
-      '    <stat-card name="黄色预警" unit="条" :value="counts.yellow" :digits="0" />',
-      '    <stat-card name="蓝色预警" unit="条" :value="counts.blue" :digits="0" />',
+      '    <stat-card class="is-primary" name="未恢复告警" unit="条" :value="unresolved.length" :digits="0" />',
+      '    <stat-card name="活跃" unit="条" :value="all.filter(a => a.alarm_status === \'active\').length" :digits="0" />',
+      '    <stat-card name="已确认 · 未恢复" unit="条" :value="all.filter(a => a.alarm_status === \'acknowledged\').length" :digits="0" />',
+      '    <stat-card name="历史记录总数（含已恢复）" unit="条" :value="all.length" :digits="0" />',
       '  </div>',
-      '',
       '  <div class="card" style="margin-top:12px">',
       '    <div class="row" style="align-items:center">',
       '      <span class="small muted">等级</span>',
@@ -517,7 +519,7 @@
       '  </div>',
       '',
       '  <div class="card">',
-      '    <div class="card-title">告警列表（<b>点一行就地展开追溯三段</b>）</div>',
+      '    <div class="card-title">告警列表 · 未恢复及高等级优先</div>',
       '    <div v-if="!rows.length" class="todo">没有符合条件的告警</div>',
       '    <div v-else class="dt-wrap">',
       '      <table class="dt">',
@@ -534,7 +536,7 @@
       '            <td>{{ stCn(a.alarm_status) }}</td>',
       '            <td>{{ hdCn(a.handle_status) }}</td>',
       '            <td class="small" style="color:#2F5496">',
-      ' {{ picked && picked.alarm_event_id === a.alarm_event_id ? \'收起 ▲\' : \'展开追溯 ▼\' }}',
+      ' <button @click.stop="pick(a)">{{ picked && picked.alarm_event_id === a.alarm_event_id ? \'收起 ▲\' : \'展开追溯 ▼\' }}</button>',
       '            </td>',
       '          </tr>',
       '',
@@ -550,14 +552,14 @@
       '              </div>',
       '              <div class="card-title" style="font-size:13px">① 哪条数据触发的</div>',
       '              <div class="kv">',
-      '                <span class="k">触发字段</span><span class="mono">{{ picked.trigger_field }}</span>',
+      '                <span class="k">触发指标</span><span>{{ fieldText(picked.trigger_field) }}</span>',
       '                <span class="k">触发值</span><span><b>{{ picked.trigger_value }}</b></span>',
       '                <span class="k">触发阈值</span><span>{{ picked.trigger_threshold }}</span>',
       '              </div>',
       '              <div class="card-title" style="font-size:13px;margin-top:10px">② 触发数据快照</div>',
       '              <div class="kv">',
       '                <template v-for="r in snapRows(picked)" :key="r.k">',
-      '                  <span class="k mono">{{ r.k }}</span><span>{{ r.v }}</span>',
+      '                  <span class="k" :title="r.k">{{ r.label }}</span><span>{{ r.v }}</span>',
       '                </template>',
       '              </div>',
       '              <div class="card-title" style="font-size:13px;margin-top:10px">③ 结果如何</div>',
@@ -578,10 +580,7 @@
       '    </div>',
       '  </div>',
       '',
-      '  <div class="hint" style="margin-top:12px">',
-      '    <b>答辩卖点</b>：一个告警中心能看到所有板块的异常。',
-      '    告警分级规则由结构安全提供，页面与通用组件由顶层统一维护 —— 避免出现四个告警页。',
-      '  </div>',
+      '',
       '</div>'
     ].join('\n')
   };
@@ -592,11 +591,15 @@
   PAGES['/mgmt/handle'] = {
     data: function () { return { tick: 0, picked: null, unsub: null }; },
     computed: {
-      alarms: function () { return API.alarms(); },
+      alarms: function () { this.tick; return API.alarms(); },
       pending: function () {
-        return this.alarms.filter(function (a) { return a.handle_status !== 'handled'; });
+        return this.alarms.filter(function (a) { return a.handle_status !== 'handled'; }).sort(function (a, b) { const rank = { red: 4, orange: 3, yellow: 2, blue: 1 }; return (rank[b.risk_level] || 0) - (rank[a.risk_level] || 0); });
       },
-      commands: function () { this.tick; return API.commands(); }
+      commands: function () {
+        this.tick;
+        const id = this.picked && this.picked.alarm_event_id;
+        return id ? API.commands().filter(function (c) { return c.params && c.params.from_alarm === id; }) : [];
+      }
     },
     methods: {
       time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
@@ -627,12 +630,12 @@
     beforeUnmount: function () { if (this.unsub) this.unsub(); },
     template: [
       '<div>',
-      '  <page-head title="跨板块 · 处置中心"',
-      '    desc="所有处置动作走智能板块的<b>同一套指令状态机</b>（裁定 11 B 案：顶层统一）"',
+      '  <page-head title="管理 · 处置中心"',
+      '    desc="选择告警查看建议与关联命令；人工确认、设备执行、告警恢复分别核查"',
       '    />',
       '',
-      '  <div class="row" style="align-items:flex-start">',
-      '    <div class="card" style="flex:0 0 380px">',
+      '  <div class="management-workspace">',
+      '    <div class="card">',
       '      <div class="card-title">待处置（{{ pending.length }} 条）</div>',
       '      <div v-if="!pending.length" class="todo">没有待处置的告警</div>',
       '      <div class="events">',
@@ -651,12 +654,13 @@
       '      <div v-if="!picked" class="todo">左侧选一条告警</div>',
       '      <div v-else>',
       '        <div class="card">',
-      '          <div class="card-title">处置：{{ picked.alarm_event_id }}</div>',
+      '          <div class="hero-label">当前选中 · {{ picked.alarm_event_id }}</div><div class="card-title" style="font-size:26px">{{ picked.rule_name }}</div>',
       '          <div class="kv">',
       '            <span class="k">告警</span><span>{{ picked.rule_name }}</span>',
       '            <span class="k">建议</span><span>{{ picked.handling_advice }}</span>',
       '            <span class="k">处置状态</span><span>{{ statusCn(picked.handle_status) }}</span>',
       '            <span class="k">确认状态</span><span>{{ confirmCn(picked.confirm_status) }}</span>',
+      '            <span class="k">告警恢复</span><span>{{ picked.recover_ts ? time(picked.recover_ts) : \'尚未恢复\' }}</span>',
       '          </div>',
       '          <div class="row" style="margin-top:12px">',
       '            <button class="primary" @click="act(picked, \'feed\')">执行处置（下发命令）</button>',
@@ -669,15 +673,15 @@
       '        </div>',
       '',
       '        <div class="card">',
-      '          <div class="card-title">本次会话下发的命令（{{ commands.length }} 条）</div>',
-      '          <div v-if="!commands.length" class="todo">还没有下发过命令</div>',
+      '          <div class="card-title">当前告警关联命令（{{ commands.length }} 条）</div>',
+      '          <div v-if="!commands.length" class="todo">暂无明确关联此告警的命令</div>',
       '          <div v-else class="dt-wrap" style="max-height:300px">',
       '            <table class="dt">',
       '              <thead><tr><th>命令号</th><th>类型</th><th>状态</th><th>重试</th><th>失败原因</th></tr></thead>',
       '              <tbody>',
       '                <tr v-for="c in commands" :key="c.command_id">',
       '                  <td class="mono">{{ c.command_id }}</td><td>{{ CN.commandType(c.command_type) }}</td>',
-      '                  <td>{{ statusCn(c.command_status) }}</td><td>{{ c.retry_count }}</td>',
+      '                  <td>{{ CN.commandStatus(c.command_status) }}</td><td>{{ c.retry_count }}</td>',
       '                  <td :style="{ color: c.fail_reason ? \'#991B1B\' : \'#6B7280\' }">{{ c.fail_reason || \'—\' }}</td>',
       '                </tr>',
       '              </tbody>',
@@ -711,7 +715,7 @@
       },
       socLevel: function () {
         const s = this.last.battery_soc;
-        if (s === undefined) return 'blue';
+        if (s === undefined || s === null) return 'unknown';
         return s < 10 ? 'red' : s < 20 ? 'yellow' : 'blue';
       },
       powerPriorityText: function () {
@@ -728,7 +732,7 @@
         const self = this;
         API.resolve(API.struct(this.minutes), function (d) { self.series = d; });
       },
-      lvCn: function (l) { return { blue: '正常', yellow: '低电量', red: '严重低电量' }[l] || l; }
+      lvCn: function (l) { return { blue: '正常', yellow: '低电量', red: '严重低电量', unknown: '待判定' }[l] || l; }
     },
     mounted: function () {
       /* API.bind：数据变化重算 + 定时刷新曲线 */
@@ -739,25 +743,25 @@
     watch: { minutes: function () { this.load(); } },
     template: [
       '<div class="struct-page">',
-      '  <page-head title="结构安全 · 能源保障"',
-      '    desc="光伏 / 储能 / 功耗。<b>kWh 是能量、kW 是功率</b> —— 两者差一个时间维度（裁定 N3）"',
+      '  <page-head title="管理 · 能源保障"',
+      '    desc="关注剩余电量和供用电趋势，核查关键设备供电"',
       '    />',
       '',
-      '  <div class="grid-stats">',
-      '    <stat-card name="光伏发电功率" field="pv_power" unit="kW" :value="last.pv_power" />',
-      '    <stat-card name="今日发电量" field="pv_energy_today" unit="kWh" :value="last.pv_energy_today" />',
-      '    <stat-card name="储能电量百分比" field="battery_soc" unit="%" :value="last.battery_soc" />',
-      '    <stat-card name="储能电量（能量）" field="battery_energy" unit="kWh" :value="last.battery_energy" />',
-      '    <stat-card name="电池总容量" field="battery_capacity_kwh" unit="kWh" :value="last.battery_capacity_kwh" source="demo" />',
-      '    <stat-card name="总功耗" field="total_power" unit="kW" :value="last.total_power" />',
-      '    <stat-card name="能源自给率" field="energy_self_sufficiency" unit="%" :value="last.energy_self_sufficiency" :digits="0" />',
-      '    <stat-card name="低电量状态" field="low_battery_status" unit="" :value="lvCn(socLevel)" />',
+      '  <div class="hero-band" :class="{ \'is-critical\': socLevel === \'red\' || socLevel === \'yellow\' }">',
+      '    <div><div class="hero-label">储能保障状态</div><div class="hero-value" :class="\'lv-\' + socLevel">{{ lvCn(socLevel) }}</div><div class="hero-note">低电量提示 20% · 严重低电量 10%</div></div>',
+      '    <div><div class="hero-label">电池剩余电量</div><div class="hero-value">{{ last.battery_soc ?? \'—\' }} <small>%</small></div><div class="hero-note">容量 {{ last.battery_capacity_kwh ?? \'—\' }} kWh</div></div>',
+      '    <div><div class="hero-label">剩余能量</div><div class="hero-value">{{ last.battery_energy ?? \'—\' }} <small>kWh</small></div><div class="hero-note">当前总功耗 {{ last.total_power ?? \'—\' }} kW</div></div>',
       '  </div>',
-      '',
+      '  <div class="grid-stats">',
+      '    <stat-card name="光伏发电功率" unit="kW" :value="last.pv_power" />',
+      '    <stat-card name="今日发电量" unit="kWh" :value="last.pv_energy_today" />',
+      '    <stat-card name="总功耗" unit="kW" :value="last.total_power" />',
+      '    <stat-card name="能源自给率" unit="%" :value="last.energy_self_sufficiency" :digits="0" />',
+      '  </div>',
       '  <div class="split" style="margin-top:12px">',
-      '    <trend-chart title="光伏发电与总功耗" :series="charts" />',
       '    <trend-chart title="储能电量变化" :series="socCharts"',
       '      :thresholds="[{value:20,label:\'低电量黄线 20%\',color:\'#92400E\'},{value:10,label:\'严重低电量红线 10%\',color:\'#991B1B\'}]" />',
+      '    <trend-chart title="光伏发电与总功耗" :series="charts" />',
       '  </div>',
       '',
       '  <div class="card" style="margin-top:12px">',
@@ -780,10 +784,7 @@
       '    <span class="small muted">低电量两条线：20% 黄、10% 红</span>',
       '  </div>',
       '</div>',
-      '  <threshold-table owner="管理" />',
-      /* 🔴 2026-10-15 队长加：能源保障的阈值（储能电量）—— 随能源保障页从结构安全转入管理。
-         数据在 components.js 的 C.THRESHOLDS（单一事实来源），
-         本页只按 owner 过滤显示自己那几条。 */
+      '  <threshold-table owner="管理" />'
     ].join('\n')
   };
 

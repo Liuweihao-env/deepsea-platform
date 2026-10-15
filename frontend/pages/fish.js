@@ -50,7 +50,7 @@
     data: function () {
       return {
         minutes: 60, series: [],
-        cameras: [], camOffline: false,
+        cameras: [], camOffline: false, selectedCam: 0, cameraGrid: false,
         camRaf: null, camPoll: null, tileState: null
       };
     },
@@ -59,9 +59,11 @@
       charts: function () {
         return [
           { name: '现存尾数', unit: '尾', data: this.series.map(function (r) { return [r.ts, r.fish_count]; }) },
-          { name: '平均体重', unit: 'g', data: this.series.map(function (r) { return [r.ts, r.avg_weight_g]; }) },
-          { name: '预估总体重', unit: 'kg', data: this.series.map(function (r) { return [r.ts, r.total_biomass_kg]; }) }
+          { name: '平均体重', unit: 'g', axis: 1, data: this.series.map(function (r) { return [r.ts, r.avg_weight_g]; }) }
         ];
+      },
+      biomassCharts: function () {
+        return [{ name: '预估总体重', unit: 'kg', data: this.series.map(function (r) { return [r.ts, r.total_biomass_kg]; }) }];
       },
       /* 摄食强度变化即"事件"——由数据实时判定，不造假事件 */
       events: function () {
@@ -199,28 +201,30 @@
     template: [
       '<div>',
       '  <page-head title="鱼类 · 鱼类监测总览"',
-      '    desc="行为识别 + 总体重统计。数据来源：公开数据集（TFBID / DeepFish）+ 仿真"',
+      '    desc="先看摄食状态与总体重，再查看多角度仿真画面和行为变化"',
       '    />',
       '',
       '  <div class="grid-stats">',
-      '    <stat-card name="现存总尾数" field="fish_count" unit="尾" :value="last.fish_count" :digits="0" />',
-      '    <stat-card name="平均体重" field="avg_weight_g" unit="g" :value="last.avg_weight_g" />',
-      '    <stat-card name="平均体长" field="avg_length_cm" unit="cm" :value="last.avg_length_cm" />',
-      '    <stat-card name="预估总体重" field="total_biomass_kg" unit="kg" :value="last.total_biomass_kg" />',
-      '    <stat-card name="鱼群摄食强度" field="feeding_intensity" unit="" :value="cn(last.feeding_intensity)" />',
-      '    <stat-card name="活动鱼群密度" field="fish_density" unit="尾/m³" :value="last.fish_density" />',
+      '    <stat-card class="is-primary" name="鱼群摄食强度" :value="cn(last.feeding_intensity)" />',
+      '    <stat-card class="is-primary" name="预估总体重" unit="kg" :value="last.total_biomass_kg" />',
+      '    <stat-card name="现存总尾数" unit="尾" :value="last.fish_count" :digits="0" />',
+      '    <stat-card name="平均体重" unit="g" :value="last.avg_weight_g" />',
       '  </div>',
       '',
-      '  <div class="card" style="margin-top:12px">',
-      '    <div class="card-title">网箱摄像头 · 多角度实时监测（4 路）</div>',
-      '    <div class="grid-cam">',
-      '      <div v-for="c in cameras" :key="c.camera_id" class="cam-tile">',
+      '  <div class="camera-layout">',
+      '  <div class="card">',
+      '    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:12px">',
+      '      <div class="card-title" style="margin:0">网箱视角 · 仿真画面</div>',
+      '      <button @click="cameraGrid = !cameraGrid">{{ cameraGrid ? \'主视角布局\' : \'四宫格布局\' }}</button>',
+      '    </div>',
+      '    <div class="grid-cam" :class="{ \'camera-focus\': !cameraGrid }">',
+      '      <div v-for="(c, i) in cameras" :key="c.camera_id" class="cam-tile" :class="{ \'is-selected\': selectedCam === i }" role="button" tabindex="0" :aria-label="c.name + \'，切换主视角\'" :aria-pressed="selectedCam === i" @click="selectedCam = i" @keydown.enter="selectedCam = i" @keydown.space.prevent="selectedCam = i">',
       '        <canvas ref="camCanvas" width="340" height="190" class="cam-canvas"',
       '          :class="{ off: !c.online }"></canvas>',
       '        <div class="cam-top">',
       '          <span class="cam-name">{{ c.name }}</span>',
       '          <span class="cam-live" :class="{ off: !c.online }">',
-      '            <i class="cam-dot"></i>{{ c.online ? \'直播中\' : \'已离线\' }}</span>',
+      '            <i class="cam-dot"></i>{{ c.online ? \'仿真画面\' : \'已离线\' }}</span>',
       '        </div>',
       '        <div v-if="!c.online" class="cam-no">',
       '          <div class="cam-no-text">信号中断</div>',
@@ -235,43 +239,34 @@
       '    <div v-if="camOffline" class="muted small" style="margin-top:8px">',
       '      视觉链路不可用（生成器已停止或摄像头离线）—— 全部画面显示「信号中断」，不显示上一个值。',
       '    </div>',
-      '    <div class="hint small" style="margin-top:10px">',
-      '      <b>现阶段为演示画面</b>：四路画面由前端按角度仿真绘制（俯视/侧视/水下/全景）。',
-      '      后端已为每路摄像头预留 <code>stream_url</code> 字段，后期接入真实视频流时，',
-      '      把对应画面换成 <code>&lt;video&gt;</code> 即可（浏览器播放需 WebRTC/HLS，RTSP 需网关转换）。',
-      '    </div>',
+      '    <div class="hero-note">画面为角度仿真，点击缩略图切换主视角。</div>',
       '  </div>',
-      '',
-      '  <div class="split" style="margin-top:12px">',
-      '    <trend-chart title="数量与生长趋势" :series="charts" />',
-      '    <div class="card">',
-      '      <div class="card-title">摄食行为变化（行为识别输出）</div>',
-      '      <event-list :items="events" empty-text="本时段摄食强度无变化" />',
-      '    </div>',
+      '  <div class="card">',
+      '    <div class="card-title">摄食行为变化</div>',
+      '    <event-list :items="events" empty-text="本时段摄食强度无变化" />',
+      '    <div class="hero-note"><a href="#/ai/feed">查看投喂建议 →</a></div>',
+      '    <div class="kv" style="margin-top:16px"><span class="k">平均体长</span><span>{{ last.avg_length_cm ?? \'—\' }} cm</span><span class="k">活动密度</span><span>{{ last.fish_density ?? \'—\' }} 尾/m³</span></div>',
       '  </div>',
-      '',
+      '  </div>',
+      '  <div class="split" style="margin-top:16px">',
+      '    <trend-chart title="数量与生长趋势（按单位分轴）" :series="charts" small />',
+      '    <trend-chart title="预估总体重趋势" :series="biomassCharts" small />',
+      '  </div>',
+      '  <details class="secondary-details"><summary>观测与模型口径</summary>',
       '  <div class="hint" style="margin-top:12px">',
       '    <b>口径说明</b>：投喂量<b>不在这里算</b> —— 按裁定 1，投喂决策归智能板块，',
       '    鱼类只出观测类指标。鱼类不再提供 <code>suggest_feed_kg_h</code>。',
       '    生长参数用 <code>W = lw_a · L^lw_b</code>，公式参数 <code>lw_a</code> / <code>lw_b</code> 来源须标注公开文献。',
       '  </div>',
       '',
+      '  </details>',
       '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
       '    <time-range v-model="minutes" />',
       '    <span style="flex:1"></span>',
       '    <span class="small muted">本期不做：FCR / 活跃度 / 体长离散度 / 死亡个体数（裁定 5）</span>',
       '  </div>',
       '</div>',
-      /* 🔴 视频位（老师意见第 9 条）：鱼类·监测总览 的常驻播放区。
-         素材只用开放许可的，**必须标出处** —— 会议纪要第 3 条：
-         「全删来源标签」**只对视频开例外**，这块别跟着删。
-         走公共组件 <video-slot>（components.js），不各写一份。 */
-      /* 🔴 视频位（老师意见第 9 条）—— **素材待接入**（用户 2026-10-15 决定）。
-         结构已留好，素材找好后只需给 <video-slot> 补四个参数：
-           file / license / author / source
-         ⚠️ 素材定了**必须标出处** —— 会议纪要第 3 条：
-            「全删来源标签」**只对视频开例外**，这块别跟着删。 */
-      '  <video-slot title="鱼类养殖现场" desc="奇努克鲑在养殖池中 —— 真实养殖环境" />',
+      '  <video-slot title="鱼类养殖现场" desc="奇努克鲑在养殖池中 —— 真实养殖环境" />'
     ].join('\n')
   };
 
@@ -493,10 +488,9 @@
       '    />',
       '',
       '  <div class="grid-stats">',
-      '    <stat-card name="最高密度网格" unit="尾/m³" :value="peak.best.v" />',
-      '    <stat-card name="最高密度位置" unit="" :value="\'X\' + (peak.best.x + 1) + \' / Y\' + (peak.best.y + 1)" />',
+      '    <stat-card class="is-primary" name="最高密度网格" unit="尾/m³" :value="peak.best.v" />',
+      '    <stat-card name="最高密度位置" unit="" :value="peak.best.v == null ? \'—\' : \'X\' + (peak.best.x + 1) + \' / Y\' + (peak.best.y + 1)" />',
       '    <stat-card name="网格平均密度" unit="尾/m³" :value="peak.avg" />',
-      '    <stat-card name="三维点云点数" unit="个" :value="view === \'3d\' ? pointCount : 0" />',
       '  </div>',
       '',
       '  <div class="card" style="margin-top:12px">',
@@ -514,7 +508,7 @@
       '      视觉链路不可用（生成器已停止或摄像头离线）—— 密度数据显示「—」，不显示上一个值。',
       '    </div>',
       '    <div v-else-if="view === \'2d\'">',
-      '      <heat-grid title="鱼群密度分布（颜色越红越密）" :grid="grid" unit="尾/m³" :height="430" />',
+      '      <heat-grid title="鱼群密度分布（颜色表示相对密度）" :grid="grid" unit="尾/m³" :height="430" />',
       '    </div>',
       '    <div v-else style="position:relative;margin-top:10px">',
       '      <div ref="box3d" style="width:100%;height:480px;border-radius:6px;overflow:hidden"></div>',
@@ -525,7 +519,7 @@
       '',
       '    <div class="hint small" style="margin-top:10px">',
       '      <b>两种视角的用途</b>：二维网格用于值班时<b>一眼看密度分布</b>；三维点云用于直观判断',
-      '      <b>鱼群在水中的空间聚集</b>（例如上浮、扎堆）。点的颜色：蓝=正常、橙=摄食活跃、红=异常。',
+      '      <b>鱼群在水中的空间聚集</b>（例如上浮、扎堆）。二维红色表示相对高密度，不代表告警；三维点色按仿真场景标注。',
       '    </div>',
       '  </div>',
       '',
@@ -713,13 +707,16 @@
       '  </div>',
       '',
       '  <template v-else-if="m.ok">',
+      '  <div class="hero-band">',
+      '    <div><div class="hero-label">按当前实测速率 · 预计起捕日期</div><div class="hero-value">{{ m.etaDays != null ? etaText : \'暂无法预测\' }}</div><div class="hero-note">线性生长估算，需结合后续观测更新</div></div>',
+      '    <div><div class="hero-label">预计还需</div><div class="hero-value">{{ m.etaDays ?? \'—\' }} <small>天</small></div><div class="hero-note">达到上市规格 {{ m.wT }} g</div></div>',
+      '    <div><div class="hero-label">计划起捕</div><div style="font-size:24px;font-weight:700">{{ fmtDate(m.t1) }}</div><div class="hero-note">距计划 {{ m.daysToPlan }} 天 · 当前体重偏差 {{ m.dev ?? \'—\' }} g</div></div>',
+      '  </div>',
       '  <div class="grid-stats">',
       '    <stat-card name="当前实测体重" field="avg_weight_g" unit="g" :value="m.obs" />',
       '    <stat-card name="今日计划体重" unit="g" :value="m.planToday" />',
       '    <stat-card name="计划偏差" unit="g" :value="m.dev" />',
       '    <stat-card name="计划日均增重" unit="g/天" :value="m.planRate" />',
-      '    <stat-card name="距计划起捕" unit="天" :value="m.daysToPlan" :digits="0" />',
-      '    <stat-card name="计划起捕日期" :value="fmtDate(m.t1)" />',
       '  </div>',
       '',
       '  <div class="split" style="margin-top:12px">',
@@ -767,7 +764,7 @@
 
   PAGES['/fish/records'] = {
     data: function () {
-      return { tick: 0, unsub: null, minutes: 60, quality: 'all', rows: [] };
+      return { tick: 0, unsub: null, minutes: 60, quality: 'all', rows: [], page: 1, pageSize: 25 };
     },
     computed: {
       filtered: function () {
@@ -775,11 +772,13 @@
         if (q === 'all') return this.rows;
         return this.rows.filter(function (r) { return (r.quality || 'good') === q; });
       },
-      /* 最新在前，最多渲染 500 行（24h 窗口有上万条，全画会卡死） */
+      /* 最新在前，每页 25 行，保留完整查询结果。 */
       viewRows: function () {
         const list = this.filtered.slice().reverse();
-        return list.length > 500 ? list.slice(0, 500) : list;
+        return list.slice((this.currentPage - 1) * this.pageSize, this.currentPage * this.pageSize);
       },
+      pageCount: function () { return Math.max(1, Math.ceil(this.filtered.length / this.pageSize)); },
+      currentPage: function () { return Math.min(this.page, this.pageCount); },
       counts: function () {
         this.tick;
         const c = { total: this.rows.length, suspect: 0, stale: 0 };
@@ -800,13 +799,14 @@
       fmtTs: function (ts) {
         return ts ? new Date(ts).toLocaleString('zh-CN', { hour12: false }) : '';
       },
-      feedCn: function (v) { return CN.feedingIntensity[v] || v; },
+      feedCn: function (v) { return CN.feedingIntensity(v); },
       srcCn: function (v) { return (API.sourceText && API.sourceText[v]) || v; },
-      qualCn: function (v) { return CN.quality[v] || CN.quality.good; },
+      qualCn: function (v) { return CN.quality(v || 'good'); },
       dash: function (v) {
         return (v === null || v === undefined || v === '') ? '—' : v;
       }
     },
+    watch: { minutes: function () { this.page = 1; this.load(); }, quality: function () { this.page = 1; } },
     mounted: function () {
       this.unsub = API.bind(this, this.load);
       this.load();
@@ -820,7 +820,7 @@
       '',
       '  <div class="card" style="margin-bottom:12px">',
       '    <div class="row" style="gap:16px;flex-wrap:wrap;align-items:center">',
-      '      <time-range-picker v-model="minutes" />',
+      '      <time-range v-model="minutes" />',
       '      <span class="row" style="gap:6px;align-items:center">',
       '        <span class="small muted">质量</span>',
       '        <select v-model="quality" style="min-width:130px">',
@@ -840,11 +840,11 @@
       '  </div>',
       '',
       '  <div class="card">',
-      '    <table class="dt">',
+      '    <div class="table-scroll"><table class="dt">',
       '      <thead><tr>',
       '        <th>时间</th><th>站点</th><th>现存尾数</th><th>密度</th>',
       '        <th>平均体长</th><th>平均体重</th><th>总体重</th>',
-      '        <th>摄食强度</th>',
+      '        <th>摄食强度</th><th>数据状态</th>',
       '      </tr></thead>',
       '      <tbody>',
       '        <tr v-for="r in viewRows" :key="r.ts">',
@@ -863,8 +863,11 @@
       '        </tr>',
       '      </tbody>',
       '    </table>',
-      '    <div v-if="filtered.length > 500" class="small muted" style="margin-top:8px">',
-      '      符合条件 {{ filtered.length }} 条，为保持流畅仅显示最新 500 条；可缩小时间窗。',
+      '    </div>',
+      '    <div class="pagination">',
+      '      <span class="small muted">{{ filtered.length }} 条 · 第 {{ currentPage }} / {{ pageCount }} 页</span>',
+      '      <button :disabled="currentPage === 1" @click="page = currentPage - 1">上一页</button>',
+      '      <button :disabled="currentPage === pageCount" @click="page = currentPage + 1">下一页</button>',
       '    </div>',
       '  </div>',
       '',
@@ -955,9 +958,9 @@
       '',
       '  <div class="split" style="margin-bottom:12px">',
       '    <div class="card">',
-      '      <div class="card-title">当前状态</div>',
+      '      <div class="card-title">当前仿真状态</div>',
       '      <div v-if="state" class="small">',
-      '        运行状态：<span class="tag" :style="{ color: genColor(state.gen_status) }">{{ state.gen_status_cn }}</span>',
+      '        运行状态：<span class="tag" style="font-size:24px;padding:8px 12px" :style="{ color: genColor(state.gen_status) }">{{ state.gen_status_cn }}</span>',
       '        <br><br>',
       '        内容模式：<span class="tag tag-simulated">{{ state.sim_mode_cn }}</span>',
       '        <br><br>',
@@ -988,8 +991,17 @@
       '    </div>',
       '  </div>',
       '',
-      '  <div class="split">',
+      '  <div>',
       '    <div class="card">',
+      '      <div class="card-title">一键恢复</div>',
+      '      <div class="small">演示结束后点这里：</div>',
+      '      <button class="primary" @click="resetAll" :disabled="busy">恢复运行 + 正常场景</button>',
+      '      <div class="hint" style="margin-top:10px">',
+      '        只影响鱼类板块的仿真数据；不写回 farm.json，不影响其他板块。',
+      '      </div>',
+      '    </div>',
+      '  </div>',
+      '  <details class="secondary-details"><summary>操作日志 · 最近 30 条</summary>    <div class="card">',
       '      <div class="card-title">操作日志（最近 30 条）</div>',
       '      <table class="dt">',
       '        <thead><tr><th>时间</th><th>操作</th><th>对象</th></tr></thead>',
@@ -1003,15 +1015,8 @@
       '        </tbody>',
       '      </table>',
       '    </div>',
-      '    <div class="card">',
-      '      <div class="card-title">一键恢复</div>',
-      '      <div class="small">演示结束后点这里：</div>',
-      '      <button class="primary" @click="resetAll" :disabled="busy">恢复运行 + 正常场景</button>',
-      '      <div class="hint" style="margin-top:10px">',
-      '        只影响鱼类板块的仿真数据；不写回 farm.json，不影响其他板块。',
-      '      </div>',
-      '    </div>',
-      '  </div>',
+      '  </details>',
+      '',
       '</div>'
     ].join('\n')
   };
@@ -1107,10 +1112,10 @@
       '',
       '  <template v-else>',
       '    <div class="grid-stats">',
-      '      <stat-card name="鱼种总数" field="species" unit="种" :value="stat.total" />',
-      '      <stat-card name="有温度告警线" field="alarm" unit="种" :value="stat.withAlarm" />',
-      '      <stat-card name="两库齐备" field="both" unit="种" :value="stat.both" />',
-      '      <stat-card name="证据：官方/标准" field="official" unit="种"',
+      '      <stat-card name="鱼种总数" field="species" unit="种" :digits="0" :value="stat.total" />',
+      '      <stat-card name="有温度告警线" field="alarm" unit="种" :digits="0" :value="stat.withAlarm" />',
+      '      <stat-card name="两库齐备" field="both" unit="种" :digits="0" :value="stat.both" />',
+      '      <stat-card name="证据：官方/标准" field="official" unit="种" :digits="0"',
       '                 :value="stat.byEvidence[\'官方/标准\'] || 0" />',
       '    </div>',
       '',

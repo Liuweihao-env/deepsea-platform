@@ -232,7 +232,10 @@ const TABS = [
     },
     mounted: function () {
       const self = this;
-      Router.onChange(function (p) { self.path = p; });
+      Router.onChange(function (p) {
+        self.path = p;
+        self.$nextTick(function () { if (self.$refs.content) self.$refs.content.scrollTop = 0; });
+      });
       /* 订阅 API 变化 → tick 自增 → boardDots 重算。
          红点跟着**告警的实际状态**走：告警解除（recovered）了，点自动灭；
          点进去是**不会消**的（老师要求）。 */
@@ -250,7 +253,8 @@ const TABS = [
       '    <div class="tabs">',
       '      <div v-for="t in tabs" :key="t.key" class="tab" ',
       '           :class="{ active: tabKey === t.key }"',
-      '           @click="tabPick(t)">',
+      '           role="button" tabindex="0" :aria-pressed="tabKey === t.key"',
+      '           @keydown.enter="tabPick(t)" @keydown.space.prevent="tabPick(t)" @click="tabPick(t)">',
       '        {{ t.label }}',
       '        <!-- 板块入口告警角标：iOS/微信那种带数字的红点，',
       '             数字＝该板块未解除的告警条数；99+ 封顶（微信同款约定）。',
@@ -269,7 +273,8 @@ const TABS = [
       '      <template v-for="g in sideGroups" :key="g.group">',
       '        <div class="group">{{ g.group }}<span v-if="g.owner"> · {{ g.owner }}</span></div>',
       '        <div v-for="it in g.items" :key="it.path" class="item"',
-      '             :class="{ active: path === it.path }" @click="pick(it.path)">',
+      '             :class="{ active: path === it.path }" role="button" tabindex="0" :aria-current="path === it.path ? \'page\' : null"',
+      '             @keydown.enter="pick(it.path)" @keydown.space.prevent="pick(it.path)" @click="pick(it.path)">',
       ' {{ it.label }}<span v-if="!it.ready" class="small muted"> ·待建</span>',
       '        </div>',
       '      </template>',
@@ -277,7 +282,7 @@ const TABS = [
       '',
       '    <!-- ③ 主内容区 -->',
       '    <div class="main">',
-      '      <div class="content">',
+      '      <div class="content" ref="content" :data-page="path">',
       '        <div v-if="err" class="hint" style="margin-bottom:12px">页面脚本报错：{{ err }}</div>',
       '        <component :is="page" :key="path"></component>',
       '      </div>',

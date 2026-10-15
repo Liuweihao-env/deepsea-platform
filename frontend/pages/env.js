@@ -792,6 +792,51 @@
       '    </div>',
       '  </div>',
       '',
+      '  <div class="hero-note" style="margin:0 0 12px">{{ siteName() }} · {{ isObs ? \'历史台站观测，非实时\' : \'养殖站点仿真\' }} · 最近观测 {{ last.ts ? fmtTs(last.ts) : \'—\' }}</div>',
+      '  <div class="grid-stats">',
+      '    <stat-card class="is-primary" name="浪高" field="wave_height" unit="m" :value="last.wave_height"',
+      '               :note="isObs ? \'该台站本期未测这项\' : \'\'"',
+      '               :quality="last.quality" :ts="last.ts" />',
+      '    <stat-card class="is-primary" name="风速" field="wind_speed" unit="m/s" :value="last.wind_speed"',
+      '               :note="isObs ? \'该台站本期未测这项\' : \'\'"',
+      '               :quality="last.quality" :ts="last.ts" />',
+      '    <stat-card name="海水流速" field="current_speed" unit="m/s" :value="last.current_speed"',
+      '               :note="isObs ? \'中国公开源不提供这项\' : \'\'"',
+      '               :quality="last.quality" :ts="last.ts" />',
+      '    <stat-card name="环境气温" field="air_temp" unit="℃" :value="last.air_temp"',
+      '               :note="isObs ? \'该台站本期未测这项\' : \'\'"',
+      '               :quality="last.quality" :ts="last.ts" />',
+      '  </div>',
+      '',
+      '  <div class="split" style="margin-top:12px">',
+      '    <div class="card">',
+      '      <div class="card-title">海况时序（可缩放 / 框选 · 异常点标记）',
+      '        <help-dot :info="{ level: \'间接支持\', text: \'滚轮缩放、拖拽底部滑条框选时间轴查看细节；曲线上圆点 = 命中「异常界定指标」的数据点，颜色与指标表一致。\' }" :label="\'操作说明\'" />',
+      '      </div>',
+      '      <div ref="chartEl" class="chart" style="height:340px"></div>',
+      '    </div>',
+      '    <div class="card">',
+      '      <div class="card-title">海况事件（由数据实时判定）</div>',
+      '      <div class="events">',
+      '        <div v-if="!events.length" class="empty">本时段无越限事件</div>',
+      '        <div v-for="it in visibleEvents" :key="it.id" class="row-item" @click="picked = it">',
+      '          <span class="t">{{ time(it.ts) }}</span>',
+      '          <span class="dot" :class="lvClass(it.level)"></span>',
+      '          <span class="d">{{ it.text }}</span>',
+      '        </div>',
+      '        <button v-if="events.length > 5" class="small" style="margin-top:6px" @click="evOpen = !evOpen">',
+      ' {{ evOpen ? \'收起\' : \'展开全部（\' + events.length + \' 条）\' }}',
+      '        </button>',
+      '      </div>',
+      '      ',
+      '      <div v-if="picked" class="hint" style="margin-top:10px">',
+      '        <b>已选事件</b><br>{{ picked.text }}<br>',
+      '        <span class="small">时间：{{ time(picked.ts) }}</span>',
+      '      </div>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <details class="secondary-details"><summary>台站资料、观测范围与数据说明</summary>',
       '  <!-- 数据来源面板：说明数据从哪来、入库多少条、观测到什么时候 -->',
       '  <div class="card" style="margin-bottom:12px">',
       '    <div class="card-title">数据来源 · 中国近海台站观测数据（NMDC）</div>',
@@ -852,49 +897,7 @@
       '    </div>',
       '  </div>',
       '',
-      '  <div class="grid-stats">',
-      '    <stat-card name="浪高" field="wave_height" unit="m" :value="last.wave_height"',
-      '               :note="isObs ? \'该台站本期未测这项\' : \'\'"',
-      '               :quality="last.quality" :ts="last.ts" />',
-      '    <stat-card name="风速" field="wind_speed" unit="m/s" :value="last.wind_speed"',
-      '               :note="isObs ? \'该台站本期未测这项\' : \'\'"',
-      '               :quality="last.quality" :ts="last.ts" />',
-      '    <stat-card name="海水流速" field="current_speed" unit="m/s" :value="last.current_speed"',
-      '               :note="isObs ? \'中国公开源不提供这项\' : \'\'"',
-      '               :quality="last.quality" :ts="last.ts" />',
-      '    <stat-card name="环境气温" field="air_temp" unit="℃" :value="last.air_temp"',
-      '               :note="isObs ? \'该台站本期未测这项\' : \'\'"',
-      '               :quality="last.quality" :ts="last.ts" />',
-      '  </div>',
-      '',
-      '  <div class="split" style="margin-top:12px">',
-      '    <div class="card">',
-      '      <div class="card-title">海况时序（可缩放 / 框选 · 异常点标记）',
-      '        <help-dot :info="{ level: \'间接支持\', text: \'滚轮缩放、拖拽底部滑条框选时间轴查看细节；曲线上圆点 = 命中「异常界定指标」的数据点，颜色与指标表一致。\' }" :label="\'操作说明\'" />',
-      '      </div>',
-      '      <div ref="chartEl" class="chart" style="height:340px"></div>',
-      '    </div>',
-      '    <div class="card">',
-      '      <div class="card-title">海况事件（由数据实时判定）</div>',
-      '      <div class="events">',
-      '        <div v-if="!events.length" class="empty">本时段无越限事件</div>',
-      '        <div v-for="it in visibleEvents" :key="it.id" class="row-item" @click="picked = it">',
-      '          <span class="t">{{ time(it.ts) }}</span>',
-      '          <span class="dot" :class="lvClass(it.level)"></span>',
-      '          <span class="d">{{ it.text }}</span>',
-      '        </div>',
-      '        <button v-if="events.length > 5" class="small" style="margin-top:6px" @click="evOpen = !evOpen">',
-      ' {{ evOpen ? \'收起\' : \'展开全部（\' + events.length + \' 条）\' }}',
-      '        </button>',
-      '      </div>',
-      '      ',
-      '      <div v-if="picked" class="hint" style="margin-top:10px">',
-      '        <b>已选事件</b><br>{{ picked.text }}<br>',
-      '        <span class="small">时间：{{ time(picked.ts) }}</span>',
-      '      </div>',
-      '    </div>',
-      '  </div>',
-      '',
+      '  </details>',
       '  <!-- 异常界定指标：让人一眼看出「数据到什么程度会被标记/告警」（问题 3） -->',
       '  <div class="card" style="margin-top:12px">',
       '    <div class="card-title">异常界定指标（红点 / 事件标记依据）',
@@ -927,6 +930,7 @@
       '    </div>',
       '  </div>',
       '',
+      '  <details class="secondary-details"><summary>原始记录与历史查询</summary>',
       '  <!-- 原始数据：放在海况时序下方；可自定义时间窗、可导出；切观测站点即见公开历史数据 -->',
       '  <div class="card" style="margin-top:12px">',
       '    <div class="card-title">{{ rawTitle }}</div>',
@@ -973,6 +977,8 @@
       '    </div>',
       '  </div>',
       '',
+      '  </details>',
+      '  <details class="secondary-details"><summary>演示验证 · 仿真控制</summary>',
       '  <!-- 调试面板（仿真控制）：放在页面最下方 -->',
       '  <div class="card" style="margin-top:12px">',
       '    <div class="card-title">调试面板 · 仿真控制</div>',
@@ -994,7 +1000,7 @@
       '              </span>',
       '            </td>',
       '            <td class="small">',
-      '              <span v-if="s.kind === \'obs\'" class="muted">实时实测（不可模拟）</span>',
+      '              <span v-if="s.kind === \'obs\'" class="muted">历史观测（不可模拟）</span>',
       '              <span v-else-if="per && per[s.site_id] && per[s.site_id].storm" style="color:#991B1B">大风大浪</span>',
       '              <span v-else class="muted">正常</span>',
       '            </td>',
@@ -1028,6 +1034,7 @@
       '    </div>',
       '  </div>',
       '',
+      '  </details>',
       '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
       '    <time-range :model-value="activePer.minutes" @update:model-value="onMinutes" />',
       '    <span style="width:12px"></span>',
@@ -1036,7 +1043,7 @@
       '      <option v-for="s in API.sites()" :key="s.site_id" :value="s.site_id">{{ s.site_name }}</option>',
       '    </select>',
       '    <span style="flex:1"></span>',
-      '    <span class="small muted">口径：{{ API.disclaimer }}</span>',
+      '    <span class="small muted">{{ isObs ? \'历史观测 · 按实际观测日期展示\' : \'养殖站点仿真 · 控制仅影响当前页与站点\' }}</span>',
       '  </div>',
       '</div>'
     ].join('\n')
@@ -1057,7 +1064,7 @@
                per: S.waterPer, loadSeq: 0, chart: null, timer: null,
                evOpen: false,
                show: { water_temp: true, dissolved_oxygen: true, light_intensity: false,
-                       salinity: true },
+                       salinity: false },
                /* 问题二：历史区间（真实站点公开数据可自定义时间查看更长远历史） */
                rangeMode: false, rangeSeries: null, rangeMsg: '',
                rangeStart: '', rangeEnd: '', ranges: {} };
@@ -1359,7 +1366,6 @@
             data: this.slow.map(function (r) { return [r.ts, r.salinity]; })
           });
         }
-        const needAxis2 = !!s.light_intensity;
         /* 阈值线 + 异常点只挂在水温曲线上（水温有界定规则） */
         let idx = -1;
         for (let i = 0; i < series.length; i++) {
@@ -1372,32 +1378,24 @@
           /* 问题二：异常点只标圆点（黄/红分级），不显示数字，图上保持干净 */
           series[idx].markPoint = { symbol: 'circle', symbolSize: 7, label: { show: false }, data: this.waterDots };
         }
+        const count = Math.max(series.length, 1);
+        const grids = series.map(function (_, i) {
+          return { left: 62, right: 26, top: (i * 100 / count + 7) + '%', height: (100 / count - 13) + '%' };
+        });
+        series.forEach(function (line, i) { line.xAxisIndex = i; line.yAxisIndex = i; });
         inst.setOption({
-          /* 问题四：右轴有标签/轴名时留足右侧空间，避免「纵轴显示不全」 */
-          grid: needAxis2
-            ? { left: 56, right: 58, top: 44, bottom: 44 }
-            : { left: 56, right: 20, top: 44, bottom: 44 },
+          grid: grids.length ? grids : { left: 62, right: 26, top: 40, bottom: 44 },
           tooltip: { trigger: 'axis' },
-          legend: { top: 0, textStyle: { fontSize: 12 } },
-          xAxis: {
-            type: 'time',
-            axisLabel: { fontSize: 11, formatter: function (v) { return H.fmtShort(v); } },
-            splitLine: { show: false }
-          },
-          yAxis: needAxis2
-            ? [
-                { type: 'value', scale: true, axisLabel: { fontSize: 11 },
-                  splitLine: { lineStyle: { color: '#EEF2F6' } } },
-                /* 光照强度固定量程 0–14000 lux：白天峰值 ~12000，刻度 0/3500/7000/10500/14000 完整可见 */
-                { type: 'value', position: 'right', min: 0, max: 14000, name: '光照(lux)',
-                  nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 },
-                  splitLine: { show: false } }
-              ]
-            : { type: 'value', scale: true, axisLabel: { fontSize: 11 },
-                splitLine: { lineStyle: { color: '#EEF2F6' } } },
+          axisPointer: { link: [{ xAxisIndex: 'all' }] },
+          xAxis: series.length ? series.map(function (_, i) {
+            return { type: 'time', gridIndex: i, axisLabel: { fontSize: 10, hideOverlap: true, formatter: function (v) { return H.fmtShort(v); } }, splitLine: { show: false } };
+          }) : { type: 'time' },
+          yAxis: series.length ? series.map(function (line, i) {
+            return { type: 'value', gridIndex: i, scale: true, name: line.name, nameTextStyle: { fontSize: 11 }, axisLabel: { fontSize: 10 }, splitLine: { lineStyle: { color: '#EEF2F6' } } };
+          }) : { type: 'value' },
           dataZoom: [
-            { type: 'inside', start: 0, end: 100 },
-            { type: 'slider', height: 16, bottom: 0, start: 0, end: 100 }
+            { type: 'inside', xAxisIndex: series.map(function (_, i) { return i; }) },
+            { type: 'slider', height: 12, bottom: 0, xAxisIndex: series.map(function (_, i) { return i; }) }
           ],
           series: series
         }, true);
@@ -1463,6 +1461,7 @@
       '    </div>',
       '  </div>',
       '',
+      '  <div class="hero-note" style="margin:0 0 12px">{{ siteName() }} · {{ isObs ? \'历史台站观测，非实时\' : \'养殖站点仿真\' }} · 水温观测 {{ last.ts ? fmtTs(last.ts) : \'—\' }}<span v-if="isObs"> · 溶氧 / pH 月度观测 {{ wqNow.ts ? fmtTs(wqNow.ts) : \'—\' }}</span></div>',
       '  <!-- 一条竖线的可视化：命中规则时当场显示，点得开、看得见依据 -->',
       '  <div v-if="topAlarm" class="hint" style="margin-bottom:12px;background:#FEF2F2;border-color:#FECACA">',
       '    <b>⚠ 本时段命中规则：{{ topAlarm.hit.rule_name }}</b>',
@@ -1475,13 +1474,13 @@
       '  </div>',
       '',
       '  <div class="grid-stats">',
-      '    <stat-card name="水温" field="water_temp" unit="℃" :value="last.water_temp"',
+      '    <stat-card class="is-primary" name="水温" field="water_temp" unit="℃" :value="last.water_temp"',
       '               :note="isObs ? \'该台站本期未测这项\' : \'\'"',
       '               :quality="last.quality" :ts="last.ts" />',
-      '    <stat-card name="溶解氧" field="dissolved_oxygen" unit="mg/L" :value="wqNow.dissolved_oxygen"',
+      '    <stat-card class="is-primary" name="溶解氧" field="dissolved_oxygen" unit="mg/L" :value="isObs ? wqNow.dissolved_oxygen : last.dissolved_oxygen"',
       '               :note="isObs ? \'水质月度点位均值\' : \'\'" :digits="1"',
-      '               :quality="wqNow.dissolved_oxygen === null || wqNow.dissolved_oxygen === undefined ? \'good\' : \'good\'"',
-      '               :ts="wqNow.ts || 0" />',
+      '               :quality="isObs ? \'good\' : last.quality"',
+      '               :ts="isObs ? (wqNow.ts || 0) : last.ts" />',
       '    <stat-card name="盐度" field="salinity" unit="‰" :value="lastSlow.salinity"',
       '               :note="isObs ? \'中国公开源仅个别台站有\' : \'\'"',
       '               :quality="lastSlow.quality" :ts="lastSlow.ts" />',
@@ -1499,7 +1498,7 @@
       '        <div class="card-title">水质时序（可缩放 / 框选 · 异常点标记）',
       '          <help-dot :info="{ level: \'间接支持\', text: \'滚轮缩放、拖拽底部滑条框选时间轴查看细节；水温曲线上圆点 = 命中「异常界定指标」的数据点（黄 ≥25.5 偏高提示，红 ≥28.0 水温上限告警）。\' }" :label="\'操作说明\'" />',
       '        </div>',
-      '        <div ref="chartEl" class="chart" style="height:340px"></div>',
+      '        <div ref="chartEl" class="chart" :style="{height: Math.max(340, Object.values(show).filter(Boolean).length * 165) + \'px\'}"></div>',
       '      </div>',
       '      <div class="card" style="margin-top:12px">',
       '        <span class="small muted">曲线显示：</span>',
@@ -1564,6 +1563,7 @@
       '    </div>',
       '  </div>',
       '',
+      '  <details class="secondary-details"><summary>原始记录与历史查询</summary>',
       '  <!-- 原始数据：快变量 + 慢变量两张表；可自定义时间窗、可导出 -->',
       '  <div class="card" style="margin-top:12px">',
       '    <div class="card-title">{{ rawTitle }}</div>',
@@ -1626,6 +1626,8 @@
       '    </div>',
       '  </div>',
       '',
+      '  </details>',
+      '  <details class="secondary-details"><summary>演示验证 · 仿真控制</summary>',
       '  <!-- 调试面板（仿真控制）：放在页面最下方 -->',
       '  <div class="card" style="margin-top:12px">',
       '    <div class="card-title">调试面板 · 仿真控制</div>',
@@ -1647,7 +1649,7 @@
       '              </span>',
       '            </td>',
       '            <td class="small">',
-      '              <span v-if="s.kind === \'obs\'" class="muted">实时实测（不可模拟）</span>',
+      '              <span v-if="s.kind === \'obs\'" class="muted">历史观测（不可模拟）</span>',
       '              <span v-else-if="per && per[s.site_id] && (per[s.site_id].heat || per[s.site_id].offline)" style="color:#991B1B">',
       ' {{ per[s.site_id].heat ? \'水温骤升\' : \'设备离线\' }}',
       '              </span>',
@@ -1673,6 +1675,7 @@
       '    </div>',
       '  </div>',
       '',
+      '  </details>',
       '  <div class="opbar" style="margin:12px -16px -16px; border-radius:0">',
       '    <time-range :model-value="activePer.minutes" @update:model-value="onMinutes" />',
       '    <span style="width:12px"></span>',
@@ -1681,23 +1684,11 @@
       '      <option v-for="s in API.sites()" :key="s.site_id" :value="s.site_id">{{ s.site_name }}</option>',
       '    </select>',
       '    <span style="flex:1"></span>',
-      '    <span class="small muted">口径：{{ API.disclaimer }}</span>',
+      '    <span class="small muted">{{ isObs ? \'历史观测 · 按实际观测日期展示\' : \'养殖站点仿真 · 控制仅影响当前页与站点\' }}</span>',
       '  </div>',
       '</div>',
       '  <threshold-table owner="环境" />',
-      /* 🔴 2026-10-15 队长加：环境的阈值（水温 / 溶解氧）—— 从「参数配置」按 owner 拆回来。
-         数据在 components.js 的 C.THRESHOLDS（单一事实来源），
-         本页只按 owner 过滤显示自己那几条。 */,
-      /* 🔴 视频位（老师意见第 9 条）：环境·水质 的常驻播放区。
-         素材只用开放许可的，**必须标出处** —— 会议纪要第 3 条：
-         「全删来源标签」**只对视频开例外**，这块别跟着删。
-         走公共组件 <video-slot>（components.js），不各写一份。 */
-      /* 🔴 视频位（老师意见第 9 条）—— **素材待接入**（用户 2026-10-15 决定）。
-         结构已留好，素材找好后只需给 <video-slot> 补四个参数：
-           file / license / author / source
-         ⚠️ 素材定了**必须标出处** —— 会议纪要第 3 条：
-            「全删来源标签」**只对视频开例外**，这块别跟着删。 */
-      '  <video-slot title="水质与水下环境" desc="水下放流实拍 —— 水质与水下环境" />',
+      '  <video-slot title="水质与水下环境" desc="水下放流实拍 —— 水质与水下环境" />'
     ].join('\n')
   };
 

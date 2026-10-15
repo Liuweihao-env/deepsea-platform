@@ -130,9 +130,8 @@
         return this.value.toFixed(this.digits);
       },
       tip: function () {
-        const t = this.ts ? new Date(this.ts).toLocaleTimeString('zh-CN', { hour12: false }) : '—';
-        return '字段：' + (this.field || '（未标注）') + '\n更新时间：' + t +
-               '\n来源标注已按老师意见删除';
+        const t = this.ts ? new Date(this.ts).toLocaleString('zh-CN', { hour12: false }) : '—';
+        return '字段：' + (this.field || '（未标注）') + '\n观测时间：' + t;
       },
       foot: function () {
         if (this.missing) {
@@ -297,11 +296,11 @@
       '  <div v-else class="vslot-empty">' +
       '    <div class="vslot-empty-icon">▶</div>' +
       '    <div><b>视频位已预留，素材待接入</b></div>' +
-      '    <div class="small muted" style="margin-top:6px;line-height:1.7">' +
+      '    <details class="small muted" style="margin-top:6px;line-height:1.7"><summary>素材接入说明</summary>' +
       '      把视频文件放进 <code>frontend/vendor/video/</code>，<br>' +
       '      再在本页给 <code>&lt;video-slot&gt;</code> 填上 ' +
       '      <code>file</code> / <code>license</code> / <code>author</code> / <code>source</code> 四个参数即可。' +
-      '    </div>' +
+      '    </details>' +
       '    <div class="small muted" style="margin-top:6px">' +
       '      要求：单条 &lt; 3 MB、合计 &lt; 6 MB、mp4 或 webm、**只用开放许可素材**。' +
       '    </div>' +
@@ -405,13 +404,14 @@
         }
 
         inst.setOption({
-          grid: { left: 56, right: 20, top: 36, bottom: 32 },
+          grid: { left: 56, right: needAxis2 ? 56 : 20, top: 48, bottom: 32 },
           tooltip: { trigger: 'axis' },
           legend: { top: 0, textStyle: { fontSize: 12 } },
           xAxis: {
             type: 'time',
             axisLabel: {
               fontSize: 11,
+              hideOverlap: true,
               formatter: function (v) {
                 return new Date(v).toLocaleTimeString('zh-CN', { hour12: false }).slice(0, 8);
               }
@@ -592,7 +592,7 @@
     template:
       '<div class="row" style="justify-content:space-between;align-items:flex-end;margin-bottom:12px">' +
       '  <div>' +
-      '    <div style="font-size:18px;font-weight:700">{{ title }}</div>' +
+      '    <h1 style="font-size:22px;line-height:1.4;margin:0 0 4px;font-weight:700;color:#16344F">{{ title }}</h1>' +
       '    <div class="small muted" v-if="desc" v-html="desc"></div>' +
       '  </div>' +
       '</div>'
