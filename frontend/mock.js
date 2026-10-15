@@ -495,7 +495,7 @@
         day_total_kg: +(perDay * w).toFixed(1),
         times_per_day: times,
         basis: [
-          '依据 1：生物量 ' + last.total_biomass_kg + ' kg × 日投饲率 1.2% = ' + perDay.toFixed(1) + ' kg/日',
+          '依据 1：总体重 ' + last.total_biomass_kg + ' kg × 日投饲率 1.2% = ' + perDay.toFixed(1) + ' kg/日',
           '依据 2：当前时段（' + h + ' 时）摄食强度「' + cn + '」→ 折算系数 ' + w,
           '依据 3：水温 ' + water + ' ℃ 处于适宜摄食区间（15–25 ℃）',
           '分 ' + times + ' 次投喂，单次上限 ' + (perDay / times).toFixed(1) + ' kg'

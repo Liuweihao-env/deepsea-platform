@@ -199,7 +199,7 @@
     template: [
       '<div>',
       '  <page-head title="鱼类 · 鱼类监测总览"',
-      '    desc="行为识别 + 生物量统计。数据来源：公开数据集（TFBID / DeepFish）+ 仿真"',
+      '    desc="行为识别 + 总体重统计。数据来源：公开数据集（TFBID / DeepFish）+ 仿真"',
       '    />',
       '',
       '  <div class="grid-stats">',
@@ -833,7 +833,7 @@
       '    <table class="dt">',
       '      <thead><tr>',
       '        <th>时间</th><th>站点</th><th>现存尾数</th><th>密度</th>',
-      '        <th>平均体长</th><th>平均体重</th><th>总生物量</th>',
+      '        <th>平均体长</th><th>平均体重</th><th>总体重</th>',
       '        <th>摄食强度</th>',
       '      </tr></thead>',
       '      <tbody>',

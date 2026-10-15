@@ -203,7 +203,13 @@ const TABS = [
     },
     methods: {
       pick: function (p) { Router.go(p); },
-      tabPick: function (t) { Router.go(t.first); }
+      tabPick: function (t) { Router.go(t.first); },
+      /* 角标文字：1~99 显示数字，100 及以上显示 99+ —— 微信/iOS 同款约定，
+         三位数会把标签挤变形。 */
+      dotText: function (b) {
+        const n = this.boardDots[b] || 0;
+        return n > 99 ? '99+' : String(n);
+      }
     },
     mounted: function () {
       const self = this;
@@ -227,11 +233,11 @@ const TABS = [
       '           :class="{ active: tabKey === t.key }"',
       '           @click="tabPick(t)">',
       '        {{ t.label }}',
-      '        <!-- 板块入口告警小红点（老师第 2 条）：纯红点、不分等级、',
-      '             有未解除告警就亮，点进去不消、告警解除才消。',
-      '             管理/总览不挂 —— t.board 为空就不画。 -->',
+      '        <!-- 板块入口告警角标：iOS/微信那种带数字的红点，',
+      '             数字＝该板块未解除的告警条数；99+ 封顶（微信同款约定）。',
+      '             点进去不消、告警解除才消。 -->',
       '        <span v-if="t.board && boardDots[t.board]" class="nav-dot"',
-      '              title="本板块有未解除告警"></span>',
+      '              :title="dotText(t.board) + \' 条未解除告警\'">{{ dotText(t.board) }}</span>',
       '      </div>',
       '    </div>',
       '    <div class="spacer"></div>',

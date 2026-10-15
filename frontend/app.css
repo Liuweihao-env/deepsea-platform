@@ -325,20 +325,43 @@ select, input[type=text], input[type=datetime-local] {
 .cam-no-sub { color: #8fa0b8; font-size: 11px; }
 
 
-/* ---------- 板块入口告警小红点（老师意见 2026-10-09 第 2 条）----------
-   微信那种右上角小圆点：**纯红点、不带数字**（老师要求「纯红点」）。
-   ⚠️ 类名用 .nav-dot，与平台上原有的 .dot（告警等级色点）和 ECharts 的
-      markPoint（曲线上的异常数据点）区分开 —— 这是收件箱 Q3
-      「红点命名怎么和现有红点区分」的答案，三个名字互不重叠。 */
-.tab { position: relative; }
+/* ---------- 板块入口告警角标（iOS / 微信那种右上角带数字的角标）----------
+   老师原话（2026-10-09）：「有未解除告警就亮（不分等级）……**纯红点**」。
+   🔴 **2026-10-15 队长（刘桐麟）改为带数字** —— 用户明确要求做成
+      「微信等 app 在 iOS 系统上的红点，里面含有一个数字，是需要处理的消息数量」。
+      数字 = 该板块**未解除**的告警条数。这是对老师那条「纯红点」的**覆盖**，
+      答辩口径：红点带数字，值班人一眼知道有多少条要处理。
+
+   样式照 iOS 系统角标（UIButton badge / 微信 tabbar badge）：
+     · 高 18px、圆角 9px —— 一位数是正圆，多位数自动拉成胶囊
+     · 字号 11px、白色、600 字重、等宽数字（tabular-nums，数字变化时宽度不跳）
+     · 位置右上角**略微出界**（top/right 取负数），这是 iOS 的标志性做法
+     · 外描边 2px 用顶栏色 #2F5496，让角标从深蓝顶栏里"跳"出来
+       （不用白色描边 —— 选中的标签底色是白的，白描边会糊在一起）
+     · 99+ 封顶（微信同款约定），三位数会把标签挤变形
+   ⚠️ 类名沿用 .nav-dot，与平台原有的 .dot（告警等级色点）和 ECharts 的
+      markPoint（曲线上的异常数据点）区分开。 */
+.topbar .tab { position: relative; }
 .nav-dot {
   position: absolute;
-  top: 6px;
-  right: 4px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #E53935;
-  box-shadow: 0 0 0 2px rgba(229, 57, 53, .18);
+  top: -7px;
+  right: -7px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 9px;
+  background: #FA5151;                 /* 微信红；iOS 系统红是 #FF3B30 */
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  letter-spacing: -.2px;
+  box-shadow: 0 0 0 2px var(--c-info);
   pointer-events: none;
+  z-index: 2;
 }
+

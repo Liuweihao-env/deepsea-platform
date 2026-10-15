@@ -79,7 +79,7 @@
       '  <div class="grid-stats">',
       '    <stat-card name="水温（环境）" field="water_temp" unit="℃" :value="env.water_temp" :quality="env.quality" :ts="env.ts" />',
       '    <stat-card name="现存尾数（鱼类）" field="fish_count" unit="尾" :value="fish.fish_count" :digits="0" />',
-      '    <stat-card name="总生物量（鱼类）" field="total_biomass_kg" unit="kg" :value="fish.total_biomass_kg" />',
+      '    <stat-card name="总体重（鱼类）" field="total_biomass_kg" unit="kg" :value="fish.total_biomass_kg" />',
       '    <stat-card name="锚泊张力（结构）" field="anchor_tension" unit="kN" :value="st.anchor_tension" />',
       '    <stat-card name="储能电量（结构）" field="battery_soc" unit="%" :value="st.battery_soc" />',
       '    <stat-card name="活跃告警" unit="条" :value="activeCount" :digits="0" />',
