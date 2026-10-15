@@ -24,6 +24,7 @@
     { group: '鱼类', owner: '王浩然', items: [
       { path: '/fish/monitor',  label: '鱼类监测总览', ready: true },
       { path: '/fish/heatmap',  label: '鱼群分布热力图', ready: true },
+      { path: '/fish/species',  label: '鱼种档案', ready: true },
       { path: '/fish/growth',   label: '生长模型与预测', ready: false },
       { path: '/fish/records',  label: '原始数据明细', ready: false },
       { path: '/fish/simulator',label: '鱼类仿真控制', ready: false }

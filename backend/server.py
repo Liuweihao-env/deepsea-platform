@@ -557,6 +557,79 @@ def heat_grid():
     return g
 
 
+def fish_positions_3d():
+    """三维鱼群位置（点云）：给三维热力图用。
+
+    返回单位为米的网箱内坐标（X/Y 10m × 10m，水深 Z 8m），每条鱼一个点，
+    点的状态 s：0=正常（冷色）、1=摄食活跃（暖色）、2=异常（红）。
+    与仿真场景联动：聚集→中心收紧成球；密度骤降→点数减少、分散；
+    摄食异常→大多静止、偶有红点；生成器停止/摄像头离线→返回 None（不编数据）。
+    """
+    sim = fish_sim_state()
+    gen, mode = sim["gen_status"], sim["sim_mode"]
+    if gen == "stopped" or mode == "camera_off":
+        return None
+    r = _rng()
+    DIMS = {"x": 10.0, "y": 10.0, "z": 8.0}
+    n_points = 1000
+    if mode == "density_drop":
+        n_points = 650
+    pts = []
+    if mode == "cluster":
+        cx, cy, cz = 7.5, 2.5, 4.0
+        for _ in range(n_points):
+            x = min(9.9, max(0.1, cx + r.gauss(0, 1.0)))
+            y = min(9.9, max(0.1, cy + r.gauss(0, 1.0)))
+            z = min(7.9, max(0.1, cz + r.gauss(0, 1.2)))
+            s = 1 if r.random() < 0.2 else 0
+            pts.append({"x": round(x, 2), "y": round(y, 2), "z": round(z, 2), "s": s})
+        return {"dims": DIMS, "points": pts, "mode": mode, "gen_status": gen}
+
+
+def fish_cameras():
+    """网箱摄像头状态（4 路，多角度）。
+
+    现阶段为演示状态：画面由前端仿真绘制，不推真实视频流。
+    每个摄像头带 stream_url 预留字段，后期接入时把真实视频流地址填进去
+    （浏览器播放需 WebRTC/HLS，RTSP 不能直接播放，需要网关转换）。
+    生成器停止 / 摄像头离线场景：online=False、stream_url 留空。
+    """
+    sim = fish_sim_state()
+    gen, mode = sim["gen_status"], sim["sim_mode"]
+    offline = gen == "stopped" or mode == "camera_off"
+    defs = [
+        ("cam_01", "1号摄像头 · 俯视全景", "俯视"),
+        ("cam_02", "2号摄像头 · 侧视水平", "侧视"),
+        ("cam_03", "3号摄像头 · 水下特写", "水下"),
+        ("cam_04", "4号摄像头 · 广角全景", "全景"),
+    ]
+    cams = []
+    for cid, name, angle in defs:
+        cams.append({
+            "camera_id": cid,
+            "name": name,
+            "angle": angle,
+            "online": not offline,
+            "stream_url": "",          # 预留：后期填 WebRTC/HLS 真实地址
+            "resolution": "1920x1080",
+            "fps": 25,
+            "ts": int(time.time() * 1000) if not offline else None,
+        })
+    return {"cameras": cams, "offline": offline}
+    for _ in range(n_points):
+        # 正常分布：围绕中心 (4.5, 5.2)，鱼群集中在中上层（Z 约 2.5~5.5）
+        x = min(9.9, max(0.1, 4.5 + r.gauss(0, 2.2)))
+        y = min(9.9, max(0.1, 5.2 + r.gauss(0, 2.2)))
+        z = min(7.9, max(0.1, 4.0 + r.gauss(0, 1.6)))
+        if mode == "feeding_abnormal":
+            # 多数静止（状态0），偶发个别异常红点
+            s = 2 if r.random() < 0.04 else 0
+        else:
+            s = 1 if r.random() < 0.18 else 0
+        pts.append({"x": round(x, 2), "y": round(y, 2), "z": round(z, 2), "s": s})
+    return {"dims": DIMS, "points": pts, "mode": mode, "gen_status": gen}
+
+
 def struct_series(minutes=60, storm=False):
     """结构安全（接口文档 第五节）
 
@@ -1191,6 +1264,13 @@ class Handler(BaseHTTPRequestHandler):
             g = heat_grid()
             return self._json({"grid": g, "resolution": "10x10",
                                "offline": g is None})
+
+        if p == "/api/fish/positions3d":
+            d = fish_positions_3d()
+            return self._json({"data": d, "offline": d is None})
+
+        if p == "/api/fish/cameras":
+            return self._json(fish_cameras())
 
         if p == "/api/fish/sim":
             return self._json(fish_sim_state())
