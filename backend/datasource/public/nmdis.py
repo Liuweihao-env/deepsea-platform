@@ -192,6 +192,27 @@ def as_env(site, minutes=60, max_points=720):
     recs = d["records"]
     meta = d["meta"]
 
+    # ⚠️ 先把尾部「全空」的记录削掉。
+    #    台站数据有整段缺测，如果直接取最后 N 条，页面上会出现一条**全空的曲线**，
+    #    看起来像坏了 —— 其实只是那几天没测。
+    while recs and all(recs[-1].get(f) is None for f in NMDIS_PROVIDES):
+        recs = recs[:-1]
+    if not recs:
+        return None
+
+    # ⚠️ 再处理「主指标断尾」的情况。
+    #    实测：芝罘岛的浪高到 2025-08-28 09:00 就停了（最后 3 天没测），
+    #    但它同期还有气温/风速 —— 上面的"全空"判断抓不到，海况页的浪高曲线会是空的。
+    #    浪高是海况页的头号指标，所以：**只要这个站本来是有浪高的**（覆盖率 > 50%），
+    #    窗口尾部就收到最后一条有浪高的记录。
+    #    嵊山/遮浪本来就没有浪高（0 条），不适用这条，保持原样。
+    has_wave = sum(1 for r in recs if r.get("wave_height") is not None) > len(recs) * 0.5
+    if has_wave:
+        while recs and recs[-1].get("wave_height") is None:
+            recs = recs[:-1]
+        if not recs:
+            return None
+
     # ⚠️ 时间窗换算：NMDC 是**逐时**数据，不是 NDBC 的 10 分钟。
     #    平台传进来的 minutes 最小是 60（1 小时）—— 逐时数据只有 1 个点，图是空的。
     #    所以这里把窗口**下限抬到 24 小时**，保证图上至少有 24 个点。

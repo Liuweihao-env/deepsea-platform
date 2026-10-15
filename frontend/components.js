@@ -122,7 +122,10 @@
       quality: { type: String, default: 'good' },   // good | stale | suspect
       ts: { type: Number, default: 0 },
       field: { type: String, default: '' },         // 完整字段名，悬停显示
-      digits: { type: Number, default: 1 }          // null = 原样显示
+      digits: { type: Number, default: 1 },         // null = 原样显示
+      /* 值为空时脚注写什么。默认「设备离线」；
+         如果是因为**数据源不提供这一项**，调用方传「数据源不提供」。 */
+      note: { type: String, default: '' }
     },
     computed: {
       missing: function () { return this.value === null || this.value === undefined || this.value === ''; },
@@ -143,7 +146,14 @@
                '\n数据来源：' + (API.sourceText[this.source] || this.source);
       },
       foot: function () {
-        if (this.missing) return '设备离线';
+        if (this.missing) {
+          /* ⚠️ missing 有两种原因，**不能都写「设备离线」**：
+               · 设备离线 / 无数据 —— 默认就是这个
+               · 数据源压根不提供这一项 —— 由调用方用 note 传进来
+             2026-10-15 踩到：中国近海台站不测「海水流速」，卡片却显示
+             「设备离线」，等于把一个"数据源没有"的事说成了"设备坏了"。 */
+          return this.note || '设备离线';
+        }
         if (this.quality === 'stale') return '最后更新 ' + new Date(this.ts).toLocaleTimeString('zh-CN', { hour12: false });
         if (this.quality === 'suspect') return '疑似异常';
         return '';

@@ -815,12 +815,16 @@
       '',
       '  <div class="grid-stats">',
       '    <stat-card name="浪高" field="wave_height" unit="m" :value="last.wave_height"',
+      '               :note="isObs ? \'该台站本期未测这项\' : \'\'"',
       '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '    <stat-card name="风速" field="wind_speed" unit="m/s" :value="last.wind_speed"',
+      '               :note="isObs ? \'该台站本期未测这项\' : \'\'"',
       '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '    <stat-card name="海水流速" field="current_speed" unit="m/s" :value="last.current_speed"',
+      '               :note="isObs ? \'中国公开源不提供这项\' : \'\'"',
       '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '    <stat-card name="环境气温" field="air_temp" unit="℃" :value="last.air_temp"',
+      '               :note="isObs ? \'该台站本期未测这项\' : \'\'"',
       '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '  </div>',
       '',
@@ -1037,6 +1041,20 @@
       },
       last: function () { return this.fast.length ? this.fast[this.fast.length - 1] : {}; },
       lastSlow: function () { return this.slow.length ? this.slow[this.slow.length - 1] : {}; },
+      /* 🔴 2026-10-15：观测站点的 pH / 溶解氧来自**水质数据源**（国家海洋环境监测中心
+         的公开系统），走 slow 序列。它是**月度点位均值**，不是实时读数 ——
+         所以卡片脚注写「水质月度点位均值」，并显示该月的观测时刻（不是"现在"）。
+         养殖站点仍用仿真生成的慢变量。 */
+      wqNow: function () {
+        const s = this.lastSlow || {};
+        return {
+          dissolved_oxygen: s.dissolved_oxygen === undefined ? null : s.dissolved_oxygen,
+          ph: s.ph === undefined ? null : s.ph,
+          water_class: s.water_class || '',
+          month: s.month || '',
+          ts: s.ts || 0
+        };
+      },
       activePer: function () {
         return (this.per && this.per[this.site]) || global.__ENV_HELPERS__.defaultPer();
       },
@@ -1421,15 +1439,21 @@
       '',
       '  <div class="grid-stats">',
       '    <stat-card name="水温" field="water_temp" unit="℃" :value="last.water_temp"',
-      '               :quality="last.quality" :ts="last.ts" source="simulated" />',
-      '    <stat-card name="溶解氧" field="dissolved_oxygen" unit="mg/L" :value="last.dissolved_oxygen"',
-      '               :quality="last.quality" :ts="last.ts" source="simulated" />',
+      '               :note="isObs ? \'该台站本期未测这项\' : \'\'"',
+      '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
+      '    <stat-card name="溶解氧" field="dissolved_oxygen" unit="mg/L" :value="wqNow.dissolved_oxygen"',
+      '               :note="isObs ? \'水质月度点位均值\' : \'\'" :digits="1"',
+      '               :quality="wqNow.dissolved_oxygen === null || wqNow.dissolved_oxygen === undefined ? \'good\' : \'good\'"',
+      '               :ts="wqNow.ts || 0" :source="isObs ? \'public\' : \'simulated\'" />',
       '    <stat-card name="盐度" field="salinity" unit="‰" :value="lastSlow.salinity"',
-      '               :quality="lastSlow.quality" :ts="lastSlow.ts" source="simulated" />',
-      '    <stat-card name="pH 值" field="ph" unit="" :value="lastSlow.ph"',
-      '               :quality="lastSlow.quality" :ts="lastSlow.ts" source="simulated" />',
+      '               :note="isObs ? \'中国公开源仅个别台站有\' : \'\'"',
+      '               :quality="lastSlow.quality" :ts="lastSlow.ts" :source="isObs ? \'public\' : \'simulated\'" />',
+      '    <stat-card name="pH 值" field="ph" unit="" :value="isObs ? wqNow.ph : lastSlow.ph" :digits="2"',
+      '               :note="isObs ? \'水质月度点位均值\' : \'\'"',
+      '               :quality="lastSlow.quality" :ts="isObs ? (wqNow.ts || 0) : lastSlow.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '    <stat-card name="光照强度" field="light_intensity" unit="lux" :value="last.light_intensity"',
-      '               :quality="last.quality" :ts="last.ts" source="simulated" />',
+      '               :note="isObs ? \'中国公开源不提供这项\' : \'\'"',
+      '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '  </div>',
       '',
       '  <div class="split" style="margin-top:12px">',
