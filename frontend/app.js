@@ -47,7 +47,19 @@
       { path: '/struct/alarm',  label: '灾害分级预警', ready: true },
       { path: '/struct/detail', label: '监测详情', ready: false },
       { path: '/struct/rules',  label: '规则配置', ready: false },
-      { path: '/struct/fault',  label: '造故障工具', ready: false }
+      /* 🔴 2026-10-15 队长删：原「造故障工具 /struct/fault」菜单项**已移除**
+         （这一页从未实现，点进去是空白占位页）。
+
+         ⚠️ **删的是"从未存在的统一页面"，不是删能力。** 造故障能力**还在**，
+            只是散在各业务页里：
+              · 智能·自动投喂页有「造故障（验证闭环用）」卡片（最完整）
+              · 海况页有「大风大浪」、投喂页有「水温骤升」
+              · 后端 send_command(..., inject=) 支持 offline / timeout
+            演示闭环时从**智能·自动投喂页**进就行。
+
+         📌 顺带纠正一处历史描述：多份早期文档曾把「造故障工具」写成
+            「答辩重点」「全项目唯一的造故障工具」「断它会断掉整个闭环证据链」。
+            那些说法在"这一页从未实现"之后就不成立了，已在相关文档里改成如实口径。 */
     ]},
     { group: '智能', owner: '李志成', items: [
       { path: '/ai/feed',  label: '自动投喂', ready: true },
