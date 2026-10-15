@@ -114,8 +114,16 @@
        cn_zlg 遮浪海洋站   ZLG · 南海（广东汕尾）22.7N 115.6E
      数据来源：国家海洋科学数据中心（NMDC）dataSetId=4 中国台站逐时观测，
        由负责人下载后转存 frontend/pages/env_data/*.json（真实公开数据，离线可用）。
-     说明：NMDC 台站仅提供 气温/风速/海温/风浪高/风浪周期 等要素；
-       溶解氧/盐度/pH/光照强度 无公开逐时源 → 真实站点如实显示「—」，不编造。
+     说明：NMDC 台站仅提供 气温/风速/海温/风浪高/风浪周期 等要素（逐时）；
+       水质要素按可查证的真实公开数据补充：
+         · 溶解氧 / pH —— 国家海洋环境监测中心·海水水质监测信息公开系统
+           （ep.nmemc.org.cn:8888/water/，近岸点位月度，公开网页可查）：
+           小麦岛→SDH02013(120.41E,36.03N)、嵊山→ZJD12002(122.75E,30.75N)、
+           遮浪→GDN14004(115.67E,22.77N)；每月 1 条（2025 年 4/7/10 月）。
+         · 盐度 —— 仅小麦岛有公开日值（NMDC《中国温盐观测数据》dataSetId=9，
+           每天 08:00 时次 1 个值，2025-04~08 共 153 条）；
+           嵊山 / 遮浪无公开盐度源 → 如实「—」，不编造。
+         · 光照强度 —— 三站均无公开源 → 如实「—」。
        小麦岛浪高/周期齐全；嵊山/遮浪漫高/周期缺测（官方未观测）→ 如实「—」。
      前端直接读静态 JSON（server.py 不可改、未挂载 env.py 路由，这是唯一
      既离线可用又不产生 404 console error 的取数路径；如需统一走后端接口，
@@ -164,12 +172,32 @@
       dissolved_oxygen: null, salinity: null, ph: null, light_intensity: null
     };
   }
-  /* 按分钟窗口取中国台站数据的尾部窗口（逐时数据：每小时一条） */
+  /* 水质样本（低频真实公开数据：小麦岛盐度日值 + 三站溶解氧/pH 月度点位）
+     → 页面标准记录（水质字段填真实值，wsrc 保留来源标注，如点位编码） */
+  function cnWaterSample(siteId, s) {
+    return {
+      ts: s.ts, site_id: siteId, source: 'public', quality: 'good',
+      wave_height: null, wind_speed: null, current_speed: null,
+      air_temp: null, water_temp: null,
+      dissolved_oxygen: (s.dissolved_oxygen == null ? null : Number(s.dissolved_oxygen)),
+      salinity: (s.salinity == null ? null : Number(s.salinity)),
+      ph: (s.ph == null ? null : Number(s.ph)),
+      light_intensity: null,
+      wsrc: s.source || ''
+    };
+  }
+  /* 按分钟窗口取中国台站数据的尾部窗口（逐时数据：每小时一条）；
+     水质慢变量 = 低频真实样本（盐度日值 / 溶解氧·pH 月度点位），按时间正序 */
   function cnWindow(d, minutes) {
     const recs = (d && d.records) || [];
-    if (!recs.length) return { fast: [], slow: [] };
     const win = Math.max(2, Math.round((minutes || 60) * 60 * 1000 / 3600000));
-    return { fast: recs.slice(-win).map(function (r) { return cnRecord(d.site_id, r); }), slow: [] };
+    const fast = recs.length
+      ? recs.slice(-win).map(function (r) { return cnRecord(d.site_id, r); })
+      : [];
+    const slow = ((d && d.water_samples) || [])
+      .map(function (s) { return cnWaterSample(d.site_id, s); })
+      .sort(function (a, b) { return a.ts - b.ts; });
+    return { fast: fast, slow: slow };
   }
   /* 按 [start, end] 毫秒过滤中国台站全量记录（历史区间，本地完成，不依赖后端） */
   function cnRangeSlice(d, start, end) {
@@ -181,7 +209,7 @@
   global.__ENV_CN__ = {
     sites: __ENV_CN_SITES__, byId: __ENV_CN_BY_ID__, data: __ENV_CN_DATA__,
     envSites: envSites, loadCnData: loadCnData, cnWindow: cnWindow,
-    cnRecord: cnRecord, cnRangeSlice: cnRangeSlice
+    cnRecord: cnRecord, cnWaterSample: cnWaterSample, cnRangeSlice: cnRangeSlice
   };
 
   /* ============================================================
@@ -1113,7 +1141,7 @@
                per: S.waterPer, loadSeq: 0, chart: null, timer: null, sourceDetail: '',
                tick: 0, evOpen: false,
                show: { water_temp: true, dissolved_oxygen: true, light_intensity: false,
-                       salinity: true },
+                       salinity: true, ph: false },
                /* 问题二：历史区间（真实站点公开数据可自定义时间查看更长远历史） */
                rangeMode: false, rangeSeries: null, rangeMsg: '',
                rangeStart: '', rangeEnd: '', ranges: {} };
@@ -1134,6 +1162,14 @@
       },
       last: function () { return this.fast.length ? this.fast[this.fast.length - 1] : {}; },
       lastSlow: function () { return this.slow.length ? this.slow[this.slow.length - 1] : {}; },
+      /* 最近一个「含盐度」的水质样本（小麦岛温盐日值止于 8 月底，而溶解氧/pH 月度样本
+         含 10 月 → 时间排序后最后一条无盐度；数值卡须取各自字段的最新真实样本） */
+      lastSalt: function () {
+        for (let i = this.slow.length - 1; i >= 0; i--) {
+          if (this.slow[i].salinity != null) return this.slow[i];
+        }
+        return {};
+      },
       activePer: function () {
         return (this.per && this.per[this.site]) || global.__ENV_HELPERS__.defaultPer();
       },
@@ -1141,8 +1177,10 @@
       isObs: function () {
         return !!__ENV_CN_BY_ID__[this.site];
       },
+      /* 水质页来源标签：中国台站海况（NMDC 逐时）+ 水质（海水水质监测信息公开系统月度点位 /
+         温盐数据集日值），养殖站点为仿真生成 */
       srcLabel: function () {
-        if (this.isObs) return 'NMDC 中国海洋台站实测（读本地数据文件）';
+        if (this.isObs) return '中国台站实测（NMDC）+ 海水水质监测信息公开系统（近岸点位月度）';
         return '仿真生成（模拟养殖站点）';
       },
       /* 水温异常点（问题 2）：黄 ≥25.5（R-TEMP-02 偏高提示），红 ≥28.0（R-TEMP-01 水温上限告警） */
@@ -1386,24 +1424,36 @@
         const H = global.__ENV_HELPERS__;
         const s = this.show;
         const series = [];
-        const pushS = function (name, unit, key, color, axis) {
+        /* 真实站点（中国台站）溶解氧/pH 无逐时源 → 用低频真实样本（月度点位）；
+           养殖站点溶解氧为快变量（逐时 5s）。 */
+        const doSrc = this.isObs ? this.slow : this.fast;
+        const pushS = function (name, unit, key, color, axis, srcArr) {
           if (!s[key]) return;
+          const arr = srcArr || fast;
           series.push({
             name: name + '（' + unit + '）', type: 'line', showSymbol: false, smooth: true,
             yAxisIndex: axis || 0,
             lineStyle: { width: 1.6, color: color }, itemStyle: { color: color },
-            data: fast.map(function (r) { return [r.ts, r[key]]; })
+            data: arr.map(function (r) { return [r.ts, r[key]]; })
           });
         };
-        pushS('水温', '℃', 'water_temp', '#2F5496', 0);
-        pushS('溶解氧', 'mg/L', 'dissolved_oxygen', '#166534', 0);
-        pushS('光照强度', 'lux', 'light_intensity', '#C2410C', 1);
-        /* 问题四：盐度（慢变量 30 秒一条）补入时序，与水温/溶解氧同轴（量级相近） */
+        pushS('水温', '℃', 'water_temp', '#2F5496', 0, fast);
+        pushS('溶解氧', 'mg/L', 'dissolved_oxygen', '#166534', 0, doSrc);
+        pushS('光照强度', 'lux', 'light_intensity', '#C2410C', 1, fast);
+        /* 问题四：盐度（慢变量 30 秒一条 / 真实站点为日值样本）补入时序，与水温/溶解氧同轴（量级相近） */
         if (s.salinity) {
           series.push({
             name: '盐度（‰）', type: 'line', showSymbol: false, smooth: true, yAxisIndex: 0,
             lineStyle: { width: 1.6, color: '#7C3AED' }, itemStyle: { color: '#7C3AED' },
             data: this.slow.map(function (r) { return [r.ts, r.salinity]; })
+          });
+        }
+        /* pH 值（真实站点为月度点位样本，养殖站点为慢变量）—— 量级与溶解氧相近，同左轴 */
+        if (s.ph) {
+          series.push({
+            name: 'pH 值', type: 'line', showSymbol: false, smooth: true, yAxisIndex: 0,
+            lineStyle: { width: 1.6, color: '#0E7490' }, itemStyle: { color: '#0E7490' },
+            data: this.slow.map(function (r) { return [r.ts, r.ph]; })
           });
         }
         const needAxis2 = !!s.light_intensity;
@@ -1527,10 +1577,10 @@
       '  <div class="grid-stats">',
       '    <stat-card name="水温" field="water_temp" unit="℃" :value="last.water_temp"',
       '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
-      '    <stat-card name="溶解氧" field="dissolved_oxygen" unit="mg/L" :value="last.dissolved_oxygen"',
+      '    <stat-card name="溶解氧" field="dissolved_oxygen" unit="mg/L" :value="isObs ? lastSlow.dissolved_oxygen : last.dissolved_oxygen"',
       '               :quality="last.quality" :ts="last.ts" :source="isObs ? \'public\' : \'simulated\'" />',
-      '    <stat-card name="盐度" field="salinity" unit="‰" :value="lastSlow.salinity"',
-      '               :quality="lastSlow.quality" :ts="lastSlow.ts" :source="isObs ? \'public\' : \'simulated\'" />',
+      '    <stat-card name="盐度" field="salinity" unit="‰" :value="lastSalt.salinity"',
+      '               :quality="lastSalt.quality" :ts="lastSalt.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '    <stat-card name="pH 值" field="ph" unit="" :value="lastSlow.ph"',
       '               :quality="lastSlow.quality" :ts="lastSlow.ts" :source="isObs ? \'public\' : \'simulated\'" />',
       '    <stat-card name="光照强度" field="light_intensity" unit="lux" :value="last.light_intensity"',
@@ -1559,6 +1609,7 @@
       '        <label class="small" style="margin-left:10px"><input type="checkbox" v-model="show.dissolved_oxygen"> 溶解氧</label>',
       '        <label class="small" style="margin-left:10px"><input type="checkbox" v-model="show.light_intensity"> 光照强度</label>',
       '        <label class="small" style="margin-left:10px"><input type="checkbox" v-model="show.salinity"> 盐度</label>',
+      '        <label class="small" style="margin-left:10px"><input type="checkbox" v-model="show.ph"> pH 值</label>',
       '      </div>',
       '    </div>',
       '    <div class="card">',
@@ -1640,8 +1691,12 @@
       '    <div class="hint" style="margin-top:8px">',
       '      时间显示为「年/月/日 时:分:秒」，原始数据表按<b>最新在上</b>排列（导出 CSV 保持时间正序）。',
       '      养殖站点：快变量（水温 / 溶解氧 / 光照）5 秒一条，慢变量（盐度 / pH）30 秒一条。',
-      '      中国台站（NMDC 实测）：台站不测水质要素（溶解氧 / 盐度 / pH / 光照均无公开逐时源），故如实显示「—」；',
-      '      仅水温为台站海温实测。真实站点按日期区间（年/月/日 时:分）查询历史 —— 数据读取自本地数据文件（离线可用，无需后端挂载）。',
+      '      中国台站（真实公开数据）：逐时海况（气温 / 风速 / 海温 / 浪高）来自 NMDC 台站实测；',
+      '      水质要素按可查证公开源补充 —— 溶解氧 / pH 来自国家海洋环境监测中心·海水水质监测信息公开系统',
+      '      （近岸点位月度，小麦岛→SDH02013 / 嵊山→ZJD12002 / 遮浪→GDN14004）；',
+      '      盐度仅小麦岛有公开日值（NMDC 温盐数据集，每天 08:00 时次），嵊山 / 遮浪无公开盐度源如实「—」；',
+      '      光照强度三站均无公开源如实「—」，不编造。',
+      '      真实站点按日期区间（年/月/日 时:分）查询历史 —— 数据读取自本地数据文件（离线可用，无需后端挂载）。',
       '    </div>',
       '    <div class="card-title" style="margin-top:10px;font-size:13px">快变量</div>',
       '    <div class="dt-wrap">',
@@ -1662,19 +1717,21 @@
       '        </tbody>',
       '      </table>',
       '    </div>',
-      '    <div class="card-title" style="margin-top:10px;font-size:13px">慢变量（盐度 / pH）</div>',
+      '    <div class="card-title" style="margin-top:10px;font-size:13px">慢变量 · 水质要素（盐度 / pH / 溶解氧）</div>',
       '    <div class="dt-wrap">',
       '      <table class="dt">',
-      '        <thead><tr><th>时间</th><th>站点</th><th>质量</th><th>盐度 (‰)</th><th>pH 值</th></tr></thead>',
+      '        <thead><tr><th>时间</th><th>站点</th><th>来源</th><th>质量</th><th>盐度 (‰)</th><th>pH 值</th><th>溶解氧 (mg/L)</th></tr></thead>',
       '        <tbody>',
       '          <tr v-for="r in slowRows" :key="r.ts">',
       '            <td class="mono small">{{ fmtTs(r.ts) }}</td>',
       '            <td class="small">{{ r.site_id }}</td>',
+      '            <td class="small">{{ r.wsrc || srcCn(r.source) }}</td>',
       '            <td class="small">{{ qCn(r.quality) }}</td>',
       '            <td class="mono">{{ r.salinity == null ? \'—\' : r.salinity }}</td>',
       '            <td class="mono">{{ r.ph == null ? \'—\' : r.ph }}</td>',
+      '            <td class="mono">{{ r.dissolved_oxygen == null ? \'—\' : r.dissolved_oxygen }}</td>',
       '          </tr>',
-      '          <tr v-if="!slowRows.length"><td colspan="5" class="muted small">暂无数据</td></tr>',
+      '          <tr v-if="!slowRows.length"><td colspan="7" class="muted small">暂无数据</td></tr>',
       '        </tbody>',
       '      </table>',
       '    </div>',

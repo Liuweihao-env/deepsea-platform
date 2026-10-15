@@ -928,7 +928,7 @@ section('问题一（换站）：真实站点换成中国三站（小麦岛/嵊�
   const w = cn.cnWindow(d, 120);
   assert(w.fast.length === 2 && w.fast[0].ts === 1000 + 48 * 3600000,
     'cnWindow 按 120 分钟取尾部 2 条逐时数据（60 分钟/条）');
-  assert(w.slow.length === 0, '真实站点慢变量为空（台站无盐度/pH 源）');
+  assert(w.slow.length === 0, '无 water_samples 的站点慢变量为空（构造数据未带样本）');
   /* cnRangeSlice：本地按时间区间过滤（不依赖后端接口） */
   const sl = cn.cnRangeSlice(d, 1000 + 10 * 3600000, 1000 + 20 * 3600000);
   assert(sl.length === 11 && sl[0].ts === 1000 + 10 * 3600000 && sl[10].ts === 1000 + 20 * 3600000,
@@ -937,7 +937,55 @@ section('问题一（换站）：真实站点换成中国三站（小麦岛/嵊�
     '本地过滤结果补齐 site_id 与 source=public');
   /* 水质页慢变量为空 → 盐度/pH 卡片显示「—」（模板已用 ? : 防护） */
   assert(water.template.indexOf('r.salinity == null ? \'—\'') >= 0, '水质页慢变量表盐度空值显示「—」');
-  assert(water.template.indexOf('NMDC') >= 0, '水质页说明标注 NMDC 台站不测水质要素');
+  assert(water.template.indexOf('NMDC') >= 0, '水质页说明标注 NMDC 台站来源');
+}
+
+section('补充真实站点水质数据（小麦岛盐度日值 + 三站溶解氧/pH 月度点位）');
+{
+  const cn = sandbox.__ENV_CN__;
+  /* cnWaterSample：低频样本 → 标准记录，水质字段填真实值、wsrc 保留来源标注 */
+  const ws = cn.cnWaterSample('cn_xmd', { ts: 1, salinity: 30.5, source: 'NMDC 温盐数据集（日值 08:00 时次）' });
+  assert(ws.salinity === 30.5 && ws.dissolved_oxygen === null && ws.ph === null,
+    'cnWaterSample 填入盐度真实值，其余水质字段 null');
+  assert(ws.wsrc.indexOf('NMDC 温盐数据集') >= 0, '样本来源标注（wsrc）保留');
+  const ws2 = cn.cnWaterSample('cn_ssn', { ts: 2, ph: 8.13, dissolved_oxygen: 7.5,
+                                           source: '海水水质监测信息公开系统（近岸点位 ZJD12002 月度）' });
+  assert(ws2.ph === 8.13 && ws2.dissolved_oxygen === 7.5 && ws2.salinity === null,
+    'cnWaterSample 填入 pH/溶解氧真实值（嵊山无盐度 → null）');
+  /* cnWindow：water_samples 进入 slow（时间正序） */
+  const d2 = { site_id: 'cn_xmd',
+               records: [{ ts: 1000, wave_height: 1.0, wind_speed: 3.0, air_temp: 12.0, water_temp: 10.0 }],
+               water_samples: [ { ts: 2000, salinity: 30.2, source: 'A' },
+                                { ts: 1500, salinity: 30.1, source: 'B' } ] };
+  const w2 = cn.cnWindow(d2, 60);
+  assert(w2.slow.length === 2 && w2.slow[0].ts === 1500 && w2.slow[1].ts === 2000,
+    'water_samples 按时间正序进入 slow（真实站点慢变量不再为空）');
+  assert(w2.slow[0].salinity === 30.1 && w2.slow[0].site_id === 'cn_xmd',
+    'slow 样本盐度值与站点 id 正确');
+  /* 水质页：真实站点溶解氧数值卡取 slow 样本；慢变量表新增来源列与溶解氧列 */
+  assert(water.template.indexOf('lastSlow.dissolved_oxygen') >= 0,
+    '水质页溶解氧数值卡真实站点用 lastSlow（月度点位样本）');
+  /* lastSalt：小麦岛温盐日值止于 8 月底，溶解氧/pH 月度样本含 10 月 → 盐度卡取最近含盐度样本 */
+  assert(!!water.computed.lastSalt, '水质页有 lastSalt computed（取最近含盐度样本）');
+  const ls = water.computed.lastSalt.call({ slow: [
+    { ts: 1, salinity: null, dissolved_oxygen: 6.9, ph: 8.1 },
+    { ts: 2, salinity: 30.4, dissolved_oxygen: null, ph: null },
+    { ts: 3, salinity: null, dissolved_oxygen: 7.5, ph: 8.0 }
+  ] });
+  assert(ls.salinity === 30.4 && ls.ts === 2, 'lastSalt 取最近一个含盐度样本（跳过末尾溶解氧/pH 样本）');
+  const lsEmpty = water.computed.lastSalt.call({ slow: [{ ts: 1, salinity: null }] });
+  assert(lsEmpty.salinity === undefined, '无盐度样本时 lastSalt 返回空对象（显示「—」）');
+  assert(water.template.indexOf(':value="lastSalt.salinity"') >= 0,
+    '盐度数值卡用 lastSalt（不因 10 月溶解氧/pH 样本靠后而丢盐度）');
+  assert(water.template.indexOf('r.wsrc || srcCn(r.source)') >= 0,
+    '慢变量表显示样本来源标注（点位编码）');
+  assert(water.template.indexOf('溶解氧 (mg/L)</th>') >= 0, '慢变量表新增溶解氧列');
+  assert(water.template.indexOf('v-model="show.ph"') >= 0, '水质时序新增 pH 值复选框');
+  /* 说明文案：真实站点水质要素来源（不再统一「—」，按可查证公开源补充） */
+  assert(water.template.indexOf('海水水质监测信息公开系统') >= 0,
+    '水质页说明标注溶解氧/pH 公开来源（海水水质监测信息公开系统）');
+  assert(water.template.indexOf('嵊山 / 遮浪无公开盐度源如实「—」') >= 0,
+    '嵊山/遮浪无盐度如实标注');
 }
 
 section('验收第 6 条相关：模板 {{ }} 内无裸枚举字段（与 acceptance.py 同口径）');
