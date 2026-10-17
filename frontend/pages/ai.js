@@ -36,6 +36,10 @@
         dec: { biomass_kg: null, feeding_intensity_cn: '—', suggest_kg: null,
                water_temp: null, basis: [], times_per_day: 4 },
         records: [], inject: '', confirmOpen: false, lastSent: null, unsub: null,
+        /* 接口预留：以后两箱命令历史从后端接口拿：
+         *   API.getCageCommands('cage_01') → commands computed 已过滤 feeder_01
+         *   API.getCageCommands('cage_02') → 替换 cage02Cmds
+         * 现在2号箱用 localStorage mock，接口就绪后删掉本地 mock 逻辑即可。 */
         cage02Cmds: (function(){ try { return JSON.parse(localStorage.getItem('cage02_cmds')||'[]'); } catch(e){ return []; } })(),
         /* 2026-10-07 按组员反馈新增：
              mode   —— 自动/手动模式切换。自动=按系统算的规则投喂；手动=自己填量
@@ -631,6 +635,12 @@
       devices: function () { this.tick; return API.devices(); },
       farmList: function () { this.tick; var fd = API.farmDevices(); return (fd && fd.devices) || []; },
       commands: function () { this.tick; return API.commands(); },
+      /* ============================================================
+       * 接口预留：以后两箱设备台账从后端接口拿，格式如下：
+       *   API.getCageDevices('cage_01') → 本函数返回的数组
+       *   API.getCageDevices('cage_02') → 本函数返回的数组
+       * 现在是前端 mock，接口就绪后把 mockCage1/mockCage2 换成 API.resolve 即可。
+       * ============================================================ */
       /* 1号箱设备台账（按《传感器问题》文档：锚链张力/网绳拉力/三轴加速度/倾角/电压/电流/功率/BMS） */
       mockCage1: function () {
         return [
