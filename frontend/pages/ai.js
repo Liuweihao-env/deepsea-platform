@@ -599,18 +599,19 @@
     mounted: function () {
       const self = this;
       this.unsub = API.bind(this, this.load);
+      this._cageH = (e) => { this.cageFilter = e.detail.cage; };
+      window.addEventListener('cagechange', this._cageH);
     },
-    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    beforeUnmount: function () {
+      if (this.unsub) this.unsub();
+      if (this._cageH) window.removeEventListener('cagechange', this._cageH);
+    },
     template: [
       '<div>',
       '  <page-head title="设备状态"',
       '    desc="智能板块涉及的养殖设备实时状态 —— 数据走 API.devices()，每 3 秒自动刷新" />',
       '',
-      '  <div class="row" style="gap:8px;margin-bottom:12px">',
-      '    <button :class="cageFilter===\'cage_01\' ? \'primary\' : \'\'" @click="cageFilter=\'cage_01\'">1 号网箱（大黄鱼）</button>',
-      '    <button :class="cageFilter===\'cage_02\' ? \'primary\' : \'\'" @click="cageFilter=\'cage_02\'">2 号网箱（许氏平鲉）</button>',
-      '  </div>',
-      '',
+
       '  <div class="hint" style="margin-bottom:12px">',
       '    <b>{{ onlineCount }} / {{ filtered.length }}</b> 台设备在线（{{ cageCn() }}）。',
       '    <span class="small muted">设备离线或故障时，下发给它的命令会走失败链并进告警中心（R-CMD-01）。</span>',
@@ -677,7 +678,7 @@
      ============================================================ */
   PAGES['/ai/commands'] = {
     data: function () {
-      return { tick: 0, expandId: null, unsub: null, cageFilter: 'cage_01' };
+      return { tick: 0, expandId: null, unsub: null, cageFilter: window.__currentCage || 'cage_01' };
     },
     computed: {
       /* ⚠️ 显式读 this.tick：API 轮询刷新 _cmds/_devices 时靠 tick 驱动重算 */
@@ -740,8 +741,13 @@
     mounted: function () {
       const self = this;
       this.unsub = API.bind(this, this.load);
+      this._cageH = (e) => { this.cageFilter = e.detail.cage; };
+      window.addEventListener('cagechange', this._cageH);
     },
-    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    beforeUnmount: function () {
+      if (this.unsub) this.unsub();
+      if (this._cageH) window.removeEventListener('cagechange', this._cageH);
+    },
     template: [
       '<div>',
       '  <page-head title="指令日志"',
@@ -751,10 +757,7 @@
       '    <div class="card-title">全部指令（{{ filteredCommands.length }} 条）',
       '      <span class="small muted">按下发时间倒序；点「全链路」看单条命令的生命周期与回执</span>',
       '    </div>',
-      '    <div class="row" style="gap:8px;margin:8px 0 12px">',
-      '      <button :class="cageFilter===\'cage_01\' ? \'primary\' : \'\'" @click="cageFilter=\'cage_01\'">1 号网箱（大黄鱼）</button>',
-      '      <button :class="cageFilter===\'cage_02\' ? \'primary\' : \'\'" @click="cageFilter=\'cage_02\'">2 号网箱（许氏平鲉）</button>',
-      '    </div>',
+
       '    <div v-if="!filteredCommands.length" class="todo">本箱还没有下发过命令',
       '      <span class="small">—— 到「自动投喂」或「智能补光」页下发一条试试。</span>',
       '    </div>',

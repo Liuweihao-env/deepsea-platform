@@ -532,3 +532,15 @@ button { min-height: 32px; }
   .pagination { gap: 6px; flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) { .cam-dot { animation: none; } }
+
+/* 网箱选择器（智能组标题悬停弹出） */
+.cage-picker { position: relative; margin-left: 6px; cursor: pointer; }
+.cage-current { font-size: 11px; padding: 1px 6px; background: var(--c-border); border-radius: 4px; color: var(--c-fg); }
+.cage-pop {
+  position: absolute; left: 0; top: 100%; margin-top: 4px; z-index: 100;
+  background: var(--c-bg, #fff); border: 1px solid var(--c-border); border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.12); min-width: 160px; padding: 4px;
+}
+.cage-pop div { padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+.cage-pop div:hover { background: var(--c-hover, #f0f0f0); }
+.cage-pop div.on { background: var(--c-accent, #1a73e8); color: #fff; }

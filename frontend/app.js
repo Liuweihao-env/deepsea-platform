@@ -152,7 +152,7 @@ const TABS = [
             「没有响应式依赖的 computed」会被 Vue **永久缓存**：红点第一次算完
             就再也不更新，告警解除了点也不会灭。
          所以这里订阅 API 变化 → tick 自增 → boardDots 里读一下 this.tick 逼它重算。 */
-      return { path: '/overview', menu: MENU, tabs: TABS, err: null, tick: 0 };
+      return { path: '/overview', menu: MENU, tabs: TABS, err: null, tick: 0, currentCage: window.__currentCage || 'cage_01', showCage: false };
     },
     computed: {
       /* 每个板块「未解除」的告警条数 —— 顶部红点亮不亮看它。
@@ -220,6 +220,11 @@ const TABS = [
     },
     methods: {
       pick: function (p) { Router.go(p); },
+      selectCage: function (c) {
+        this.currentCage = c;
+        window.__currentCage = c;
+        window.dispatchEvent(new CustomEvent('cagechange', { detail: { cage: c } }));
+      },
       tabPick: function (t) { Router.go(t.first); },
       /* 角标文字：1~99 显示数字，100 及以上显示 99+ —— 微信/iOS 同款约定，
          三位数会把标签挤变形。 */
@@ -269,7 +274,17 @@ const TABS = [
       '    <!-- ② 左侧菜单 200px -->',
       '    <div class="sidenav">',
       '      <template v-for="g in sideGroups" :key="g.group">',
-      '        <div class="group">{{ g.group }}<span v-if="g.owner"> · {{ g.owner }}</span></div>',
+      '        <div class="group">',
+'          {{ g.group }}<span v-if="g.owner"> · {{ g.owner }}</span>',
+'          <span v-if="g.group===\'智能\'" class="cage-picker"',
+'                @mouseenter="showCage=true" @mouseleave="showCage=false">',
+'            <span class="cage-current">{{ currentCage==="cage_01" ? "1号箱" : "2号箱" }} ▾</span>',
+'            <div v-if="showCage" class="cage-pop">',
+'              <div :class="{on: currentCage===\'cage_01\'}" @click="selectCage(\'cage_01\')">1号网箱（大黄鱼）</div>',
+'              <div :class="{on: currentCage===\'cage_02\'}" @click="selectCage(\'cage_02\')">2号网箱（许氏平鲉）</div>',
+'            </div>',
+'          </span>',
+'        </div>',
       '        <div v-for="it in g.items" :key="it.path" class="item"',
       '             :class="{ active: path === it.path }" role="button" tabindex="0" :aria-current="path === it.path ? \'page\' : null"',
       '             @keydown.enter="pick(it.path)" @keydown.space.prevent="pick(it.path)" @click="pick(it.path)">',
