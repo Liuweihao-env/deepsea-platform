@@ -141,11 +141,14 @@
     mounted: function () {
       this.load();
       const self = this;
-      /* API.bind = 数据变化时重算 + 每 3 秒自动刷新曲线（见 api-remote.js 的说明）。
-         🔴 2026-10-07 加：之前曲线只在进页面时拉一次，是张静止的快照。 */
       this.unsub = API.bind(this, this.load);
+      this._cageH = (e) => { this.cageFilter = e.detail.cage; };
+      window.addEventListener('cagechange', this._cageH);
     },
-    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    beforeUnmount: function () {
+      if (this.unsub) this.unsub();
+      if (this._cageH) window.removeEventListener('cagechange', this._cageH);
+    },
     /* 2026-10-08 按《智能板块建议10.7》问题①：手动投喂默认填建议量。
        切到手动模式时若还没填过，直接给建议值，值班人在此基础上改即可。 */
     watch: {
@@ -403,11 +406,14 @@
     mounted: function () {
       this.load();
       const self = this;
-      /* API.bind = 数据变化时重算 + 每 3 秒自动刷新曲线（见 api-remote.js 的说明）。
-         🔴 2026-10-07 加：之前曲线只在进页面时拉一次，是张静止的快照。 */
       this.unsub = API.bind(this, this.load);
+      this._cageH = (e) => { this.cageFilter = e.detail.cage; };
+      window.addEventListener('cagechange', this._cageH);
     },
-    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    beforeUnmount: function () {
+      if (this.unsub) this.unsub();
+      if (this._cageH) window.removeEventListener('cagechange', this._cageH);
+    },
     watch: { minutes: function () { this.load(); } },
     template: [
       '<div>',
