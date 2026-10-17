@@ -36,7 +36,7 @@
         dec: { biomass_kg: null, feeding_intensity_cn: '—', suggest_kg: null,
                water_temp: null, basis: [], times_per_day: 4 },
         records: [], inject: '', confirmOpen: false, lastSent: null, unsub: null,
-        cage02Cmds: [],
+        cage02Cmds: (function(){ try { return JSON.parse(localStorage.getItem('cage02_cmds')||'[]'); } catch(e){ return []; } })(),
         /* 2026-10-07 按组员反馈新增：
              mode   —— 自动/手动模式切换。自动=按系统算的规则投喂；手动=自己填量
              amount —— 手工投喂量。null 表示"还没填过"，界面上回落显示建议值
@@ -148,12 +148,14 @@
           if (self.inject === 'fail') cmd.inject = 'fail';
           if (self.inject === 'timeout') cmd.inject = 'timeout';
           self.cage02Cmds.unshift(cmd);
-          self.load(); /* 立刻映射 records */
+          try { localStorage.setItem('cage02_cmds', JSON.stringify(self.cage02Cmds.slice(0,20))); } catch(e){}
+          self.load();
           self.tick++;
           function bump(status){
             cmd.command_status = status;
             cmd.history.push({ ts: Date.now(), status: status });
             self.cage02Cmds = self.cage02Cmds.slice();
+            try { localStorage.setItem('cage02_cmds', JSON.stringify(self.cage02Cmds.slice(0,20))); } catch(e){}
             self.tick++;
           }
           if (self.inject === 'fail') {
