@@ -612,14 +612,14 @@
       '  </div>',
       '',
       '  <div class="hint" style="margin-bottom:12px">',
-      '    <b>{{ onlineCount }} / {{ filtered.length }}</b> 台设备在线（{{ cageCn }}）。',
+      '    <b>{{ onlineCount }} / {{ filtered.length }}</b> 台设备在线（{{ cageCn() }}）。',
       '    <span class="small muted">设备离线或故障时，下发给它的命令会走失败链并进告警中心（R-CMD-01）。</span>',
       '  </div>',
       '',
       '  <div v-if="filtered.length" class="device-grid">',
       '    <div v-for="d in filtered" :key="d.device_id" class="card" style="min-width:0">',
       '      <div class="card-title">',
-      '        {{ metricCn(d.metric) }}<span class="small muted" :title="d.device_id"> · {{ d.device_id }}</span>',
+      '        {{ cageCn() }} · {{ metricCn(d.metric) }}<span class="small muted" :title="d.device_id"> · {{ d.device_id }}</span>',
       '      </div>',
       '      <div class="kv" style="margin-top:6px">',
       '        <span class="k">在线</span><span>{{ d.device_online ? \'在线\' : (d.device_online === false ? \'离线\' : \'—\') }}</span>',
@@ -631,7 +631,7 @@
       '      </div>',
       '    </div>',
       '  </div>',
-      '  <div v-if="!filtered.length" class="todo">{{ cageCn }}暂未配置设备台账 —— 待队长在 farm.json 补充同型第二套设备。</div>',
+      '  <div v-if="!filtered.length" class="todo">{{ cageCn() }}暂未配置设备台账 —— 待队长在 farm.json 补充同型第二套设备。</div>',
       '',
       '  <div class="card" style="margin-top:12px">',
       '    <div class="card-title" style="cursor:pointer" @click="showRef = !showRef">',
@@ -682,7 +682,8 @@
     computed: {
       /* ⚠️ 显式读 this.tick：API 轮询刷新 _cmds/_devices 时靠 tick 驱动重算 */
       commands: function () { this.tick; return API.commands(); },
-      devices: function () { this.tick; return API.devices(); }
+      devices: function () { this.tick; return API.devices(); },
+      farmList: function () { this.tick; var fd = API.farmDevices(); return (fd && fd.devices) || []; }
     },
     methods: {
       load: function () { this.tick++; },
@@ -692,10 +693,18 @@
                  cancelled: '已停止' }[s] || s;
       },
       time: function (ts) { return ts ? new Date(ts).toLocaleString('zh-CN', { hour12: false }) : '—'; },
-      /* 设备中文名：从 API.devices() 反查 device_type 再经 CN 转中文（不裸英文） */
+      /* metric 英文名 → 中文名 */
+      metricCn: function (m) {
+        return { water_temp: '水温传感器', dissolved_oxygen: '溶解氧传感器',
+                 tilt: '倾角传感器', anchor_tension: '锚泊张力传感器',
+                 feed_rate: '自动投饵机', light_dimming: '补光灯具' }[m] || null;
+      },
+      /* 设备名：优先台账中文名，英文 ID 收进 title 悬停可见 */
       deviceName: function (devId) {
-        const d = this.devices.filter(function (x) { return x.device_id === devId; })[0];
-        return (d ? CN.deviceType(d.device_type) + ' · ' : '') + devId;
+        var f = this.farmList.filter(function (x) { return x.device_id === devId; })[0];
+        if (f && f.metric && this.metricCn(f.metric)) return this.metricCn(f.metric);
+        var d = this.devices.filter(function (x) { return x.device_id === devId; })[0];
+        return d ? CN.deviceType(d.device_type) : devId;
       },
       /* 按命令类型给出目标参数（不编，拿不到就显示 —） */
       targetText: function (c) {
