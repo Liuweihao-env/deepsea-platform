@@ -131,6 +131,8 @@
           this.inject ? { inject: this.inject } : {});
         this.lastSent = cmd;
         this.stopMsg = '';
+        /* 刚发的命令立刻插进记录表最前面，不用等后端返回 */
+        this.records.unshift(cmd);
         this.$nextTick(function () { /* 让状态机进度条立刻可见 */ });
         /* 立刻刷一次记录表 —— 否则要等下一个 3 秒周期，
            「停止」按钮才出现，人手早过了那个时间窗。 */
