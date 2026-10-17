@@ -104,7 +104,8 @@
           self.dec = { biomass_kg: 420.5, feeding_intensity_cn: '中', suggest_kg: 0.9,
                        water_temp: 18.2, basis: ['水温 18.2°C', '溶氧 6.8 mg/L', '摄食强度中'],
                        times_per_day: 3 };
-          self.records = [];
+          /* 2号箱 records 从 localStorage 读，轮询不清空 */
+          try { self.records = JSON.parse(localStorage.getItem('cage02_feed_records') || '[]'); } catch(e) { self.records = []; }
           return;
         }
         API.resolve(API.feedDecision(), function (d) {
@@ -130,14 +131,18 @@
           { amount_kg: this.targetKg, speed_kg_min: this.speed, duration_s: this.durationSec },
           this.inject ? { inject: this.inject } : {}).then(function (cmd) {
           self.lastSent = cmd;
-          /* 把命令对象映射成记录表格式插进最前 */
-          self.records.unshift({
+          var rec = {
             ts: Date.now(),
             amount_kg: self.targetKg,
             trigger_by: 'manual',
             task_status: 'created',
             command_id: cmd.command_id || '—'
-          });
+          };
+          self.records.unshift(rec);
+          /* 2号箱记录写 localStorage，轮询不清空 */
+          if (self.cageFilter === 'cage_02') {
+            try { localStorage.setItem('cage02_feed_records', JSON.stringify(self.records.slice(0,20))); } catch(e) {}
+          }
         });
         this.stopMsg = '';
         this.$nextTick(function () { /* 让状态机进度条立刻可见 */ });
