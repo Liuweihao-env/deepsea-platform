@@ -527,7 +527,7 @@
      ============================================================ */
   PAGES['/ai/devices'] = {
     data: function () {
-      return { tick: 0, unsub: null };
+      return { tick: 0, unsub: null, showRef: false, cageFilter: 'cage_01' };
     },
     computed: {
       /* ⚠️ 显式读 this.tick：API 轮询刷新 _devices/_cmds 时靠 tick 驱动重算 */
@@ -602,6 +602,29 @@
       '    </div>',
       '  </div>',
       '  <div v-if="!devices.length" class="todo">还没有设备数据</div>',
+      '',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title" style="cursor:pointer" @click="showRef = !showRef">',
+      '      设备配置依据（桁架式网箱实际配哪些设备）',
+      '      <span class="small muted">{{ showRef ? "▾ 收起" : "▸ 展开" }}</span>',
+      '    </div>',
+      '    <div v-if="showRef" class="small" style="line-height:1.9">',
+      '      <p>依据中集来福士官网经海系列（68×68m 坐底式桁架网箱）公开资料，单箱典型配置如下：</p>',
+      '      <table class="dt" style="width:100%"><thead><tr><th>系统</th><th>设备</th><th>数量</th></tr></thead><tbody>',
+      '        <tr><td>投喂系统</td><td>空气动力自动投饵机 + 20 m³ 饵料罐 + 自动上料装置</td><td>1 套</td></tr>',
+      '        <tr><td>环境监测</td><td>水温 / 溶解氧 / 流速流向 / 盐度传感器；气象站（风速风向、气温、气压）</td><td>1 套</td></tr>',
+      '        <tr><td>水下监测</td><td>水下摄像机、ROV 水下机器人、鱼群密度声呐</td><td>1 套</td></tr>',
+      '        <tr><td>结构安全</td><td>锚泊张力传感器、倾角传感器</td><td>各 1</td></tr>',
+      '        <tr><td>网衣作业</td><td>网衣绞车（提网/翻网）、水下洗网机</td><td>绞车 10–20 台</td></tr>',
+      '        <tr><td>补光</td><td>水下 LED 灯具（调光）</td><td>按需</td></tr>',
+      '        <tr><td>通信供电</td><td>5G 基站、风光互补供电</td><td>1 套</td></tr>',
+      '      </tbody></table>',
+      '      <p class="small muted" style="margin-top:8px">',
+      '        出处：中集来福士官网 <a href="https://www.cimc-raffles.com/list-17-1.html" target="_blank">深远海渔业产品页</a>；',
+      '        烟台经海海洋渔业 <a href="https://www.jinghaiyuye.com/index.php/Article/show/id/626/sid/636.html" target="_blank">经海001号介绍</a>。',
+      '      </p>',
+      '    </div>',
+      '  </div>',
       '',
       '  <div class="card" style="margin-top:12px">',
       '    <div class="card-title">造故障（验证闭环用）</div>',
