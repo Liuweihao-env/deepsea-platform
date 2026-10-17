@@ -677,13 +677,23 @@
      ============================================================ */
   PAGES['/ai/commands'] = {
     data: function () {
-      return { tick: 0, expandId: null, unsub: null };
+      return { tick: 0, expandId: null, unsub: null, cageFilter: 'cage_01' };
     },
     computed: {
       /* ⚠️ 显式读 this.tick：API 轮询刷新 _cmds/_devices 时靠 tick 驱动重算 */
       commands: function () { this.tick; return API.commands(); },
       devices: function () { this.tick; return API.devices(); },
-      farmList: function () { this.tick; var fd = API.farmDevices(); return (fd && fd.devices) || []; }
+      farmList: function () { this.tick; var fd = API.farmDevices(); return (fd && fd.devices) || []; },
+      /* 按网箱过滤命令：命令的 device_id → farmDevices.location → cage_id */
+      filteredCommands: function () {
+        var cid = this.cageFilter;
+        var self = this;
+        return this.commands.filter(function (c) {
+          var f = self.farmList.filter(function (x) { return x.device_id === c.device_id; })[0];
+          if (!f) return true;  // 台账里没有的设备（如 crane_01）不过滤
+          return (f.location || '').indexOf(cid) >= 0;
+        });
+      }
     },
     methods: {
       load: function () { this.tick++; },
@@ -738,17 +748,21 @@
       '    desc="智能板块全部指令的下发记录与全链路状态 —— 数据走 API.commands()，每 3 秒自动刷新" />',
       '',
       '  <div class="card">',
-      '    <div class="card-title">全部指令（{{ commands.length }} 条）',
+      '    <div class="card-title">全部指令（{{ filteredCommands.length }} 条）',
       '      <span class="small muted">按下发时间倒序；点「全链路」看单条命令的生命周期与回执</span>',
       '    </div>',
-      '    <div v-if="!commands.length" class="todo">还没有下发过命令',
+      '    <div class="row" style="gap:8px;margin:8px 0 12px">',
+      '      <button :class="cageFilter===\'cage_01\' ? \'primary\' : \'\'" @click="cageFilter=\'cage_01\'">1 号网箱（大黄鱼）</button>',
+      '      <button :class="cageFilter===\'cage_02\' ? \'primary\' : \'\'" @click="cageFilter=\'cage_02\'">2 号网箱（许氏平鲉）</button>',
+      '    </div>',
+      '    <div v-if="!filteredCommands.length" class="todo">本箱还没有下发过命令',
       '      <span class="small">—— 到「自动投喂」或「智能补光」页下发一条试试。</span>',
       '    </div>',
       '    <div v-else class="dt-wrap" style="max-height:560px">',
       '      <table class="dt">',
       '        <thead><tr><th>下发时间</th><th>命令号</th><th>设备</th><th>类型</th><th>目标参数</th><th>状态</th><th>已重试</th><th>失败原因</th><th></th></tr></thead>',
       '        <tbody>',
-      '          <template v-for="c in commands" :key="c.command_id">',
+      '          <template v-for="c in filteredCommands" :key="c.command_id">',
       '            <tr>',
       '              <td class="small">{{ time(c.created_ts || c.ts || (c.history && c.history[0] && c.history[0].ts)) }}</td>',
       '              <td class="mono">{{ c.command_id }}</td>',
