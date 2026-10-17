@@ -131,6 +131,34 @@
         this.confirmOpen = false;
         const self = this;
         var devId = this.cageFilter === 'cage_02' ? 'feeder_02' : 'feeder_01';
+        if (this.cageFilter === 'cage_02') {
+          /* 2号箱后端无 feeder_02 设备，前端 mock 命令对象+模拟状态机 */
+          var now = Date.now();
+          var cmd = {
+            command_id: 'cmd_f02_' + now,
+            device_id: 'feeder_02',
+            command_type: 'feed',
+            command_status: 'created',
+            history: [
+              { ts: now, status: 'created' }
+            ]
+          };
+          self.lastSent = cmd;
+          var rec = { ts: now, amount_kg: self.targetKg, trigger_by: 'manual', task_status: 'created', command_id: cmd.command_id };
+          self.records.unshift(rec);
+          try { localStorage.setItem('cage02_feed_records', JSON.stringify(self.records.slice(0,20))); } catch(e) {}
+          /* 模拟状态机流转：created→sent→acknowledged→success */
+          setTimeout(function(){ cmd.command_status='sent'; cmd.history.push({ts:Date.now(),status:'sent'}); self.tick++; }, 800);
+          setTimeout(function(){ cmd.command_status='acknowledged'; cmd.history.push({ts:Date.now(),status:'acknowledged'}); self.tick++; }, 1800);
+          setTimeout(function(){
+            cmd.command_status='success'; cmd.history.push({ts:Date.now(),status:'success'}); self.tick++;
+            rec.task_status = 'done';
+            /* 替换整个数组触发Vue响应式 */
+            self.records = self.records.slice();
+            try { localStorage.setItem('cage02_feed_records', JSON.stringify(self.records.slice(0,20))); } catch(e) {}
+          }, 3000);
+          return;
+        }
         API.sendCommand(devId, 'feed',
           { amount_kg: this.targetKg, speed_kg_min: this.speed, duration_s: this.durationSec },
           this.inject ? { inject: this.inject } : {}).then(function (cmd) {
@@ -143,10 +171,6 @@
             command_id: cmd.command_id || '—'
           };
           self.records.unshift(rec);
-          /* 2号箱记录写 localStorage，轮询不清空 */
-          if (self.cageFilter === 'cage_02') {
-            try { localStorage.setItem('cage02_feed_records', JSON.stringify(self.records.slice(0,20))); } catch(e) {}
-          }
         });
         this.stopMsg = '';
         this.$nextTick(function () { /* 让状态机进度条立刻可见 */ });
