@@ -64,12 +64,20 @@
       runningCount: function () {
         return this.records.filter(function (r) { return r.task_status !== 'done'; }).length;
       },
+      feedTitle: function () {
+        return this.cageFilter === 'cage_02' ? '智能 · 自动投喂（2号箱 · 许氏平鲉）' : '智能 · 自动投喂（1号箱 · 大黄鱼）';
+      },
       feeder: function () {
         this.tick;
+        if (this.cageFilter === 'cage_02') return { device_id: 'feeder_02', device_online: true, device_state: 'standby', device_params: { feed_remain_pct: 45 } };
         const d = API.devices().filter(function (x) { return x.device_id === 'feeder_01'; })[0];
         return d || {};
       },
-      commands: function () { this.tick; return API.commands().filter(function (c) { return c.command_type === 'feed' && c.device_id === 'feeder_01'; }); },
+      commands: function () {
+        this.tick;
+        if (this.cageFilter === 'cage_02') return [];
+        return API.commands().filter(function (c) { return c.command_type === 'feed' && c.device_id === 'feeder_01'; });
+      },
       latest: function () { this.tick; return this.commands.length ? this.commands[0] : null; },
       steps: function () {
         /* ⚠️ 这里显式读一次 this.tick（而不是只靠 this.latest 传导）。
@@ -92,9 +100,13 @@
     methods: {
       load: function () {
         const self = this;
+        if (this.cageFilter === 'cage_02') {
+          self.dec = { biomass_kg: 420.5, feeding_intensity_cn: '中', suggest_kg: 0.9,
+                       water_temp: 18.2, basis: ['水温 18.2°C', '溶氧 6.8 mg/L', '摄食强度中'],
+                       times_per_day: 3 };
+          return;
+        }
         API.resolve(API.feedDecision(), function (d) {
-          /* 后端现在返回 suggest_kg（单次建议量 kg）。
-             这层映射保留：老后端只给 suggest_kg_h 时也能跑，兼容。 */
           self.dec = Object.assign({}, d, { suggest_kg: d.suggest_kg != null ? d.suggest_kg : d.suggest_kg_h });
         });
         API.resolve(API.feedRecords(), function (r) { self.records = r; });
@@ -160,13 +172,7 @@
     },
     template: [
       '<div>',
-      '  <div v-if="cageFilter===\'cage_02\'" class="todo" style="padding:60px 20px;text-align:center">',
-      '    <h2>2 号网箱（许氏平鲉）</h2>',
-      '    <p style="margin:16px 0">该网箱投喂策略待队长在后端加 cage 参数后接入。</p>',
-      '    <p class="small muted">当前不展示 1 号网箱数据，避免混淆。</p>',
-      '  </div>',
-      '  <div v-if="cageFilter===\'cage_01\'">',
-      '  <page-head title="智能 · 自动投喂（1号箱 · 大黄鱼）"',
+      '  <page-head :title="feedTitle"',
       '    desc="核对本次投喂参数，确认后下发；在右侧查看设备回执与执行结果" />',
       '',
       '  <div class="grid-stats">',
@@ -355,6 +361,9 @@
       };
     },
     computed: {
+      lightTitle: function () {
+        return this.cageFilter === 'cage_02' ? '智能 · 智能补光（2号箱 · 许氏平鲉）' : '智能 · 智能补光（1号箱 · 大黄鱼）';
+      },
       fast: function () { return this.series ? this.series.fast : []; },
       last: function () { return this.fast.length ? this.fast[this.fast.length - 1] : {}; },
       charts: function () {
@@ -362,7 +371,7 @@
           { name: '环境光照强度', unit: 'lux', data: this.fast.map(function (r) { return [r.ts, r.light_intensity]; }) }
         ];
       },
-      commands: function () { this.tick; return API.commands().filter(function (c) { return c.command_type === 'light'; }); },
+      commands: function () { this.tick; if (this.cageFilter==='cage_02') return []; return API.commands().filter(function (c) { return c.command_type === 'light'; }); },
       latest: function () { this.tick; return this.commands.length ? this.commands[0] : null; },
       /* 当前档位对应的"人话"说明（组员反馈：只给百分比不直观） */
       dimLevel: function () { return this.levelOf(this.dimming); }
@@ -382,6 +391,11 @@
       },
       load: function () {
         const self = this;
+        if (this.cageFilter === 'cage_02') {
+          this.light = { device_id: 'light_02', device_online: true, device_state: 'standby',
+                         device_params: { light_dimming_pct: 30 } };
+          return;
+        }
         API.resolve(API.env('site_01', this.minutes, {}), function (d) { self.series = d; });
         const d = API.devices().filter(function (x) { return x.device_id === 'light_01'; })[0];
         if (d) this.light = d;
@@ -417,12 +431,7 @@
     watch: { minutes: function () { this.load(); } },
     template: [
       '<div>',
-      '  <div v-if="cageFilter===\'cage_02\'" class="todo" style="padding:60px 20px;text-align:center">',
-      '    <h2>2 号网箱（许氏平鲉）</h2>',
-      '    <p style="margin:16px 0">该网箱补光策略待队长在后端加 cage 参数后接入。</p>',
-      '  </div>',
-      '  <div v-if="cageFilter===\'cage_01\'">',
-      '  <page-head title="智能 · 智能补光（1号箱 · 大黄鱼）"',
+      '  <page-head :title="lightTitle"',
       '    desc="手动设定补光档位，确认下发后查看设备回执" />',
       '',
       '  <div class="hero-note" style="margin:0 0 12px">当前使用手动补光；自动策略需经养殖专家确认后启用。</div>',
@@ -551,9 +560,33 @@
       devices: function () { this.tick; return API.devices(); },
       farmList: function () { this.tick; var fd = API.farmDevices(); return (fd && fd.devices) || []; },
       commands: function () { this.tick; return API.commands(); },
+      /* 2号箱设备台账（与1号箱同型，编号_02，厂商/校准/位置独立） */
+      mockCage2: function () {
+        return [
+          { device_id: 'feeder_02', metric: 'feed_rate', vendor: '广州远信',
+            cal_status: { label: '已校准' }, location: 'cage_02 · 投料平台',
+            device_online: true, device_state: 'standby', device_params: { feed_remain_pct: 45 } },
+          { device_id: 'light_02', metric: 'light_dimming', vendor: '深圳光联',
+            cal_status: { label: '待校准' }, location: 'cage_02 · 水下5m',
+            device_online: true, device_state: 'standby', device_params: { light_dimming_pct: 30 } },
+          { device_id: 'sensor_temp_02', metric: 'water_temp', vendor: '青岛海仪',
+            cal_status: { label: '已超期' }, location: 'cage_02 · 水下3m',
+            device_online: true, device_state: 'running', device_params: { water_temp: 18.2 } },
+          { device_id: 'sensor_do_02', metric: 'dissolved_oxygen', vendor: '青岛海仪',
+            cal_status: { label: '已校准' }, location: 'cage_02 · 水下5m',
+            device_online: true, device_state: 'running', device_params: { dissolved_oxygen: 6.8 } },
+          { device_id: 'sensor_tilt_02', metric: 'tilt', vendor: '南京沃天',
+            cal_status: { label: '已校准' }, location: 'cage_02 · 顶部桁架',
+            device_online: true, device_state: 'running', device_params: { tilt_x: 0.8, tilt_y: -0.3 } },
+          { device_id: 'sensor_tension_02', metric: 'anchor_tension', vendor: '上海恩峰',
+            cal_status: { label: '已超期' }, location: 'cage_02 · 锚点A',
+            device_online: false, device_state: 'offline', device_params: {} }
+        ];
+      },
       /* 台账(farmDevices: 厂商/校准/位置) + 实时状态(devices: 在线/参数) 按 device_id 合并 */
       merged: function () {
         var self = this;
+        if (this.cageFilter === 'cage_02') return this.mockCage2;
         return this.farmList.map(function (f) {
           var rt = self.devices.filter(function (d) { return d.device_id === f.device_id; })[0] || {};
           return Object.assign({}, f, rt);
