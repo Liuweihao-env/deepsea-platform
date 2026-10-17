@@ -194,6 +194,18 @@
       stop: function (r) {
         const self = this;
         this.stopMsg = '';
+        if (this.cageFilter === 'cage_02') {
+          var cmd = self.cage02Cmds.filter(function(c){ return c.command_id === r.command_id; })[0];
+          if (cmd) {
+            cmd.command_status = 'cancelled';
+            cmd.history.push({ ts: Date.now(), status: 'cancelled' });
+            self.cage02Cmds = self.cage02Cmds.slice();
+            try { localStorage.setItem('cage02_cmds', JSON.stringify(self.cage02Cmds.slice(0,20))); } catch(e){}
+            self.stopMsg = '已停止 ' + r.command_id;
+            self.tick++;
+          }
+          return;
+        }
         API.resolve(API.cancelCommand(r.command_id, '值班人手动停止投喂'), function (res) {
           if (res && res.ok) {
             self.stopMsg = '已停止 ' + r.command_id;
