@@ -104,12 +104,16 @@
           self.dec = { biomass_kg: 420.5, feeding_intensity_cn: '中', suggest_kg: 0.9,
                        water_temp: 18.2, basis: ['水温 18.2°C', '溶氧 6.8 mg/L', '摄食强度中'],
                        times_per_day: 3 };
+          self.records = [];
           return;
         }
         API.resolve(API.feedDecision(), function (d) {
           self.dec = Object.assign({}, d, { suggest_kg: d.suggest_kg != null ? d.suggest_kg : d.suggest_kg_h });
         });
-        API.resolve(API.feedRecords(), function (r) { self.records = r; });
+        API.resolve(API.feedRecords(), function (r) {
+          var devId = self.cageFilter === 'cage_02' ? 'feeder_02' : 'feeder_01';
+          self.records = (r || []).filter(function (x) { return x.device_id === devId; });
+        });
       },
       statusCn: function (s) {
         return { created: '已创建', sent: '已发出', acknowledged: '已收到回执', success: '成功',
