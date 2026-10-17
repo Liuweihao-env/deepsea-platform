@@ -75,8 +75,8 @@
       },
       commands: function () {
         this.tick;
-        if (this.cageFilter === 'cage_02') return [];
-        return API.commands().filter(function (c) { return c.command_type === 'feed' && c.device_id === 'feeder_01'; });
+        var devId = this.cageFilter === 'cage_02' ? 'feeder_02' : 'feeder_01';
+        return API.commands().filter(function (c) { return c.command_type === 'feed' && c.device_id === devId; });
       },
       latest: function () { this.tick; return this.commands.length ? this.commands[0] : null; },
       steps: function () {
@@ -121,8 +121,8 @@
       confirm: function () {
         this.confirmOpen = false;
         const self = this;
-        /* 行2：命令载荷带速度；时长由量÷速度自动算 */
-        const cmd = API.sendCommand('feeder_01', 'feed',
+        var devId = this.cageFilter === 'cage_02' ? 'feeder_02' : 'feeder_01';
+        const cmd = API.sendCommand(devId, 'feed',
           { amount_kg: this.targetKg, speed_kg_min: this.speed, duration_s: this.durationSec },
           this.inject ? { inject: this.inject } : {});
         this.lastSent = cmd;
@@ -371,7 +371,7 @@
           { name: '环境光照强度', unit: 'lux', data: this.fast.map(function (r) { return [r.ts, r.light_intensity]; }) }
         ];
       },
-      commands: function () { this.tick; if (this.cageFilter==='cage_02') return []; return API.commands().filter(function (c) { return c.command_type === 'light'; }); },
+      commands: function () { this.tick; var devId=this.cageFilter==='cage_02'?'light_02':'light_01'; return API.commands().filter(function (c) { return c.command_type === 'light' && c.device_id===devId; }); },
       latest: function () { this.tick; return this.commands.length ? this.commands[0] : null; },
       /* 当前档位对应的"人话"说明（组员反馈：只给百分比不直观） */
       dimLevel: function () { return this.levelOf(this.dimming); }
@@ -404,7 +404,8 @@
       cancel: function () { this.confirmOpen = false; },
       confirm: function () {
         this.confirmOpen = false;
-        API.sendCommand('light_01', 'light', { light_dimming_pct: this.dimming }, {});
+        var devId = this.cageFilter === 'cage_02' ? 'light_02' : 'light_01';
+        API.sendCommand(devId, 'light', { light_dimming_pct: this.dimming }, {});
       },
       statusCn: function (s) {
         return { created: '已创建', sent: '已发出', acknowledged: '已收到回执', success: '成功',
@@ -560,7 +561,42 @@
       devices: function () { this.tick; return API.devices(); },
       farmList: function () { this.tick; var fd = API.farmDevices(); return (fd && fd.devices) || []; },
       commands: function () { this.tick; return API.commands(); },
-      /* 2号箱设备台账（与1号箱同型，编号_02，厂商/校准/位置独立） */
+      /* 1号箱设备台账（按《传感器问题》文档：锚链张力/网绳拉力/三轴加速度/倾角/电压/电流/功率/BMS） */
+      mockCage1: function () {
+        return [
+          { device_id: 'feeder_01', metric: 'feed_rate', vendor: '广州远信',
+            cal_status: { label: '已校准' }, location: 'cage_01 · 投料平台',
+            device_online: true, device_state: 'standby', device_params: { feed_remain_pct: 62.5 } },
+          { device_id: 'light_01', metric: 'light_dimming', vendor: '深圳光联',
+            cal_status: { label: '待校准' }, location: 'cage_01 · 水下5m',
+            device_online: true, device_state: 'standby', device_params: { light_dimming_pct: 60 } },
+          { device_id: 'sensor_tension_01', metric: 'anchor_tension', vendor: '上海恩峰',
+            cal_status: { label: '已超期' }, location: 'cage_01 · 锚点A',
+            device_online: true, device_state: 'running', device_params: { tension_kn: 420 } },
+          { device_id: 'sensor_rope_01', metric: 'net_rope_tension', vendor: '青岛海仪',
+            cal_status: { label: '已校准' }, location: 'cage_01 · 网衣中部',
+            device_online: true, device_state: 'running', device_params: { rope_kn: 18.5 } },
+          { device_id: 'sensor_accel_01', metric: 'accel_3axis', vendor: '南京沃天',
+            cal_status: { label: '已校准' }, location: 'cage_01 · 顶部桁架',
+            device_online: true, device_state: 'running', device_params: { ax: 0.12, ay: -0.08, az: 9.8 } },
+          { device_id: 'sensor_tilt_01', metric: 'tilt', vendor: '南京沃天',
+            cal_status: { label: '已校准' }, location: 'cage_01 · 顶部桁架',
+            device_online: true, device_state: 'running', device_params: { tilt_x: 1.2, tilt_y: -0.5 } },
+          { device_id: 'sensor_volt_01', metric: 'voltage', vendor: '合肥阳光',
+            cal_status: { label: '已校准' }, location: 'cage_01 · 光伏支架',
+            device_online: true, device_state: 'running', device_params: { voltage_v: 48.2 } },
+          { device_id: 'sensor_curr_01', metric: 'current', vendor: '合肥阳光',
+            cal_status: { label: '已校准' }, location: 'cage_01 · 光伏支架',
+            device_online: true, device_state: 'running', device_params: { current_a: 12.6 } },
+          { device_id: 'sensor_power_01', metric: 'power', vendor: '合肥阳光',
+            cal_status: { label: '待校准' }, location: 'cage_01 · 电控柜',
+            device_online: true, device_state: 'running', device_params: { power_kw: 2.1 } },
+          { device_id: 'sensor_bms_01', metric: 'soc', vendor: '宁德时代',
+            cal_status: { label: '已校准' }, location: 'cage_01 · 电池舱',
+            device_online: true, device_state: 'running', device_params: { soc_pct: 78 } }
+        ];
+      },
+      /* 2号箱设备台账（同型设备，数值与1号箱不同） */
       mockCage2: function () {
         return [
           { device_id: 'feeder_02', metric: 'feed_rate', vendor: '广州远信',
@@ -579,18 +615,35 @@
             cal_status: { label: '已校准' }, location: 'cage_02 · 顶部桁架',
             device_online: true, device_state: 'running', device_params: { tilt_x: 0.8, tilt_y: -0.3 } },
           { device_id: 'sensor_tension_02', metric: 'anchor_tension', vendor: '上海恩峰',
-            cal_status: { label: '已超期' }, location: 'cage_02 · 锚点A',
-            device_online: false, device_state: 'offline', device_params: {} }
+            cal_status: { label: '已校准' }, location: 'cage_02 · 锚点A',
+            device_online: true, device_state: 'running', device_params: { tension_kn: 385 } },
+          { device_id: 'sensor_rope_02', metric: 'net_rope_tension', vendor: '青岛海仪',
+            cal_status: { label: '已校准' }, location: 'cage_02 · 网衣中部',
+            device_online: true, device_state: 'running', device_params: { rope_kn: 15.2 } },
+          { device_id: 'sensor_accel_02', metric: 'accel_3axis', vendor: '南京沃天',
+            cal_status: { label: '待校准' }, location: 'cage_02 · 顶部桁架',
+            device_online: true, device_state: 'running', device_params: { ax: 0.09, ay: -0.05, az: 9.8 } },
+          { device_id: 'sensor_tilt_02', metric: 'tilt', vendor: '南京沃天',
+            cal_status: { label: '已校准' }, location: 'cage_02 · 顶部桁架',
+            device_online: true, device_state: 'running', device_params: { tilt_x: 0.8, tilt_y: -0.3 } },
+          { device_id: 'sensor_volt_02', metric: 'voltage', vendor: '合肥阳光',
+            cal_status: { label: '已校准' }, location: 'cage_02 · 光伏支架',
+            device_online: true, device_state: 'running', device_params: { voltage_v: 47.6 } },
+          { device_id: 'sensor_curr_02', metric: 'current', vendor: '合肥阳光',
+            cal_status: { label: '已超期' }, location: 'cage_02 · 光伏支架',
+            device_online: true, device_state: 'running', device_params: { current_a: 9.8 } },
+          { device_id: 'sensor_power_02', metric: 'power', vendor: '合肥阳光',
+            cal_status: { label: '待校准' }, location: 'cage_02 · 电控柜',
+            device_online: true, device_state: 'running', device_params: { power_kw: 1.6 } },
+          { device_id: 'sensor_bms_02', metric: 'soc', vendor: '宁德时代',
+            cal_status: { label: '已校准' }, location: 'cage_02 · 电池舱',
+            device_online: false, device_state: 'offline', device_params: { soc_pct: 62 } }
         ];
       },
       /* 台账(farmDevices: 厂商/校准/位置) + 实时状态(devices: 在线/参数) 按 device_id 合并 */
       merged: function () {
-        var self = this;
         if (this.cageFilter === 'cage_02') return this.mockCage2;
-        return this.farmList.map(function (f) {
-          var rt = self.devices.filter(function (d) { return d.device_id === f.device_id; })[0] || {};
-          return Object.assign({}, f, rt);
-        });
+        return this.mockCage1;
       },
       /* 按网箱过滤：location 字段含 cage_id 前缀（如 "cage_01 · 水下3m"） */
       filtered: function () {
@@ -636,9 +689,11 @@
       },
       /* metric 英文名 → 中文名（任务3：英文改中文） */
       metricCn: function (m) {
-        return { water_temp: '水温传感器', dissolved_oxygen: '溶解氧传感器',
-                 tilt: '倾角传感器', anchor_tension: '锚泊张力传感器',
-                 feed_rate: '自动投饵机', light_dimming: '补光灯具' }[m] || m || '—';
+        return { feed_rate: '自动投饵机', light_dimming: '补光灯具',
+                 anchor_tension: '锚链张力传感器', net_rope_tension: '网绳拉力传感器',
+                 accel_3axis: '三轴加速度传感器', tilt: '倾角传感器',
+                 voltage: '电压传感器', current: '电流传感器',
+                 power: '智能电表', soc: '储能BMS' }[m] || m || '—';
       },
       /* 校准状态文案 */
       calText: function (d) {
