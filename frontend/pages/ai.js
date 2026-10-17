@@ -78,7 +78,11 @@
         var devId = this.cageFilter === 'cage_02' ? 'feeder_02' : 'feeder_01';
         return API.commands().filter(function (c) { return c.command_type === 'feed' && c.device_id === devId; });
       },
-      latest: function () { this.tick; return this.commands.length ? this.commands[0] : null; },
+      latest: function () {
+        this.tick;
+        if (this.cageFilter === 'cage_02') return this.lastSent; /* 2号箱用刚发的命令 */
+        return this.commands.length ? this.commands[0] : null;
+      },
       steps: function () {
         /* ⚠️ 这里显式读一次 this.tick（而不是只靠 this.latest 传导）。
            实测：命令状态从 created 走到 success、latest 已更新，
