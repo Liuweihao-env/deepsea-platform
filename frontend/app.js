@@ -222,6 +222,7 @@ const TABS = [
       pick: function (p) { Router.go(p); },
       selectCage: function (c) {
         this.currentCage = c;
+        this.showCage = false;
         localStorage.setItem('deepsea_cage', c);
         window.__currentCage = c;
         window.dispatchEvent(new CustomEvent('cagechange', { detail: { cage: c } }));
@@ -277,12 +278,20 @@ const TABS = [
       '      <template v-for="g in sideGroups" :key="g.group">',
       '        <div class="group">',
 '          {{ g.group }}<span v-if="g.owner"> · {{ g.owner }}</span>',
-'          <span v-if="g.group===\'智能\'" class="cage-picker"',
-'                @mouseenter="showCage=true" @mouseleave="showCage=false">',
-'            <span class="cage-current">{{ currentCage==="cage_01" ? "1号箱" : "2号箱" }} ▾</span>',
+'          <span v-if="g.group===\'智能\'" class="cage-picker">',
+'            <span class="cage-current" @click.stop="showCage=!showCage">',
+'              {{ currentCage==="cage_01" ? "1号箱" : "2号箱" }} <span class="caret">{{ showCage ? "▴" : "▾" }}</span>',
+'            </span>',
 '            <div v-if="showCage" class="cage-pop">',
-'              <div :class="{on: currentCage===\'cage_01\'}" @click="selectCage(\'cage_01\')">1号网箱（大黄鱼）</div>',
-'              <div :class="{on: currentCage===\'cage_02\'}" @click="selectCage(\'cage_02\')">2号网箱（许氏平鲉）</div>',
+'              <div class="cage-pop-title">切换网箱</div>',
+'              <div :class="{on: currentCage===\'cage_01\'}" @click="selectCage(\'cage_01\'); showCage=false">',
+'                <div><b>1号网箱</b></div>',
+'                <div class="muted">大黄鱼</div>',
+'              </div>',
+'              <div :class="{on: currentCage===\'cage_02\'}" @click="selectCage(\'cage_02\'); showCage=false">',
+'                <div><b>2号网箱</b></div>',
+'                <div class="muted">许氏平鲉</div>',
+'              </div>',
 '            </div>',
 '          </span>',
 '        </div>',
