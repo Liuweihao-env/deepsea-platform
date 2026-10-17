@@ -109,7 +109,12 @@
                        water_temp: 18.2, basis: ['水温 18.2°C', '溶氧 6.8 mg/L', '摄食强度中'],
                        times_per_day: 3 };
           /* 2号箱 records 从 localStorage 读，轮询不清空 */
-          try { self.records = JSON.parse(localStorage.getItem('cage02_feed_records') || '[]'); } catch(e) { self.records = []; }
+          try {
+            var old = JSON.parse(localStorage.getItem('cage02_feed_records') || '[]');
+            /* 清掉旧的"正在执行"残留，避免显示脏数据 */
+            old = old.filter(function(r){ return r.task_status === 'done'; });
+            self.records = old;
+          } catch(e) { self.records = []; }
           return;
         }
         API.resolve(API.feedDecision(), function (d) {
@@ -122,7 +127,8 @@
       },
       statusCn: function (s) {
         return { created: '已创建', sent: '已发出', acknowledged: '已收到回执', success: '成功',
-                 timeout: '超时', retrying: '重试中', failed: '失败', escalated: '升级报警' }[s] || s;
+                 timeout: '超时', retrying: '重试中', failed: '失败', escalated: '升级报警',
+                 done: '已完成' }[s] || s;
       },
       time: function (ts) { return ts ? new Date(ts).toLocaleString('zh-CN', { hour12: false }) : '—'; },
       ask: function () { this.confirmOpen = true; },
@@ -319,7 +325,7 @@
       '              <tr v-for="r in records" :key="r.command_id">',
       '                <td>{{ time(r.ts) }}</td><td>{{ r.amount_kg }}</td>',
       '                <td>{{ r.trigger_by === \'auto\' ? \'自动\' : \'手动\' }}</td>',
-      '                <td>{{ r.task_status === \'done\' ? \'已完成\' : \'正在执行\' }}</td>',
+      '                <td>{{ r.task_status === \'done\' ? \'已完成\' : statusCn(r.task_status) }}</td>',
       '                <td class="mono">{{ r.command_id }}</td>',
       '                <td style="white-space:nowrap">',
       '                  <button v-if="r.task_status !== \'done\'" @click="stop(r)">停止</button>',
