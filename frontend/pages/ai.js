@@ -42,7 +42,7 @@
            2026-10-12 按反馈：speed —— 投喂速度 kg/min，自动/手动都能调；
              时长 = 量 ÷ 速度 × 60 自动算。后端 suggest_kg_h 在前端映射为 suggest_kg。 */
         mode: 'auto', amount: null, stopMsg: '', showSteps: false,
-        speed: 0.5
+        speed: 0.5, cageFilter: localStorage.getItem('deepsea_cage') || 'cage_01'
       };
     },
     computed: {
@@ -157,7 +157,13 @@
     },
     template: [
       '<div>',
-      '  <page-head title="智能 · 自动投喂"',
+      '  <div v-if="cageFilter===\'cage_02\'" class="todo" style="padding:60px 20px;text-align:center">',
+      '    <h2>2 号网箱（许氏平鲉）</h2>',
+      '    <p style="margin:16px 0">该网箱投喂策略待队长在后端加 cage 参数后接入。</p>',
+      '    <p class="small muted">当前不展示 1 号网箱数据，避免混淆。</p>',
+      '  </div>',
+      '  <div v-if="cageFilter===\'cage_01\'">',
+      '  <page-head title="智能 · 自动投喂（1号箱 · 大黄鱼）"',
       '    desc="核对本次投喂参数，确认后下发；在右侧查看设备回执与执行结果" />',
       '',
       '  <div class="grid-stats">',
@@ -340,7 +346,7 @@
     data: function () {
       return {
         tick: 0, minutes: 60, series: null, unsub: null,
-        dimming: 60, confirmOpen: false,
+        dimming: 60, confirmOpen: false, cageFilter: localStorage.getItem('deepsea_cage') || 'cage_01',
         light: { device_id: 'light_01', device_online: true, device_state: 'standby',
                  device_params: { light_dimming_pct: 0 } }
       };
@@ -405,7 +411,12 @@
     watch: { minutes: function () { this.load(); } },
     template: [
       '<div>',
-      '  <page-head title="智能 · 智能补光"',
+      '  <div v-if="cageFilter===\'cage_02\'" class="todo" style="padding:60px 20px;text-align:center">',
+      '    <h2>2 号网箱（许氏平鲉）</h2>',
+      '    <p style="margin:16px 0">该网箱补光策略待队长在后端加 cage 参数后接入。</p>',
+      '  </div>',
+      '  <div v-if="cageFilter===\'cage_01\'">',
+      '  <page-head title="智能 · 智能补光（1号箱 · 大黄鱼）"',
       '    desc="手动设定补光档位，确认下发后查看设备回执" />',
       '',
       '  <div class="hero-note" style="margin:0 0 12px">当前使用手动补光；自动策略需经养殖专家确认后启用。</div>',
@@ -514,6 +525,7 @@
       '      </div>',
       '    </div>',
       '  </div>',
+      '  </div>',
       '</div>'
     ].join('\n')
   };
@@ -527,7 +539,7 @@
      ============================================================ */
   PAGES['/ai/devices'] = {
     data: function () {
-      return { tick: 0, unsub: null, showRef: false, cageFilter: 'cage_01' };
+      return { tick: 0, unsub: null, showRef: false, cageFilter: localStorage.getItem('deepsea_cage') || 'cage_01' };
     },
     computed: {
       devices: function () { this.tick; return API.devices(); },
@@ -678,7 +690,7 @@
      ============================================================ */
   PAGES['/ai/commands'] = {
     data: function () {
-      return { tick: 0, expandId: null, unsub: null, cageFilter: window.__currentCage || 'cage_01' };
+      return { tick: 0, expandId: null, unsub: null, cageFilter: localStorage.getItem('deepsea_cage') || 'cage_01' };
     },
     computed: {
       /* ⚠️ 显式读 this.tick：API 轮询刷新 _cmds/_devices 时靠 tick 驱动重算 */

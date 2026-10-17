@@ -152,7 +152,7 @@ const TABS = [
             「没有响应式依赖的 computed」会被 Vue **永久缓存**：红点第一次算完
             就再也不更新，告警解除了点也不会灭。
          所以这里订阅 API 变化 → tick 自增 → boardDots 里读一下 this.tick 逼它重算。 */
-      return { path: '/overview', menu: MENU, tabs: TABS, err: null, tick: 0, currentCage: window.__currentCage || 'cage_01', showCage: false };
+      return { path: '/overview', menu: MENU, tabs: TABS, err: null, tick: 0, currentCage: localStorage.getItem('deepsea_cage') || 'cage_01', showCage: false };
     },
     computed: {
       /* 每个板块「未解除」的告警条数 —— 顶部红点亮不亮看它。
@@ -222,6 +222,7 @@ const TABS = [
       pick: function (p) { Router.go(p); },
       selectCage: function (c) {
         this.currentCage = c;
+        localStorage.setItem('deepsea_cage', c);
         window.__currentCage = c;
         window.dispatchEvent(new CustomEvent('cagechange', { detail: { cage: c } }));
       },
