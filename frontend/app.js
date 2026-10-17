@@ -64,15 +64,13 @@
     { group: '智能', owner: '李志成', items: [
       { path: '/ai/feed',  label: '自动投喂', ready: true },
       { path: '/ai/light', label: '智能补光', ready: true },
-      { path: '/ai/devices', label: '设备状态', ready: false },
-      { path: '/ai/commands',label: '指令日志', ready: false },
       /* 🔴 2026-10-15 队长挂上菜单。
          李志成按老师意见第 10 条做了这一页 —— 而且**做了查证**：
          「中集来福士（CIMC Raffles）官网载明，经海001/002/003/006、长鲸一号等
-           大型坐底式网箱（68×68m）每座配网衣绞车 10–20 台」，指名道姓 + 给了出处。
-         但他不能改 app.js（公共文件），所以页面**写完却进不去**。
-         这正是约定里"需要改公共文件就写在 PR 描述里、队长来改"的那一步。 */
-      { path: '/ai/crane', label: '起重设备', ready: true }
+           大型坐底式网箱（68×68m）每座配网衣绞车 10–20 台」，指名道姓 + 给了出处。 */
+      { path: '/ai/crane', label: '起重设备', ready: true },
+      { path: '/ai/devices', label: '设备状态', ready: false },
+      { path: '/ai/commands',label: '指令日志', ready: false }
     ]},
     /* 🔴 2026-10-15 队长改：**拆掉「跨板块」**（老师意见 2026-10-09 第 3 条）
          告警中心 / 处置中心  → 挪进「管理」
