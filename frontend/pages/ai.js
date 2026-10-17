@@ -158,7 +158,7 @@
       this.load();
       const self = this;
       this.unsub = API.bind(this, this.load);
-      this._cageH = (e) => { this.cageFilter = e.detail.cage; };
+      this._cageH = (e) => { this.cageFilter = e.detail.cage; if (this.load) this.load(); };
       window.addEventListener('cagechange', this._cageH);
     },
     beforeUnmount: function () {
@@ -426,7 +426,7 @@
       this.load();
       const self = this;
       this.unsub = API.bind(this, this.load);
-      this._cageH = (e) => { this.cageFilter = e.detail.cage; };
+      this._cageH = (e) => { this.cageFilter = e.detail.cage; if (this.load) this.load(); };
       window.addEventListener('cagechange', this._cageH);
     },
     beforeUnmount: function () {
@@ -709,7 +709,7 @@
     mounted: function () {
       const self = this;
       this.unsub = API.bind(this, this.load);
-      this._cageH = (e) => { this.cageFilter = e.detail.cage; };
+      this._cageH = (e) => { this.cageFilter = e.detail.cage; if (this.load) this.load(); };
       window.addEventListener('cagechange', this._cageH);
     },
     beforeUnmount: function () {
@@ -851,7 +851,7 @@
     mounted: function () {
       const self = this;
       this.unsub = API.bind(this, this.load);
-      this._cageH = (e) => { this.cageFilter = e.detail.cage; };
+      this._cageH = (e) => { this.cageFilter = e.detail.cage; if (this.load) this.load(); };
       window.addEventListener('cagechange', this._cageH);
     },
     beforeUnmount: function () {
