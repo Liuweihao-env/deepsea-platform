@@ -530,14 +530,26 @@
       return { tick: 0, unsub: null, showRef: false, cageFilter: 'cage_01' };
     },
     computed: {
-      /* ⚠️ 显式读 this.tick：API 轮询刷新 _devices/_cmds 时靠 tick 驱动重算 */
-      devices: function () { this.tick; return API.devices().slice().sort(function (a, b) {
-          const priority = function (d) { return d.device_state === 'fault' ? 2 : !d.device_online ? 1 : 0; };
-          return priority(b) - priority(a);
-        }); },
+      devices: function () { this.tick; return API.devices(); },
+      farmList: function () { this.tick; var fd = API.farmDevices(); return (fd && fd.devices) || []; },
       commands: function () { this.tick; return API.commands(); },
+      /* 台账(farmDevices: 厂商/校准/位置) + 实时状态(devices: 在线/参数) 按 device_id 合并 */
+      merged: function () {
+        var self = this;
+        return this.farmList.map(function (f) {
+          var rt = self.devices.filter(function (d) { return d.device_id === f.device_id; })[0] || {};
+          return Object.assign({}, f, rt);
+        });
+      },
+      /* 按网箱过滤：location 字段含 cage_id 前缀（如 "cage_01 · 水下3m"） */
+      filtered: function () {
+        var cid = this.cageFilter;
+        return this.merged.filter(function (d) {
+          return (d.location || '').indexOf(cid) >= 0;
+        });
+      },
       onlineCount: function () {
-        return this.devices.filter(function (d) { return d.device_online; }).length;
+        return this.filtered.filter(function (d) { return d.device_online; }).length;
       }
     },
     methods: {
@@ -570,7 +582,19 @@
         if (!c) return '还没有下发过命令';
         return '最近 ' + CN.commandType(c.command_type) + ' · ' + this.statusCn(c.command_status) +
                (c.fail_reason ? ' · ' + c.fail_reason : '');
-      }
+      },
+      /* metric 英文名 → 中文名（任务3：英文改中文） */
+      metricCn: function (m) {
+        return { water_temp: '水温传感器', dissolved_oxygen: '溶解氧传感器',
+                 tilt: '倾角传感器', anchor_tension: '锚泊张力传感器',
+                 feed_rate: '自动投饵机', light_dimming: '补光灯具' }[m] || m || '—';
+      },
+      /* 校准状态文案 */
+      calText: function (d) {
+        var c = d.cal_status || {};
+        return c.label || '—';
+      },
+      cageCn: function () { return this.cageFilter === 'cage_01' ? '1 号网箱' : '2 号网箱'; }
     },
     mounted: function () {
       const self = this;
@@ -582,26 +606,32 @@
       '  <page-head title="设备状态"',
       '    desc="智能板块涉及的养殖设备实时状态 —— 数据走 API.devices()，每 3 秒自动刷新" />',
       '',
+      '  <div class="row" style="gap:8px;margin-bottom:12px">',
+      '    <button :class="cageFilter===\'cage_01\' ? \'primary\' : \'\'" @click="cageFilter=\'cage_01\'">1 号网箱（大黄鱼）</button>',
+      '    <button :class="cageFilter===\'cage_02\' ? \'primary\' : \'\'" @click="cageFilter=\'cage_02\'">2 号网箱（许氏平鲉）</button>',
+      '  </div>',
+      '',
       '  <div class="hint" style="margin-bottom:12px">',
-      '    <b>{{ onlineCount }} / {{ devices.length }}</b> 台设备在线。',
+      '    <b>{{ onlineCount }} / {{ filtered.length }}</b> 台设备在线（{{ cageCn }}）。',
       '    <span class="small muted">设备离线或故障时，下发给它的命令会走失败链并进告警中心（R-CMD-01）。</span>',
       '  </div>',
       '',
-      '  <div v-if="devices.length" class="device-grid">',
-      '    <div v-for="d in devices" :key="d.device_id" class="card" style="min-width:0">',
+      '  <div v-if="filtered.length" class="device-grid">',
+      '    <div v-for="d in filtered" :key="d.device_id" class="card" style="min-width:0">',
       '      <div class="card-title">',
-      ' {{ CN.deviceType(d.device_type) }}<span class="small muted"> · {{ d.device_id }}</span>',
+      '        {{ metricCn(d.metric) }}<span class="small muted" :title="d.device_id"> · {{ d.device_id }}</span>',
       '      </div>',
       '      <div class="kv" style="margin-top:6px">',
-      '        <span class="k">在线</span><span>{{ d.device_online ? \'在线\' : \'离线\' }}</span>',
-      '        <span class="k">运行状态</span><span>{{ CN.deviceState(d.device_state) }}</span>',
-      '        <span class="k">站点</span><span class="mono">{{ d.site_id }}</span>',
-      '        <span class="k">运行参数</span><span>{{ paramText(d) }}</span>',
+      '        <span class="k">在线</span><span>{{ d.device_online ? \'在线\' : (d.device_online === false ? \'离线\' : \'—\') }}</span>',
+      '        <span class="k">运行状态</span><span>{{ d.device_state ? CN.deviceState(d.device_state) : \'—\' }}</span>',
+      '        <span class="k">位置</span><span>{{ d.location || \'—\' }}</span>',
+      '        <span class="k">厂商</span><span>{{ d.vendor || \'—\' }}</span>',
+      '        <span class="k">校准</span><span>{{ calText(d) }}</span>',
       '        <span class="k">最近命令</span><span>{{ lastCmdSummary(d.device_id) }}</span>',
       '      </div>',
       '    </div>',
       '  </div>',
-      '  <div v-if="!devices.length" class="todo">还没有设备数据</div>',
+      '  <div v-if="!filtered.length" class="todo">{{ cageCn }}暂未配置设备台账 —— 待队长在 farm.json 补充同型第二套设备。</div>',
       '',
       '  <div class="card" style="margin-top:12px">',
       '    <div class="card-title" style="cursor:pointer" @click="showRef = !showRef">',
