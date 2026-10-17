@@ -111,8 +111,8 @@
           self.dec = Object.assign({}, d, { suggest_kg: d.suggest_kg != null ? d.suggest_kg : d.suggest_kg_h });
         });
         API.resolve(API.feedRecords(), function (r) {
-          var devId = self.cageFilter === 'cage_02' ? 'feeder_02' : 'feeder_01';
-          self.records = (r || []).filter(function (x) { return x.device_id === devId; });
+          if (self.cageFilter === 'cage_02') return; /* 2号箱历史由本地unshift维护 */
+          self.records = r || [];
         });
       },
       statusCn: function (s) {
@@ -126,13 +126,20 @@
         this.confirmOpen = false;
         const self = this;
         var devId = this.cageFilter === 'cage_02' ? 'feeder_02' : 'feeder_01';
-        const cmd = API.sendCommand(devId, 'feed',
+        API.sendCommand(devId, 'feed',
           { amount_kg: this.targetKg, speed_kg_min: this.speed, duration_s: this.durationSec },
-          this.inject ? { inject: this.inject } : {});
-        this.lastSent = cmd;
+          this.inject ? { inject: this.inject } : {}).then(function (cmd) {
+          self.lastSent = cmd;
+          /* 把命令对象映射成记录表格式插进最前 */
+          self.records.unshift({
+            ts: Date.now(),
+            amount_kg: self.targetKg,
+            trigger_by: 'manual',
+            task_status: 'created',
+            command_id: cmd.command_id || '—'
+          });
+        });
         this.stopMsg = '';
-        /* 刚发的命令立刻插进记录表最前面，不用等后端返回 */
-        this.records.unshift(cmd);
         this.$nextTick(function () { /* 让状态机进度条立刻可见 */ });
         /* 立刻刷一次记录表 —— 否则要等下一个 3 秒周期，
            「停止」按钮才出现，人手早过了那个时间窗。 */
