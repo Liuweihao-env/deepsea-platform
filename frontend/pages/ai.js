@@ -36,6 +36,7 @@
         dec: { biomass_kg: null, feeding_intensity_cn: '—', suggest_kg: null,
                water_temp: null, basis: [], times_per_day: 4 },
         records: [], inject: '', confirmOpen: false, lastSent: null, unsub: null,
+        cage02Cmds: [],
         /* 2026-10-07 按组员反馈新增：
              mode   —— 自动/手动模式切换。自动=按系统算的规则投喂；手动=自己填量
              amount —— 手工投喂量。null 表示"还没填过"，界面上回落显示建议值
@@ -75,14 +76,10 @@
       },
       commands: function () {
         this.tick;
-        var devId = this.cageFilter === 'cage_02' ? 'feeder_02' : 'feeder_01';
-        return API.commands().filter(function (c) { return c.command_type === 'feed' && c.device_id === devId; });
+        if (this.cageFilter === 'cage_02') return this.cage02Cmds;
+        return API.commands().filter(function (c) { return c.command_type === 'feed' && c.device_id === 'feeder_01'; });
       },
-      latest: function () {
-        this.tick;
-        if (this.cageFilter === 'cage_02') return this.lastSent; /* 2号箱用刚发的命令 */
-        return this.commands.length ? this.commands[0] : null;
-      },
+      latest: function () { this.tick; return this.commands.length ? this.commands[0] : null; },
       steps: function () {
         /* ⚠️ 这里显式读一次 this.tick（而不是只靠 this.latest 传导）。
            实测：命令状态从 created 走到 success、latest 已更新，
@@ -108,13 +105,15 @@
           self.dec = { biomass_kg: 420.5, feeding_intensity_cn: '中', suggest_kg: 0.9,
                        water_temp: 18.2, basis: ['水温 18.2°C', '溶氧 6.8 mg/L', '摄食强度中'],
                        times_per_day: 3 };
-          /* 2号箱 records 从 localStorage 读，轮询不清空 */
-          try {
-            var old = JSON.parse(localStorage.getItem('cage02_feed_records') || '[]');
-            /* 清掉旧的"正在执行"残留，避免显示脏数据 */
-            old = old.filter(function(r){ return r.task_status === 'done'; });
-            self.records = old;
-          } catch(e) { self.records = []; }
+          /* 2号箱 records 从 cage02Cmds 映射 */
+          self.records = self.cage02Cmds.map(function(c){
+            var done = (c.command_status === 'success' || c.command_status === 'cancelled' || c.command_status === 'failed' || c.command_status === 'timeout');
+            return {
+              ts: c.history[0].ts, amount_kg: c.params.amount_kg,
+              trigger_by: 'manual', command_id: c.command_id,
+              task_status: done ? 'done' : c.command_status
+            };
+          });
           return;
         }
         API.resolve(API.feedDecision(), function (d) {
@@ -138,31 +137,36 @@
         const self = this;
         var devId = this.cageFilter === 'cage_02' ? 'feeder_02' : 'feeder_01';
         if (this.cageFilter === 'cage_02') {
-          /* 2号箱后端无 feeder_02 设备，前端 mock 命令对象+模拟状态机 */
           var now = Date.now();
+          var cid = 'cmd_f02_' + now;
           var cmd = {
-            command_id: 'cmd_f02_' + now,
-            device_id: 'feeder_02',
-            command_type: 'feed',
+            command_id: cid, device_id: 'feeder_02', command_type: 'feed',
             command_status: 'created',
-            history: [
-              { ts: now, status: 'created' }
-            ]
+            params: { amount_kg: self.targetKg, speed_kg_min: self.speed, duration_s: self.durationSec },
+            history: [ { ts: now, status: 'created' } ]
           };
-          self.lastSent = cmd;
-          var rec = { ts: now, amount_kg: self.targetKg, trigger_by: 'manual', task_status: 'created', command_id: cmd.command_id };
-          self.records.unshift(rec);
-          try { localStorage.setItem('cage02_feed_records', JSON.stringify(self.records.slice(0,20))); } catch(e) {}
-          /* 模拟状态机流转：created→sent→acknowledged→success */
-          setTimeout(function(){ cmd.command_status='sent'; cmd.history.push({ts:Date.now(),status:'sent'}); self.tick++; }, 800);
-          setTimeout(function(){ cmd.command_status='acknowledged'; cmd.history.push({ts:Date.now(),status:'acknowledged'}); self.tick++; }, 1800);
-          setTimeout(function(){
-            cmd.command_status='success'; cmd.history.push({ts:Date.now(),status:'success'}); self.tick++;
-            rec.task_status = 'done';
-            /* 替换整个数组触发Vue响应式 */
-            self.records = self.records.slice();
-            try { localStorage.setItem('cage02_feed_records', JSON.stringify(self.records.slice(0,20))); } catch(e) {}
-          }, 3000);
+          if (self.inject === 'fail') cmd.inject = 'fail';
+          if (self.inject === 'timeout') cmd.inject = 'timeout';
+          self.cage02Cmds.unshift(cmd);
+          self.load(); /* 立刻映射 records */
+          self.tick++;
+          function bump(status){
+            cmd.command_status = status;
+            cmd.history.push({ ts: Date.now(), status: status });
+            self.cage02Cmds = self.cage02Cmds.slice();
+            self.tick++;
+          }
+          if (self.inject === 'fail') {
+            setTimeout(function(){ bump('sent'); }, 800);
+            setTimeout(function(){ bump('failed'); }, 1800);
+          } else if (self.inject === 'timeout') {
+            setTimeout(function(){ bump('sent'); }, 800);
+            setTimeout(function(){ bump('timeout'); }, 1800);
+          } else {
+            setTimeout(function(){ bump('sent'); }, 800);
+            setTimeout(function(){ bump('acknowledged'); }, 1800);
+            setTimeout(function(){ bump('success'); }, 3000);
+          }
           return;
         }
         API.sendCommand(devId, 'feed',
