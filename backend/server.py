@@ -779,7 +779,11 @@ def struct_series(minutes=60, storm=False, cage_id="cage_01"):
             "net_area_tension": max_net_tension,
             "net_tension": max_net_tension,
             "tilt_roll": round(roll, 1),
-            "tilt_pitch": round(pitch + _off_a, 1),
+            # 2026-10-18 合并 PR #10：原来这里加的是 _off_a（我自己拍的倾角偏移），
+        # 但冲突 2 取了他的算法后 _off_a 的定义没了 —— 也不需要了：
+        # 他在上面用 pitch = (0.9 if second_cage else 1.2) + ... 按网箱区分，
+        # 走的是同一套模型、不同的基准值，比拍一个偏移量干净。
+        "tilt_pitch": round(pitch, 1),
             "tilt_angle": round(max(abs(roll), abs(pitch)), 1),
             "accel_x": round(r.gauss(0.12, .05), 2),
             "accel_y": round(r.gauss(-0.08, .05), 2),
