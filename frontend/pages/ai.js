@@ -915,7 +915,8 @@
         try {
           var feed = JSON.parse(localStorage.getItem('cage02_cmds') || '[]');
           var light = JSON.parse(localStorage.getItem('cage02_light_cmds') || '[]');
-          local = feed.concat(light);
+          var crane = JSON.parse(localStorage.getItem('cage02_crane_cmds') || '[]');
+          local = feed.concat(light).concat(crane);
         } catch (e) {}
         return real.concat(local).sort(function(a,b){ return (b.history&&b.history[0]?b.history[0].ts:0) - (a.history&&a.history[0]?a.history[0].ts:0); });
       }
@@ -1159,10 +1160,21 @@
       }
     },
     mounted: function () {
+      var self = this;
       this.load();
       this.unsub = API.bind(this, this.load);
+      this._cageH = function (e) {
+        self.cageFilter = (e && e.detail && e.detail.cage) || localStorage.getItem('deepsea_cage') || 'cage_01';
+        self.cage02CraneCmds = (function(){ try { return JSON.parse(localStorage.getItem('cage02_crane_cmds')||'[]'); } catch(e){ return []; } })();
+        self.tick++;
+        self.load();
+      };
+      window.addEventListener('cagechange', this._cageH);
     },
-    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    beforeUnmount: function () {
+      if (this.unsub) this.unsub();
+      if (this._cageH) window.removeEventListener('cagechange', this._cageH);
+    },
     template: [
       '<div>',
       '  <page-head title="智能 · 起重设备"',
