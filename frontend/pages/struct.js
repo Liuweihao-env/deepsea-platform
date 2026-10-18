@@ -146,12 +146,12 @@
              incomplete: known.length < 3, pct: pct, tilt: tilt, netState: netState };
   }
 
-  // 三维坐标生成浮圈、网衣和锚泊结构，再投影到本地 Canvas；不依赖联网素材。
+  // 三维坐标生成桁架、网衣和锚泊结构，再投影到本地 Canvas；不依赖联网素材。
   // 此处只展示几何外观，不把演示姿态或示意锚泊数量当作监测数据。
   function cageModelMarkup() {
     return [
       '<div class="struct-cage-scene">',
-      '  <canvas ref="cageCanvas" aria-label="可拖动旋转的圆形网箱三维结构模型"></canvas>',
+      '  <canvas ref="cageCanvas" aria-label="可拖动旋转的桁架式网箱三维结构模型"></canvas>',
       '  <div class="struct-cage-overlay">{{ cageLabel }}</div>',
       '  <div class="struct-cage-caption"><span>拖动旋转 · 滚轮缩放</span>',
       '    <span>结构外观演示，锚泊布置未核定</span></div>',

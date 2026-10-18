@@ -327,157 +327,77 @@
        vendored 的 three.min.js 只含核心，examples/controls 里的东西都没有。
        自己算鼠标位移转 group 的 rotation 就够用，还少一个依赖（R1 免依赖）。 */
   C.CageModel = {
+    /* ---------- 桁架式网箱模型（整合版）----------
+       几何来自**邓宇涵 2026-10-18 交的** struct-truss-cage-standalone.js
+       （Canvas 2D，不依赖任何库）。10-16 会上定：三处一套几何
+       （结构安全总览 / 鱼类热力图 / 总览首页），由队长整合后复用。
+
+       本组件只做四件事：
+         1 建 canvas，交给他的 mount() 去画
+         2 把当前网箱的 spec 传给他的 setSpec(spec, cageId)
+         3 尺寸或网箱变了就重传
+         4 卸载时 dispose
+
+       ⚠️ **不要在这个组件里自己画几何** —— 一套几何只能有一个来源，
+          否则三处又会画得不一样（这正是"整合"要解决的问题）。
+       ⚠️ 照抄他文件头的提醒：**模型是结构概念示意，
+          比例、锚位和设计载荷都不是现场施工数据**。这句话也显示在页面上。 */
     props: {
       lengthM: { type: Number, default: 20 },
       widthM:  { type: Number, default: 20 },
       depthM:  { type: Number, default: 6 },
-      height:  { type: Number, default: 240 }     /* 画布高度 px */
+      height:  { type: Number, default: 280 },
+      cageId:  { type: String, default: 'cage_01' }
     },
     data: function () {
-      return { dragging: false, lastX: 0, lastY: 0, hint: true };
+      return { viewer: null, ready: false };
+    },
+    computed: {
+      /* 传给邓宇涵模型的 spec —— shape 必须是 '桁架式'，他才会按真实长宽算比例 */
+      spec: function () {
+        return {
+          shape: '桁架式',
+          length_m: this.lengthM,
+          width_m: this.widthM,
+          depth_m: this.depthM
+        };
+      }
+    },
+    watch: {
+      lengthM: function () { this.applySpec(); },
+      widthM: function () { this.applySpec(); },
+      depthM: function () { this.applySpec(); },
+      cageId: function () { this.applySpec(); }
+    },
+    methods: {
+      applySpec: function () {
+        if (this.viewer && this.viewer.setSpec) {
+          this.viewer.setSpec(this.spec, this.cageId);
+        }
+      }
     },
     mounted: function () {
-      if (!window.THREE) { this.hint = false; return; }
-      const self = this;
-      const T = window.THREE;
-      const el = this.$refs.canvas;
-      const w = el.clientWidth || 320;
-      const h = this.height;
-
-      const scene = new T.Scene();
-      scene.background = null;
-      const cam = new T.PerspectiveCamera(42, w / h, 0.1, 1000);
-      const span = Math.max(this.lengthM, this.widthM, this.depthM);
-      cam.position.set(span * 1.25, span * 0.95, span * 1.6);
-      cam.lookAt(0, 0, 0);
-
-      const renderer = new T.WebGLRenderer({ antialias: true, alpha: true });
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-      renderer.setSize(w, h);
-      el.appendChild(renderer.domElement);
-
-      /* 灯光：环境光 + 一盏方向光，够看出立体感，不用调太多 */
-      scene.add(new T.AmbientLight(0xffffff, 0.72));
-      const dir = new T.DirectionalLight(0xffffff, 0.85);
-      dir.position.set(1, 1.4, 0.9);
-      scene.add(dir);
-
-      const g = new T.Group();
-      this.buildGeometry(T, g);
-      scene.add(g);
-      this.group = g;
-
-      /* ---- 拖动旋转（自己实现，不用 OrbitControls）---- */
-      const dom = renderer.domElement;
-      dom.style.cursor = 'grab';
-      dom.style.touchAction = 'none';
-      const down = function (e) {
-        self.dragging = true; self.hint = false;
-        dom.style.cursor = 'grabbing';
-        const p = e.touches ? e.touches[0] : e;
-        self.lastX = p.clientX; self.lastY = p.clientY;
-      };
-      const move = function (e) {
-        if (!self.dragging) return;
-        const p = e.touches ? e.touches[0] : e;
-        g.rotation.y += (p.clientX - self.lastX) * 0.008;
-        g.rotation.x += (p.clientY - self.lastY) * 0.006;
-        g.rotation.x = Math.max(-0.9, Math.min(0.9, g.rotation.x));
-        self.lastX = p.clientX; self.lastY = p.clientY;
-        if (e.cancelable) e.preventDefault();
-      };
-      const up = function () { self.dragging = false; dom.style.cursor = 'grab'; };
-      dom.addEventListener('mousedown', down);
-      window.addEventListener('mousemove', move);
-      window.addEventListener('mouseup', up);
-      dom.addEventListener('touchstart', down, { passive: true });
-      dom.addEventListener('touchmove', move, { passive: false });
-      dom.addEventListener('touchend', up);
-      this._cleanup = function () {
-        window.removeEventListener('mousemove', move);
-        window.removeEventListener('mouseup', up);
-      };
-
-      /* ---- 渲染循环：不拖时缓慢自转，让人知道这是三维的 ---- */
-      let alive = true;
-      const tick = function () {
-        if (!alive) return;
-        if (!self.dragging) g.rotation.y += 0.0032;
-        renderer.render(scene, cam);
-        requestAnimationFrame(tick);
-      };
-      tick();
-
-      this._stop = function () { alive = false; self._cleanup && self._cleanup(); };
-    },
-    beforeUnmount: function () { if (this._stop) this._stop(); },
-    methods: {
-      /* 🔴 邓宇涵交付模型后：**只改这个方法里的几何**，其余不用动 */
-      buildGeometry: function (T, g) {
-        const L = this.lengthM, W = this.widthM, D = this.depthM;
-        const hx = L / 2, hz = W / 2;
-
-        /* 钢桁架：立杆 4 根 + 上下横梁 8 根 —— 红色，示意钢构 */
-        const steel = new T.MeshLambertMaterial({ color: 0xC0392B });
-        const bar = function (x1, y1, z1, x2, y2, z2, r) {
-          const a = new T.Vector3(x1, y1, z1), b = new T.Vector3(x2, y2, z2);
-          const len = a.distanceTo(b);
-          const geo = new T.CylinderGeometry(r || 0.16, r || 0.16, len, 6);
-          const m = new T.Mesh(geo, steel);
-          m.position.copy(a).add(b).multiplyScalar(0.5);
-          m.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), b.clone().sub(a).normalize());
-          g.add(m);
-        };
-        /* 四根立杆 */
-        [[-hx, -hz], [hx, -hz], [hx, hz], [-hx, hz]].forEach(function (p) {
-          bar(p[0], -D / 2, p[1], p[0], D / 2, p[1], 0.2);
-        });
-        /* 顶部四根横梁 */
-        [[-hx, -hz, hx, -hz], [hx, -hz, hx, hz], [hx, hz, -hx, hz], [-hx, hz, -hx, -hz]]
-          .forEach(function (p) { bar(p[0], D / 2, p[1], p[2], D / 2, p[3], 0.16); });
-        /* 底部四根横梁 */
-        [[-hx, -hz, hx, -hz], [hx, -hz, hx, hz], [hx, hz, -hx, hz], [-hx, hz, -hx, -hz]]
-          .forEach(function (p) { bar(p[0], -D / 2, p[1], p[2], -D / 2, p[3], 0.16); });
-        /* 一道腰箍：让"桁架"的感觉出来 */
-        [[-hx, -hz, hx, -hz], [hx, -hz, hx, hz], [hx, hz, -hx, hz], [-hx, hz, -hx, -hz]]
-          .forEach(function (p) { bar(p[0], 0, p[1], p[2], 0, p[3], 0.1); });
-
-        /* 网衣：四周 + 底面网格，浅色半透明 */
-        const netMat = new T.LineBasicMaterial({ color: 0x7FB3D5, transparent: true, opacity: 0.5 });
-        const step = Math.max(1, Math.round(L / 10));
-        const addLine = function (pts) {
-          const geo = new T.BufferGeometry().setFromPoints(pts);
-          g.add(new T.Line(geo, netMat));
-        };
-        for (let x = -hx; x <= hx + 0.01; x += step) {
-          addLine([new T.Vector3(x, -D / 2, -hz), new T.Vector3(x, D / 2, -hz)]);
-          addLine([new T.Vector3(x, -D / 2, hz), new T.Vector3(x, D / 2, hz)]);
-        }
-        for (let z = -hz; z <= hz + 0.01; z += step) {
-          addLine([new T.Vector3(-hx, -D / 2, z), new T.Vector3(-hx, D / 2, z)]);
-          addLine([new T.Vector3(hx, -D / 2, z), new T.Vector3(hx, D / 2, z)]);
-        }
-        for (let x = -hx; x <= hx + 0.01; x += step) {
-          addLine([new T.Vector3(x, -D / 2, -hz), new T.Vector3(x, -D / 2, hz)]);
-        }
-        for (let z = -hz; z <= hz + 0.01; z += step) {
-          addLine([new T.Vector3(-hx, -D / 2, z), new T.Vector3(hx, -D / 2, z)]);
-        }
-        /* 水面示意：一块半透明蓝面 */
-        const water = new T.Mesh(
-          new T.PlaneGeometry(L * 2.4, W * 2.4),
-          new T.MeshBasicMaterial({ color: 0x2F5496, transparent: true, opacity: 0.08, side: T.DoubleSide })
-        );
-        water.rotation.x = -Math.PI / 2;
-        water.position.y = D / 2 + 0.6;
-        g.add(water);
+      const M = window.StructTrussCage;
+      if (!M || !M.mount) {
+        /* 模型文件没加载时不报错、不渲染空框（保持控制台干净） */
+        this.ready = false;
+        return;
       }
+      const el = this.$refs.canvas;
+      if (el) el.style.height = this.height + 'px';
+      this.viewer = M.mount(el);
+      this.ready = true;
+      this.applySpec();
+    },
+    beforeUnmount: function () {
+      if (this.viewer && this.viewer.dispose) this.viewer.dispose();
+      this.viewer = null;
     },
     template:
       '<div class="cage-model-wrap">' +
       '  <div class="cage-model-title">网箱结构（{{ lengthM }} × {{ widthM }} × 水深 {{ depthM }} m）</div>' +
-      '  <div ref="canvas" class="cage-model-canvas" :style="{ height: height + \'px\' }"></div>' +
-      '  <div class="cage-model-hint" v-if="hint">拖动可旋转</div>' +
+      '  <canvas ref="canvas" class="struct-truss-share-canvas" :style="{ height: height + \'px\' }"></canvas>' +
+      '  <div class="cage-model-hint">拖动可旋转 · 结构概念示意，非现场施工数据</div>' +
       '</div>'
   };
 

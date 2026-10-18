@@ -162,7 +162,7 @@
       '    </div>',
       '    <div class="hero-row-bottom">',
       '      <cage-model :length-m="cageDim().length" :width-m="cageDim().width" :depth-m="cageDim().depth"',
-      '                  :height="190" />',
+      '                  :height="190" :cage-id="cageArg() || \'cage_01\'" />',
       '      <div class="hero-cell">',
       '        <div class="hero-label">未恢复告警</div>',
       '        <div class="hero-value">{{ activeCount }} <small>条</small></div>',
