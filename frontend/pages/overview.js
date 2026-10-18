@@ -114,7 +114,7 @@
         });
         /* 鱼类/结构按当前网箱出数（后端接 cage_id） */
         API.resolve(API.fish(30, this.cageArg()), function (f) { self.fish = f.length ? f[f.length - 1] : {}; });
-        API.resolve(API.struct(30, this.cageArg()), function (s) { self.st = s.length ? s[s.length - 1] : {}; });
+        API.resolve(API.struct(30, { cageId: this.cageArg() }), function (s) { self.st = s.length ? s[s.length - 1] : {}; });
       },
       /* 当前网箱 id —— 传给 fish/struct 让它按网箱出数 */
       /* 当前网箱的尺寸，给 3D 模型用（桁架式：长 × 宽 × 养殖水深）。
