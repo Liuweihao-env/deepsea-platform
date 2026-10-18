@@ -272,9 +272,14 @@ const TABS = [
             菜单里 ready:false 的项仍然留着，作为「计划要做但还没做」的占位。 */
       sideGroups: function () {
         const k = this.tabKey;
-        const want = { overview: '平台', fish: '鱼类', env: '环境',
-                       struct: '结构安全', ai: '智能', global: '跨板块',
-                       mgmt: '管理' }[k];
+        /* 🔴 2026-10-18 队长修：这张表原来写的是**旧分组名**（平台/鱼类/环境/结构安全/智能/管理），
+           而 10-16 会上定把一级菜单改名成（总览/鱼类监测/环境监测/结构安全预警/智能管控/生产管理），
+           MENU 里的 group 也跟着改了 —— 这张表没跟上，导致 `g.group === want` 永远不成立，
+           **侧边栏整块变空，所有小页面都进不去了**。
+           以后改一级菜单名，**必须同时改这里**（这两处是同一个名字的两个副本）。 */
+        const want = { overview: '总览', fish: '鱼类监测', env: '环境监测',
+                       struct: '结构安全预警', ai: '智能管控',
+                       mgmt: '生产管理' }[k];
         /* ready 按**实际注册的路由**判断，不看菜单里的写死值 ——
            这样组员只要注册了 PAGES['/fish/growth']，菜单项就自动从「·待建」变成可点。 */
         const reg = window.PAGES || {};
