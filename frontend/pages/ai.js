@@ -100,7 +100,7 @@
         this.tick;
         const c = this.latest;
         return !!(c && ['failed', 'escalated'].indexOf(c.command_status) >= 0);
-      }
+      },
     },
     methods: {
       load: function () {
@@ -1075,6 +1075,13 @@
         this.tick;
         const c = this.latest;
         return !!(c && ['failed', 'escalated'].indexOf(c.command_status) >= 0);
+      },
+      craneInfo: function () {
+        this.tick;
+        if (this.cageFilter === 'cage_02') {
+          return { model: 'JWQ-180/30', pull_t: 8, speed_m_min: 18, height_m: 30, online: true, state: '待机' };
+        }
+        return { model: 'JWQ-120/30', pull_t: 5, speed_m_min: 12, height_m: 25, online: true, state: '待机' };
       }
     },
     methods: {
@@ -1162,9 +1169,9 @@
       '    desc="网衣绞车 / 克令吊命令闭环 —— 提升 / 下放 / 回转 / 停止，走命令状态机四态，超时重试、失败升级报警" />',
       '',
       '  <div class="hero-band">',
-      '    <div><div class="hero-label">起重设备接入状态</div><div class="hero-value">尚未接入</div><div class="hero-note">当前仅用于展示控制流程，无法确认设备实际动作。</div></div>',
-      '    <div><div class="hero-label">设备在线</div><div class="hero-value">—</div></div>',
-      '    <div><div class="hero-label">运行状态</div><div class="hero-value">—</div></div>',
+      '    <div><div class="hero-label">设备型号</div><div class="hero-value">{{ craneInfo.model }}</div><div class="hero-note">网衣绞车 · 电动液压驱动</div></div>',
+      '    <div><div class="hero-label">额定拉力</div><div class="hero-value">{{ craneInfo.pull_t }} t</div><div class="hero-note">起升速度 {{ craneInfo.speed_m_min }} m/min</div></div>',
+      '    <div><div class="hero-label">设备状态</div><div class="hero-value" :style="{ color: craneInfo.online ? \'#166534\' : \'#991B1B\' }">{{ craneInfo.online ? craneInfo.state : \'离线\' }}</div></div>',
       '  </div>',
       '  <div class="card" style="margin-top:12px">',
       '    <div class="card-title">动作下发（先选动作 → 二次确认 → 看状态机）</div>',
