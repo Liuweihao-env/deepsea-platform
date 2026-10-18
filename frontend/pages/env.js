@@ -261,6 +261,15 @@
                rangeStart: '', rangeEnd: '', ranges: {} };
     },
     computed: {
+      /* 「是否在查看其他海域」—— 直接由事实推出，不存状态：
+           跟随 = 当前站点 就是 当前网箱所在海域。
+         这样切网箱、手动切站，提示条都会立刻正确，不会不同步。 */
+      followCage: function () {
+        this.tick;   /* 建立依赖：farm 是异步拉的，拉到后要重算 */
+        const cs = (global.CurrentCage && global.CurrentCage.site)
+          ? global.CurrentCage.site() : null;
+        return !cs || this.site === cs;
+      },
       fast: function () { return this.series ? this.series.fast : []; },
       /* 问题二：事件数据源 —— 养殖站点用「全量生成序列」（异常记录不因窗口滑动而消失）；
          观测站点（公开数据）用后端返回窗口。读 this.fast 建立依赖，fast 更新时重算。 */
@@ -490,7 +499,22 @@
       srcCn: function (src) { return global.__ENV_CN__.srcCn(src); },
       qCn: function (q) { return global.__ENV_CN__.qCn(q); },
       /* 顶部站点切换 */
+      /* 切站点：**只设 site**。
+         「是否在查看其他海域」由计算属性 followCage 自动判断 —— 
+         不需要在这里维护状态，也就不会出现状态和事实不一致。
+         ⚠️ **不改当前网箱** —— 只在顶栏切换器上改网箱。 */
       setSite: function (sid) { this.site = sid; },
+      /* 当前网箱所在海域的 site_id —— 给站点按钮的 ★ 标记用。
+         没有 CurrentCage（比如纯前端兜底模式）时返回空串，★ 就不显示。 */
+      CurrentCageSite: function () {
+        return (global.CurrentCage && global.CurrentCage.site) ? (global.CurrentCage.site() || '') : '';
+      },
+      /* 回到当前网箱所在海域 */
+      backToCage: function () {
+        if (!global.CurrentCage) return;
+        const cs = global.CurrentCage.site();
+        if (cs) this.site = cs;   /* followCage 是计算属性，不用也不能赋值 */
+      },
       /* 时间窗（公共件 / 自定义分钟数）—— 只改当前站点自己的窗口 */
       onMinutes: function (v) {
         this.ensurePer();
@@ -745,6 +769,19 @@
         this.rangeEnd = H.localInput(en);
       }
       this.unsub = API.subscribe(function () { self.tick++; });
+      /* 🔴 2026-10-18 队长加：顶栏切网箱时，本页自动跟到新网箱所在海域
+         （前提是用户没手动切到别的台站看）。 */
+      this.cageUnsub = (global.CurrentCage && global.CurrentCage.subscribe)
+        ? global.CurrentCage.subscribe(function (cid) {
+            /* 🔴 2026-10-18：切网箱是「我要看这个网箱」的明确动作，
+               所以**强制重置跟随** —— 哪怕刚才手动看了别的海域，也拉回来。
+               否则会出现「顶栏显示 1 号箱、环境页还在看芝罘岛」，对不上号。 */
+            const cs = global.CurrentCage.site();
+            if (cs) {
+              if (cs !== self.site) { self.site = cs; self.load(); }
+            }
+          })
+        : null;
       this.load();
       this.$nextTick(function () { self.renderChart(); });
       /* 轮询：只刷新「未暂停」的当前站点；暂停站点冻结（站点独立）；
@@ -753,6 +790,18 @@
         if (self.rangeMode) return;
         if (global.__ENV_HELPERS__.shouldRefresh(self.per, self.site)) self.load();
       }, 5000);
+      /* 🔴 2026-10-18 队长加：顶栏切网箱时本页自动跟到新网箱所在海域
+         （这一页没有 API.subscribe，所以单独订阅 CurrentCage）。
+         用户手动切到别的台站看时（followCage=false）不打扰他。 */
+      this.cageUnsub = (global.CurrentCage && global.CurrentCage.subscribe)
+        ? global.CurrentCage.subscribe(function (cid) {
+            /* 切网箱 → 强制重置跟随（同海况页，见那边的说明） */
+            const cs = global.CurrentCage.site();
+            if (cs) {
+              if (cs !== self.site) { self.site = cs; self.load(); }
+            }
+          })
+        : null;
     },
     beforeUnmount: function () {
       if (this.timer) { clearInterval(this.timer); this.timer = null; }
@@ -786,9 +835,16 @@
       '      <span class="small muted">站点：</span>',
       '      <button v-for="s in API.sites()" :key="s.site_id"',
       '              :class="{ primary: site === s.site_id }" style="padding:3px 10px"',
-      '              @click="setSite(s.site_id)">{{ s.site_name }}</button>',
+      '              @click="setSite(s.site_id)">{{ s.site_name }}',
+      '        <span v-if="CurrentCageSite() === s.site_id" style="color:#B45309"',
+      '              title="当前网箱所在海域"> ★</span></button>',
       '      <span style="flex:1"></span>',
       '      <span class="small" :style="{ color: isObs ? \'#166534\' : \'#92400E\' }">{{ srcLabel }}</span>',
+      '    </div>',
+      '    <!-- 当前网箱联动（10-16 会上定 第 3 条）：默认跟随当前网箱所在海域；手动切到别的台站看时标清「查看其他海域」。手动切站不改当前网箱。 -->',
+      '    <div v-if="!followCage" class="zheng-other-sea" style="margin-top:8px;padding:7px 10px;border-radius:4px;background:#FFFBEB;border-left:3px solid #F59E0B;font-size:12px;color:#92400E">',
+      '      ⚠ 正在<b>查看其他海域</b>（当前网箱在 <b>{{ CurrentCageSite() }}</b> 那一站）。手动切站<b>不会改当前网箱</b>，只影响本页显示哪片海的数据。',
+      '      <button style="padding:2px 8px;margin-left:8px" @click="backToCage">回到当前网箱所在海域</button>',
       '    </div>',
       '  </div>',
       '',
@@ -1070,6 +1126,15 @@
                rangeStart: '', rangeEnd: '', ranges: {} };
     },
     computed: {
+      /* 「是否在查看其他海域」—— 直接由事实推出，不存状态：
+           跟随 = 当前站点 就是 当前网箱所在海域。
+         这样切网箱、手动切站，提示条都会立刻正确，不会不同步。 */
+      followCage: function () {
+        this.tick;   /* 建立依赖：farm 是异步拉的，拉到后要重算 */
+        const cs = (global.CurrentCage && global.CurrentCage.site)
+          ? global.CurrentCage.site() : null;
+        return !cs || this.site === cs;
+      },
       fast: function () { return this.series ? this.series.fast : []; },
       slow: function () { return this.series ? this.series.slow : []; },
       /* 问题二：事件数据源 —— 养殖站点用「全量生成序列」（异常记录不因窗口滑动而消失）；
@@ -1209,7 +1274,22 @@
           if (seq === self.loadSeq) self.series = G.windowSlice(st, p.minutes);
         }
       },
+      /* 切站点：**只设 site**。
+         「是否在查看其他海域」由计算属性 followCage 自动判断 —— 
+         不需要在这里维护状态，也就不会出现状态和事实不一致。
+         ⚠️ **不改当前网箱** —— 只在顶栏切换器上改网箱。 */
       setSite: function (sid) { this.site = sid; },
+      /* 当前网箱所在海域的 site_id —— 给站点按钮的 ★ 标记用。
+         没有 CurrentCage（比如纯前端兜底模式）时返回空串，★ 就不显示。 */
+      CurrentCageSite: function () {
+        return (global.CurrentCage && global.CurrentCage.site) ? (global.CurrentCage.site() || '') : '';
+      },
+      /* 回到当前网箱所在海域 */
+      backToCage: function () {
+        if (!global.CurrentCage) return;
+        const cs = global.CurrentCage.site();
+        if (cs) this.site = cs;   /* followCage 是计算属性，不用也不能赋值 */
+      },
       siteName: function () {
         const sid = this.site;
         const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
@@ -1455,9 +1535,16 @@
       '      <span class="small muted">站点：</span>',
       '      <button v-for="s in API.sites()" :key="s.site_id"',
       '              :class="{ primary: site === s.site_id }" style="padding:3px 10px"',
-      '              @click="setSite(s.site_id)">{{ s.site_name }}</button>',
+      '              @click="setSite(s.site_id)">{{ s.site_name }}',
+      '        <span v-if="CurrentCageSite() === s.site_id" style="color:#B45309"',
+      '              title="当前网箱所在海域"> ★</span></button>',
       '      <span style="flex:1"></span>',
       '      <span class="small" :style="{ color: isObs ? \'#166534\' : \'#92400E\' }">{{ srcLabel }}</span>',
+      '    </div>',
+      '    <!-- 当前网箱联动（10-16 会上定 第 3 条）：默认跟随当前网箱所在海域；手动切到别的台站看时标清「查看其他海域」。手动切站不改当前网箱。 -->',
+      '    <div v-if="!followCage" class="zheng-other-sea" style="margin-top:8px;padding:7px 10px;border-radius:4px;background:#FFFBEB;border-left:3px solid #F59E0B;font-size:12px;color:#92400E">',
+      '      ⚠ 正在<b>查看其他海域</b>（当前网箱在 <b>{{ CurrentCageSite() }}</b> 那一站）。手动切站<b>不会改当前网箱</b>，只影响本页显示哪片海的数据。',
+      '      <button style="padding:2px 8px;margin-left:8px" @click="backToCage">回到当前网箱所在海域</button>',
       '    </div>',
       '  </div>',
       '',
