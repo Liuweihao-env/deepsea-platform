@@ -91,8 +91,18 @@
                              storm: opts.storm ? 1 : 0, heat: opts.heat ? 1 : 0,
                              offline: opts.offline ? 1 : 0 });
   };
-  M.fish = function (m) { return get('/api/fish', { minutes: m || 60 }); };
-  M.struct = function (m) { return get('/api/struct', { minutes: m || 60 }); };
+  /* 🔴 2026-10-18：接 cage_id —— 首页 KPI 跟着「当前网箱」切。
+     不传 cage_id 时行为与原来完全一样（后端默认 cage_01），不影响别的调用方。 */
+  M.fish = function (m, cageId) {
+    const q = { minutes: m || 60 };
+    if (cageId) q.cage_id = cageId;
+    return get('/api/fish', q);
+  };
+  M.struct = function (m, cageId) {
+    const q = { minutes: m || 60 };
+    if (cageId) q.cage_id = cageId;
+    return get('/api/struct', q);
+  };
   M.heatGrid = function () { return get('/api/heatmap').then(function (d) { return d.grid; }); };
   M.feedDecision = function () { return get('/api/feed/decision'); };
   M.feedRecords = function () { return get('/api/feed/records'); };

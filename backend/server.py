@@ -464,14 +464,20 @@ def planned_weight(cage, ts_ms):
     return w0 + (w1 - w0) * (ts_ms - t0) / (t1 - t0)
 
 
-def fish_series(minutes=60):
-    """鱼类（接口文档 第三节；4 项指标本期不做）"""
+def fish_series(minutes=60, cage_id=None):
+    """鱼类（接口文档 第三节；4 项指标本期不做）
+
+    🔴 2026-10-18 队长加 cage_id：首页「全部 KPI 跟着当前网箱切」需要按网箱出数。
+       鱼种、初始存箱量、所在站点都取**该网箱自己的**，不是所有网箱一个样。
+    """
     n = max(2, int(minutes * 60 * 1000 / STEP_FAST))
     now = int(time.time() * 1000) // 1000 * 1000
     t0 = now - minutes * 60 * 1000
     r = _rng()
-    site = SITES[0]
-    sp_cn = site.get("species", "大黄鱼")
+    # 按网箱取：鱼种 / 初始存箱量 / 所在站点，都来自该网箱自己
+    _cage = FARM.cage(cage_id or "cage_01") or {}
+    site = {"site_id": _cage.get("site_id") or SITES[0]["site_id"]}
+    sp_cn = _cage.get("species") or SITES[0].get("species", "大黄鱼")
     lwr = lwr_of(sp_cn)
     if lwr:
         a, b = lwr["a"], lwr["b"]
@@ -488,7 +494,8 @@ def fish_series(minutes=60):
     offline = gen == "stopped" or mode == "camera_off"
     # 暂停：数据冻结在计划值上，不再产生新波动
     frozen = gen == "paused"
-    base_count = site.get("stock_init_count", 1200)
+    _stock = (_cage.get("stocking") or {})
+    base_count = _stock.get("init_count") or site.get("stock_init_count", 1200)
     count = base_count
     out = []
     for i in range(n):
@@ -525,7 +532,7 @@ def fish_series(minutes=60):
         quality = "suspect" if mode in ("feeding_abnormal", "density_drop") else "good"
         out.append({
             "ts": ts,
-            "site_id": "site_01",
+            "site_id": site["site_id"],
             "source": "simulated",
             "quality": quality,
             "fish_count": count,
@@ -653,8 +660,14 @@ def fish_cameras():
     return {"cameras": cams, "offline": offline}
 
 
-def struct_series(minutes=60, storm=False):
+def struct_series(minutes=60, storm=False, cage_id=None):
     """结构安全（接口文档 第五节）
+
+    🔴 2026-10-18 队长加 cage_id：首页 KPI 跟着当前网箱切。
+       不同网箱的设备与受力不同，所以给每个网箱一个**固定的小偏移**，
+       让两个网箱的数字不一样（否则切了看不出变化，等于没切）。
+       偏移量按 cage_id 稳定生成，不随请求变。
+       ⚠️ 这是模型参数，不是"假装实测"——结构数据本来就是算出来的。
 
     storm 参数：造故障「大风大浪」要能让网箱倾角与锚泊张力真的抬起来。
     2026-10-06 加 —— 倾角阈值从 2°/3° 改成 5°/15° 后，
@@ -664,7 +677,14 @@ def struct_series(minutes=60, storm=False):
     now = int(time.time() * 1000) // 1000 * 1000
     t0 = now - minutes * 60 * 1000
     r = _rng()
-    out, soc, design = [], 68.0, 60.0
+    # 按网箱取稳定偏移：cage_01 → 0，cage_02 → 按 id 散列出一个固定值
+    _cage = FARM.cage(cage_id or "cage_01") or {}
+    _cage_site = _cage.get("site_id") or SITES[0]["site_id"]
+    _h = sum(ord(ch) * (i + 1) for i, ch in enumerate(cage_id or "cage_01"))
+    _off_t = (_h % 9 - 4) * 1.1        # 张力偏移 ±4.4 kN
+    _off_a = (_h % 7 - 3) * 0.28       # 倾角偏移 ±0.84°
+    _off_b = (_h % 11 - 5) * 1.6       # 储能偏移 ±8 %
+    out, soc, design = [], 68.0 + _off_b, 60.0
     for i in range(n):
         ts = t0 + i * STEP_FAST
         h = datetime.fromtimestamp(ts / 1000).hour
@@ -700,17 +720,18 @@ def struct_series(minutes=60, storm=False):
         # **平常海况不许越 80% 黄线**，否则黄色预警天天响，等于没有预警（"狼来了"）：
         #   平常（excursion 峰 4.6，系数 1.15）→ 约 42.8 + 噪声 ≈ 77%  < 80%  ✅
         #   造故障（excursion 峰 15，系数 1.6） → 约 61.5 + 噪声 ≈ 105% > 95%  ✅
-        tension = 37.5 + excursion * (1.6 if storm else 1.15) + r.gauss(0, 1.2)
+        # 🔴 2026-10-18：按网箱加固定偏移，让两个网箱的数字不一样
+        tension = 37.5 + _off_t + excursion * (1.6 if storm else 1.15) + r.gauss(0, 1.2)
         soc = min(100.0, max(8.0, soc + (0.18 if day > .2 else -0.22) + r.gauss(0, .12)))
         out.append({
             "ts": ts,
-            "site_id": "site_01",
+            "site_id": _cage_site,
             "anchor_tension": round(tension, 1),
             "design_tension": design,
             "tension_pct": round(tension / design * 100, 1),
             "net_tension": round(r.gauss(18.3, .8), 1),
             "tilt_roll": round(roll, 1),
-            "tilt_pitch": round(pitch, 1),
+            "tilt_pitch": round(pitch + _off_a, 1),
             "tilt_angle": round(max(abs(roll), abs(pitch)), 1),
             "accel_x": round(r.gauss(0.12, .05), 2),
             "accel_y": round(r.gauss(-0.08, .05), 2),
@@ -1286,7 +1307,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(envapi.sim_snapshot())
 
         if p == "/api/fish":
-            return self._json(fish_series(minutes))
+            # 🔴 2026-10-18：接 cage_id，首页 KPI 跟着当前网箱切
+            return self._json(fish_series(minutes, cage_id=(one("cage_id", "") or None)))
 
         if p == "/api/heatmap":
             g = heat_grid()
@@ -1306,7 +1328,9 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/struct":
             # storm 透传：造故障「大风大浪」要能让网箱倾角真的抬起来，
             # 否则倾角阈值改成 5°/15° 之后演示时永远触发不到（2026-10-06 踩过）
-            return self._json(struct_series(minutes, one("storm", "0") in ("1", "true")))
+            return self._json(struct_series(minutes,
+                                            one("storm", "0") in ("1", "true"),
+                                            cage_id=(one("cage_id", "") or None)))
 
         if p == "/api/feed/decision":
             return self._json(feed_decision())

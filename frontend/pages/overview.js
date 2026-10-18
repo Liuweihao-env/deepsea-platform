@@ -52,15 +52,25 @@
     methods: {
       load: function () {
         const self = this;
-        API.resolve(API.env('site_01', 60, {}), function (d) {
+        /* 🔴 2026-10-18 队长改：原来写死 site_01。
+           改成读全局「当前网箱」所在海域 —— 环境数据仍然来自**真实台站**，
+           只是换成该网箱那片海的那个站，不往台站里塞任何值。 */
+        const cs = (global.CurrentCage && global.CurrentCage.site)
+          ? global.CurrentCage.site() : null;
+        API.resolve(API.env(cs || 'site_01', 60, {}), function (d) {
           self.envTrend = [
             { name: '水温', unit: '℃', data: d.fast.map(function (r) { return [r.ts, r.water_temp]; }) },
             { name: '溶解氧', unit: 'mg/L', axis: 1, data: d.fast.map(function (r) { return [r.ts, r.dissolved_oxygen]; }) }
           ];
           self.env = d.fast.length ? d.fast[d.fast.length - 1] : {};
         });
-        API.resolve(API.fish(30), function (f) { self.fish = f.length ? f[f.length - 1] : {}; });
-        API.resolve(API.struct(30), function (s) { self.st = s.length ? s[s.length - 1] : {}; });
+        /* 鱼类/结构按当前网箱出数（后端接 cage_id） */
+        API.resolve(API.fish(30, this.cageArg()), function (f) { self.fish = f.length ? f[f.length - 1] : {}; });
+        API.resolve(API.struct(30, this.cageArg()), function (s) { self.st = s.length ? s[s.length - 1] : {}; });
+      },
+      /* 当前网箱 id —— 传给 fish/struct 让它按网箱出数 */
+      cageArg: function () {
+        return (global.CurrentCage && global.CurrentCage.get) ? global.CurrentCage.get() : null;
       },
       lvCls: function (l) { return 'bg-' + (l || 'blue'); },
       lvCn: function (l) { return { red: '红色', orange: '橙色', yellow: '黄色', blue: '蓝色' }[l] || '—'; }
