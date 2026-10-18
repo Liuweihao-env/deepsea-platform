@@ -18,10 +18,10 @@
 
   /* 菜单树：ready = 10-09 必交的 13 页；其余为 10-23 终版补齐 */
   const MENU = [
-    { group: '平台', items: [
+    { group: '总览', items: [
       { path: '/overview', label: '总览大屏', ready: true }
     ]},
-    { group: '鱼类', owner: '王浩然', items: [
+    { group: '鱼类监测', owner: '王浩然', items: [
       { path: '/fish/monitor',  label: '鱼类监测总览', ready: true },
       { path: '/fish/heatmap',  label: '鱼群分布热力图', ready: true },
       { path: '/fish/species',  label: '鱼种档案', ready: true },
@@ -29,7 +29,7 @@
       { path: '/fish/records',  label: '原始数据明细', ready: false },
       { path: '/fish/simulator',label: '鱼类仿真控制', ready: false }
     ]},
-    { group: '环境', owner: '刘伟豪', items: [
+    { group: '环境监测', owner: '刘伟豪', items: [
       { path: '/env/sea',    label: '海况', ready: true },
       { path: '/env/water',  label: '水质', ready: true },
       /* 🔴 2026-10-15 队长删：原「原始数据明细 /env/records」与
@@ -42,7 +42,7 @@
          **这正是约定该有的样子** —— 公共骨架文件归队长改，组员提出来就行。
          完整记录见 backend/api/env.py 的 2026-10-08 追加说明第 2 条。 */
     ]},
-    { group: '结构安全', owner: '邓宇涵', items: [
+    { group: '结构安全预警', owner: '邓宇涵', items: [
       { path: '/struct/overview', label: '结构安全总览', ready: false },
       { path: '/struct/alarm',  label: '灾害分级预警', ready: true },
       { path: '/struct/detail', label: '监测详情', ready: false },
@@ -61,7 +61,7 @@
             「答辩重点」「全项目唯一的造故障工具」「断它会断掉整个闭环证据链」。
             那些说法在"这一页从未实现"之后就不成立了，已在相关文档里改成如实口径。 */
     ]},
-    { group: '智能', owner: '李志成', items: [
+    { group: '智能管控', owner: '李志成', items: [
       { path: '/ai/feed',  label: '自动投喂', ready: true },
       { path: '/ai/light', label: '智能补光', ready: true },
       { path: '/ai/devices', label: '设备状态', ready: false },
@@ -82,7 +82,7 @@
        原来的「跨板块」组已整组移除。 */
     /* 管理板块 —— 养殖生产视角（场长用）。
        现在它还接管了原来「跨板块」的告警/处置，以及结构安全的能源保障。 */
-    { group: '管理', owner: '场长 / 运维', items: [
+    { group: '生产管理', owner: '场长 / 运维', items: [
       { path: '/mgmt/cages',       label: '网箱与站点',   ready: true },
       { path: '/mgmt/ledger',      label: '存箱量台账',   ready: true },
       { path: '/mgmt/calibration', label: '标定与维护',   ready: true },
@@ -136,15 +136,15 @@ const DOT_BOARDS = ['fish', 'env', 'struct', 'ai'];
 
 const TABS = [
     { key: 'overview', label: '总览', first: '/overview' },
-    { key: 'fish',     label: '鱼类', first: '/fish/monitor' , board: 'fish' },
-    { key: 'env',      label: '环境', first: '/env/sea' , board: 'env' },
-    { key: 'struct',   label: '结构安全', first: '/struct/overview' , board: 'struct' },
-    { key: 'ai',       label: '智能', first: '/ai/feed' , board: 'ai' },
+    { key: 'fish',     label: '鱼类监测', first: '/fish/monitor' , board: 'fish' },
+    { key: 'env',      label: '环境监测', first: '/env/sea' , board: 'env' },
+    { key: 'struct',   label: '结构安全预警', first: '/struct/overview' , board: 'struct' },
+    { key: 'ai',       label: '智能管控', first: '/ai/feed' , board: 'ai' },
     /* 🔴 2026-10-15 队长删：拆掉「跨板块」（老师第 3 条）。告警/处置已挪进「管理」，
        追溯查询删除，参数配置拆解。侧边菜单里的 MENU 也同步删了那一组。 */
     /* 管理板块 —— 养殖生产视角（场长用）。
        放在最后：它是配置类不是监控类。 */
-    { key: 'mgmt',     label: '管理', first: '/mgmt/cages' }
+    { key: 'mgmt',     label: '生产管理', first: '/mgmt/cages' }
   ];
 
   const App = {

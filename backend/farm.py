@@ -53,7 +53,17 @@ class Farm(object):
 
     # ------------------------------------------------------------------
     def farm_sites(self):
-        return [s for s in self.data.get("sites", []) if s.get("kind") == "farm"]
+        # 🔴 2026-10-18 队长改：原来看 kind == "farm"。
+        #    但 2026-10-16 会上定「两个网箱各配一片海域」——网箱迁到了
+        #    site_04（嵊山）/ site_03（小麦岛），而这两站 kind 是 "obs"
+        #    （/api/env 靠 kind=="obs" 去读真实 NMDC 台站数据，不能改）。
+        #    按 kind 过滤的话 cage_01 会查不到 → 投喂、鱼类页、KPI 全崩。
+        #    改成「**有网箱的站点就是养殖站点**」—— 语义更准，两个要求都不冲突。
+        # 有网箱 → 养殖站点（site_03/04，网箱迁过去后）
+        # 或 kind=farm → 保留为仿真演示站点（site_01，网箱迁走后仍要显示出来，
+        #               老师 10-16 要求「site_01 保留并改名仿真演示站点」）
+        return [s for s in self.data.get("sites", [])
+                if s.get("cages") or s.get("kind") == "farm"]
 
     def all_cages(self):
         out = []

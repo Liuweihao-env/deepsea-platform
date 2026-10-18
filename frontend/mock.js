@@ -118,6 +118,19 @@
   }
 
   /* ---------- 鱼类（接口文档 第三节；4 项指标本期不做） ---------- */
+  /* 🔴 2026-10-18 队长改：原来这里写死 `count / 285`。
+     285 是**底面积**不是体积（10-16 收到清单第 4 条冲突指出的），
+     10-16 会上定：网箱改**桁架式**，有效水体按 长 × 宽 × 养殖水深 真算。
+
+       1 号箱（大黄鱼）：20 m × 20 m × 养殖水深 6 m = **2400 m³**
+
+     换算效果：现存约 1143 尾 → 1143 ÷ 2400 ≈ **0.48 尾/m³**
+     （旧口径 1143 ÷ 285 ≈ 4.0，正是老师说的「4.2 → 约 0.5」）。
+
+     ⚠️ 这个值必须与 data/farm.json 的 cage_01.spec.effective_volume_m3 一致
+        —— 改网箱尺寸时**两处一起改**（本文件是无后端时的兜底数据源）。 */
+  const CAGE_VOL_M3 = 2400;
+
   function fishSeries(minutes) {
     const n = Math.max(2, Math.round(minutes * 60 * 1000 / STEP_FAST));
     const t0 = NOW - minutes * 60 * 1000;
@@ -133,7 +146,7 @@
         source: 'public',
         quality: 'good',
         fish_count: count,
-        fish_density: +(count / 285).toFixed(1),          // ÷ 网箱有效水体
+        fish_density: +(count / CAGE_VOL_M3).toFixed(1),   // ÷ 网箱有效水体（见函数上方的常量）
         avg_length_cm: +(Math.pow(avgW / 0.0218, 1 / 3.02)).toFixed(1),
         avg_weight_g: +avgW.toFixed(1),
         total_biomass_kg: +(count * avgW / 1000).toFixed(1),

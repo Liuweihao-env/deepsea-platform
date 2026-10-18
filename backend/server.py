@@ -74,6 +74,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "api
 import env as envapi                                         # noqa: E402
 FARM = farmmod.Farm()
 
+
+def _CAGE1_VOL_M3():
+    """1 号箱的有效养殖水体（m³）——从 farm.json 读，不写死。
+
+    2026-10-16 会上定：网箱改**桁架式**，有效水体 = 长 × 宽 × 养殖水深。
+    原来这里写死 285，那是**底面积**不是体积（清单第 4 条冲突指出的）。
+    """
+    c = FARM.cage("cage_01") or {}
+    v = (c.get("spec") or {}).get("effective_volume_m3")
+    return v if isinstance(v, (int, float)) and v > 0 else 2400
+
 # ----------------------------------------------------------------------
 # 路径
 # ----------------------------------------------------------------------
@@ -518,7 +529,12 @@ def fish_series(minutes=60):
             "source": "simulated",
             "quality": quality,
             "fish_count": count,
-            "fish_density": round(count / 285 * dens_scale, 1),
+            # 🔴 2026-10-18 队长改：原来写死 count / 285 —— 285 是**底面积**不是体积。
+            #    10-16 会上定网箱改桁架式，有效水体按 长×宽×养殖水深 真算：
+            #    1 号箱 20×20×6 = 2400 m³ → 1143 尾 ÷ 2400 ≈ 0.48 尾/m³
+            #    （旧口径 1143÷285 ≈ 4.0，正是老师说的「4.2 → 约 0.5」）。
+            #    数值从 farm.json 读，改网箱尺寸时只改数据一处。
+            "fish_density": round(count / _CAGE1_VOL_M3() * dens_scale, 1),
             # 由体重反推体长：W = a·L^b  →  L = (W/a)^(1/b)
             # a、b 来自鱼种参数库（带文献出处），不再硬编码
             "avg_length_cm": round((avg_w / a) ** (1.0 / b), 1),

@@ -15,49 +15,51 @@
   "sites": [
     {
       "site_id": "site_01",
-      "site_name": "模拟养殖站点",
+      "site_name": "仿真演示站点",
       "kind": "farm",
       "latitude": 26.1,
       "longitude": 119.9,
       "farming_depth_m": 20,
       "location_note": "福建沿海 · 深远海网箱养殖场景",
+      "_说明": "2026-10-16 会上定：两个养殖网箱已迁至真实海区台站（cage_01 → site_04 嵊山，cage_02 → site_03 小麦岛），本站点**保留**，用作仿真数据与造故障演示（大风大浪 / 水温骤升 / 设备离线）。",
+      "cages": [],
+      "devices": []
+    },
+    {
+      "site_id": "site_02",
+      "site_name": "中国近海观测站点 · 芝罘岛（渤海海峡）",
+      "kind": "obs",
+      "latitude": 37.6,
+      "longitude": 121.4,
+      "station_id": "ZFD",
+      "sea": "渤海海峡",
+      "sea_note": "渤海与黄海的分界是【蓬莱角—老铁山角】连线，NMDC 的 14 个台站没有一个在渤海内部。本平台以渤海海峡的芝罘岛代表渤海这一格，页面如实标注；水质另取渤海内部监测点（东营片区）。",
+      "data_source": "NMDC 中国台站观测数据 dataSetId=4"
+    },
+    {
+      "site_id": "site_03",
+      "site_name": "中国近海观测站点 · 小麦岛（黄海）",
+      "kind": "obs",
+      "latitude": 36.0,
+      "longitude": 120.4,
+      "station_id": "XMD",
+      "sea": "黄海",
+      "data_source": "NMDC 中国台站观测数据 dataSetId=4",
       "cages": [
-        {
-          "cage_id": "cage_01",
-          "cage_name": "1 号网箱",
-          "species": "大黄鱼",
-          "spec": {
-            "shape": "圆形",
-            "circumference_m": 60,
-            "depth_m": 8,
-            "net_mesh_mm": 40,
-            "net_material": "超高分子量聚乙烯（UHMWPE）",
-            "effective_volume_m3": 285,
-            "commissioned": "2025-09-15"
-          },
-          "stocking": {
-            "date": "2026-04-10",
-            "init_count": 1200,
-            "init_size_g": 420,
-            "fingerling_source": "福建宁德育苗场",
-            "plan_harvest": "2027-03-01",
-            "target_size_g": 600
-          },
-          "status": "in_use",
-          "note": "平台主养网箱。温度阈值与体长体重参数均按大黄鱼自动取值。"
-        },
         {
           "cage_id": "cage_02",
           "cage_name": "2 号网箱",
           "species": "许氏平鲉",
           "spec": {
-            "shape": "圆形",
-            "circumference_m": 50,
-            "depth_m": 8,
+            "shape": "桁架式",
+            "depth_m": 6,
             "net_mesh_mm": 35,
             "net_material": "超高分子量聚乙烯（UHMWPE）",
-            "effective_volume_m3": 198,
-            "commissioned": "2025-09-15"
+            "effective_volume_m3": 1944,
+            "commissioned": "2025-09-15",
+            "length_m": 18,
+            "width_m": 18,
+            "_体积口径": "有效养殖水体 = 长 × 宽 × 养殖水深（桁架式网箱按外廓长方体算）。旧值 285/198 实为**底面积**，2026-10-16 会上定改为真体积。"
           },
           "stocking": {
             "date": "2026-05-06",
@@ -69,6 +71,45 @@
           },
           "status": "in_use",
           "note": "🔴 刻意配一个**冷水性**鱼种（最适 8~25℃），用来验证「不同网箱养不同鱼、阈值各自取值」—— 许氏平鲉高告警线 26℃ 而大黄鱼 28℃。"
+        }
+      ],
+      "devices": []
+    },
+    {
+      "site_id": "site_04",
+      "site_name": "中国近海观测站点 · 嵊山（东海）",
+      "kind": "obs",
+      "latitude": 30.8,
+      "longitude": 122.8,
+      "station_id": "SSN",
+      "sea": "东海",
+      "data_source": "NMDC 中国台站观测数据 dataSetId=4",
+      "cages": [
+        {
+          "cage_id": "cage_01",
+          "cage_name": "1 号网箱",
+          "species": "大黄鱼",
+          "spec": {
+            "shape": "桁架式",
+            "depth_m": 6,
+            "net_mesh_mm": 40,
+            "net_material": "超高分子量聚乙烯（UHMWPE）",
+            "effective_volume_m3": 2400,
+            "commissioned": "2025-09-15",
+            "length_m": 20,
+            "width_m": 20,
+            "_体积口径": "有效养殖水体 = 长 × 宽 × 养殖水深（桁架式网箱按外廓长方体算）。旧值 285/198 实为**底面积**，2026-10-16 会上定改为真体积。"
+          },
+          "stocking": {
+            "date": "2026-04-10",
+            "init_count": 1200,
+            "init_size_g": 420,
+            "fingerling_source": "福建宁德育苗场",
+            "plan_harvest": "2027-03-01",
+            "target_size_g": 600
+          },
+          "status": "in_use",
+          "note": "平台主养网箱。温度阈值与体长体重参数均按大黄鱼自动取值。"
         }
       ],
       "devices": [
@@ -161,37 +202,6 @@
           "note": "灯具为开关/调光器件，不做计量标定 —— 页面上显示「不适用」而不是「未标定」（cycle_days 置 null 即判定为不适用）"
         }
       ]
-    },
-    {
-      "site_id": "site_02",
-      "site_name": "中国近海观测站点 · 芝罘岛（渤海海峡）",
-      "kind": "obs",
-      "latitude": 37.6,
-      "longitude": 121.4,
-      "station_id": "ZFD",
-      "sea": "渤海海峡",
-      "sea_note": "渤海与黄海的分界是【蓬莱角—老铁山角】连线，NMDC 的 14 个台站没有一个在渤海内部。本平台以渤海海峡的芝罘岛代表渤海这一格，页面如实标注；水质另取渤海内部监测点（东营片区）。",
-      "data_source": "NMDC 中国台站观测数据 dataSetId=4"
-    },
-    {
-      "site_id": "site_03",
-      "site_name": "中国近海观测站点 · 小麦岛（黄海）",
-      "kind": "obs",
-      "latitude": 36.0,
-      "longitude": 120.4,
-      "station_id": "XMD",
-      "sea": "黄海",
-      "data_source": "NMDC 中国台站观测数据 dataSetId=4"
-    },
-    {
-      "site_id": "site_04",
-      "site_name": "中国近海观测站点 · 嵊山（东海）",
-      "kind": "obs",
-      "latitude": 30.8,
-      "longitude": 122.8,
-      "station_id": "SSN",
-      "sea": "东海",
-      "data_source": "NMDC 中国台站观测数据 dataSetId=4"
     },
     {
       "site_id": "site_05",
