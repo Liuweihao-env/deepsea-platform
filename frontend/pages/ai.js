@@ -1048,12 +1048,15 @@
     data: function () {
       return {
         tick: 0, pendingAction: '', inject: '', confirmOpen: false,
-        showSteps: false, unsub: null, sendMsg: ''
+        showSteps: false, unsub: null, sendMsg: '',
+        cageFilter: localStorage.getItem('deepsea_cage') || 'cage_01',
+        cage02CraneCmds: (function(){ try { return JSON.parse(localStorage.getItem('cage02_crane_cmds')||'[]'); } catch(e){ return []; } })()
       };
     },
     computed: {
       commands: function () {
         this.tick;
+        if (this.cageFilter === 'cage_02') return this.cage02CraneCmds;
         return API.commands().filter(function (c) { return c.command_type === 'crane'; });
       },
       latest: function () {
@@ -1094,6 +1097,39 @@
         this.confirmOpen = false;
         const self = this;
         this.sendMsg = '';
+        if (this.cageFilter === 'cage_02') {
+          var now = Date.now();
+          var cid = 'cmd_c02_' + now;
+          var cmd = {
+            command_id: cid, device_id: 'crane_02', command_type: 'crane',
+            command_status: 'created',
+            params: { action: self.pendingAction },
+            history: [ { ts: now, status: 'created' } ]
+          };
+          if (self.inject === 'fail') cmd.inject = 'fail';
+          if (self.inject === 'timeout') cmd.inject = 'timeout';
+          self.cage02CraneCmds.unshift(cmd);
+          try { localStorage.setItem('cage02_crane_cmds', JSON.stringify(self.cage02CraneCmds.slice(0,20))); } catch(e){}
+          function bump(status){
+            cmd.command_status = status;
+            cmd.history.push({ ts: Date.now(), status: status });
+            self.cage02CraneCmds = self.cage02CraneCmds.slice();
+            try { localStorage.setItem('cage02_crane_cmds', JSON.stringify(self.cage02CraneCmds.slice(0,20))); } catch(e){}
+            self.tick++;
+          }
+          if (self.inject === 'fail') {
+            setTimeout(function(){ bump('sent'); }, 800);
+            setTimeout(function(){ bump('failed'); }, 1800);
+          } else if (self.inject === 'timeout') {
+            setTimeout(function(){ bump('sent'); }, 800);
+            setTimeout(function(){ bump('timeout'); }, 1800);
+          } else {
+            setTimeout(function(){ bump('sent'); }, 800);
+            setTimeout(function(){ bump('acknowledged'); }, 1800);
+            setTimeout(function(){ bump('success'); }, 3000);
+          }
+          return;
+        }
         API.sendCommand('crane_01', 'crane',
           { action: this.pendingAction },
           this.inject ? { inject: this.inject } : {})
