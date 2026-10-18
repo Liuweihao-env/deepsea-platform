@@ -411,6 +411,8 @@ const TABS = [
   /* 视频位（老师意见第 9 条）：三块门面页各一个常驻播放区。
      ⚠️ 视频**必须标出处** —— 「全删来源标签」只对视频开例外。 */
   app.component('video-slot', C.VideoSlot);
+  /* 网箱三维模型（桁架式，可拖动旋转）—— 首页横幅下层左 */
+  app.component('cage-model', C.CageModel);
   app.mount('#app');
 
   window.ROUTER = Router;

@@ -45,6 +45,54 @@
         return this.unresolved.slice().sort(function (a, b) { return rank[b.risk_level] - rank[a.risk_level]; })[0] || null;
       },
       devices: function () { this.tick; return API.devices(); },
+      /* 按在线 / 离线分组，并直接列设备名（2026-10-16 会上定第 1 条：
+         「设备在线」卡改成**分在线 / 离线两行、直接列设备名**）。
+         ⚠️ 现在只能显示 device_id（英文）；《设备状态》页那条
+            「设备名改中文」是李志成的活，他加了 device_name_cn 之后这里跟着显示中文。 */
+      onlineDevices: function () {
+        return this.devices.filter(function (d) { return d.device_online; });
+      },
+      offlineDevices: function () {
+        return this.devices.filter(function (d) { return !d.device_online; });
+      },
+      deviceName: function () {
+        /* 占位：等 device_name_cn 上线后自动变成中文 */
+        return function (d) { return d.device_name_cn || d.device_id; };
+      },
+      /* 三张板块卡（鱼类 / 环境 / 结构安全）—— 智能不进横幅，只在入口亮红点。
+         每条告警按 alarm_type 归到板块（和顶栏红点用的是同一套映射）。 */
+      boardCards: function () {
+        const self = this;
+        const MAP = {
+          feeding: 'fish', feeding_abnormal: 'fish', fish_anomaly: 'fish', density: 'fish',
+          water_temp: 'env', dissolved_oxygen: 'env', salinity: 'env', ph: 'env', light: 'env',
+          tension: 'struct', tilt: 'struct', net_damage: 'struct', deformation: 'struct'
+        };
+        const BOARDS = [
+          { key: 'fish',   name: '鱼类监测',     href: '#/fish/monitor' },
+          { key: 'env',    name: '环境监测',     href: '#/env/sea' },
+          { key: 'struct', name: '结构安全预警', href: '#/struct/alarm' }
+        ];
+        const rank = { red: 4, orange: 3, yellow: 2, blue: 1 };
+        const acc = {};
+        BOARDS.forEach(function (b) { acc[b.key] = { count: 0, level: null }; });
+        self.unresolved.forEach(function (a) {
+          const b = MAP[a.alarm_type];
+          if (!b || !acc[b]) return;
+          acc[b].count += 1;
+          if (!acc[b].level || (rank[a.risk_level] || 0) > (rank[acc[b].level] || 0)) {
+            acc[b].level = a.risk_level;
+          }
+        });
+        return BOARDS.map(function (b) {
+          const v = acc[b.key];
+          return {
+            key: b.key, name: b.name, href: b.href,
+            count: v.count, level: v.level,
+            note: v.count ? self.lvCn(v.level) + '预警 ' + v.count + ' 条' : '无未恢复告警'
+          };
+        });
+      },
       onlineCount: function () {
         return this.devices.filter(function (d) { return d.device_online; }).length;
       }
@@ -69,6 +117,18 @@
         API.resolve(API.struct(30, this.cageArg()), function (s) { self.st = s.length ? s[s.length - 1] : {}; });
       },
       /* 当前网箱 id —— 传给 fish/struct 让它按网箱出数 */
+      /* 当前网箱的尺寸，给 3D 模型用（桁架式：长 × 宽 × 养殖水深）。
+         没有 farm 数据时退回会上的默认值 20×20×6。 */
+      cageDim: function () {
+        this.tick;
+        const c = (window.CurrentCage && window.CurrentCage.cage) ? window.CurrentCage.cage() : null;
+        const sp = (c && c.spec) || {};
+        return {
+          length: sp.length_m || 20,
+          width: sp.width_m || 20,
+          depth: sp.depth_m || 6
+        };
+      },
       cageArg: function () {
         return (global.CurrentCage && global.CurrentCage.get) ? global.CurrentCage.get() : null;
       },
@@ -86,29 +146,47 @@
     template: [
       '<div>',
       '  <page-head title="养殖运行总览" desc="先看当前风险，再查看环境、鱼群与设备运行情况" />',
-      '  <div class="hero-band" :class="{ \'is-critical\': topAlarm || (st.battery_soc != null && st.battery_soc < 20) }">',
-      '    <div>',
-      '      <div class="hero-label">当前最高未恢复预警</div>',
-      '      <div class="hero-value" :class="topAlarm ? \'lv-\' + topAlarm.risk_level : \'\'">{{ topAlarm ? lvCn(topAlarm.risk_level) + \'预警\' : \'暂无未恢复告警\' }}</div>',
-      '      <div class="hero-note">{{ topAlarm ? topAlarm.rule_name : \'持续关注各板块监测状态\' }}</div>',
-      '      <a href="#/mgmt/alarm">查看告警与追溯 →</a>',
+      '  <!-- ===== 横幅：两层（2026-10-16 会上定第 4 条）=====',
+      '       上层 = 三张板块卡（鱼类 / 环境 / 结构安全，各带最高等级色点）；',
+      '       下层 = 网箱模型 + 未恢复告警总数 + 储能。',
+      '       ⚠️ 智能不进横幅 —— 它没有告警类型，只在顶部入口亮红点。 -->',
+      '  <div class="hero-band hero-2layer" :class="{ \'is-critical\': topAlarm || (st.battery_soc != null && st.battery_soc < 20) }">',
+      '    <div class="hero-row-top">',
+      '      <a v-for="b in boardCards" :key="b.key" class="hero-tile" :href="b.href"',
+      '         :class="{ \'is-quiet\': !b.count }">',
+      '        <span class="dot" :class="b.level ? lvCls(b.level) : \'bg-blue\'"></span>',
+      '        <span class="ht-name">{{ b.name }}</span>',
+      '        <span class="ht-count">{{ b.count }}<small> 条</small></span>',
+      '        <span class="ht-note">{{ b.note }}</span>',
+      '      </a>',
       '    </div>',
-      '    <div>',
-      '      <div class="hero-label">未恢复告警</div>',
-      '      <div class="hero-value">{{ activeCount }} <small>条</small></div>',
-      '      <div class="hero-note">包含活跃与已确认告警</div>',
-      '    </div>',
-      '    <div>',
-      '      <div class="hero-label">储能电量 · {{ st.battery_soc == null ? \'状态待判定\' : st.battery_soc < 10 ? \'严重低电量\' : st.battery_soc < 20 ? \'低电量\' : \'电量正常\' }}</div>',
-      '      <div class="hero-value" :class="{ \'lv-red\': st.battery_soc != null && st.battery_soc < 10 }">{{ st.battery_soc == null ? \'—\' : st.battery_soc }} <small>%</small></div>',
-      '      <div class="hero-note">剩余 {{ st.battery_energy == null ? \'—\' : st.battery_energy }} kWh · <a href="#/mgmt/energy">能源保障 →</a></div>',
+      '    <div class="hero-row-bottom">',
+      '      <cage-model :length-m="cageDim().length" :width-m="cageDim().width" :depth-m="cageDim().depth"',
+      '                  :height="190" />',
+      '      <div class="hero-cell">',
+      '        <div class="hero-label">未恢复告警</div>',
+      '        <div class="hero-value">{{ activeCount }} <small>条</small></div>',
+      '        <div class="hero-note">包含活跃与已确认 · <a href="#/mgmt/alarm">告警与追溯 →</a></div>',
+      '      </div>',
+      '      <div class="hero-cell">',
+      '        <div class="hero-label">储能电量 · {{ st.battery_soc == null ? \'状态待判定\' : st.battery_soc < 10 ? \'严重低电量\' : st.battery_soc < 20 ? \'低电量\' : \'电量正常\' }}</div>',
+      '        <div class="hero-value" :class="{ \'lv-red\': st.battery_soc != null && st.battery_soc < 10 }">{{ st.battery_soc == null ? \'—\' : st.battery_soc }} <small>%</small></div>',
+      '        <div class="hero-note">剩余 {{ st.battery_energy == null ? \'—\' : st.battery_energy }} kWh · <a href="#/mgmt/energy">能源保障 →</a></div>',
+      '      </div>',
       '    </div>',
       '  </div>',
       '  <div class="grid-stats">',
       '    <stat-card name="预估总体重" unit="kg" :value="fish.total_biomass_kg" />',
       '    <stat-card name="现存尾数" unit="尾" :value="fish.fish_count" :digits="0" />',
       '    <stat-card name="水温" unit="℃" :value="env.water_temp" :quality="env.quality" :ts="env.ts" />',
-      '    <stat-card name="设备在线" :value="onlineCount + \' / \' + devices.length" />',
+      '    <!-- 设备卡：分「在线 / 离线」两行，直接列设备名（会上定第 1 条） -->',
+      '    <div class="card stat-card-devices">',
+      '      <div class="sc-title">设备在线 · {{ onlineCount }} / {{ devices.length }}</div>',
+      '      <div class="sc-row"><span class="k sc-on">在线</span>',
+      '        <span class="v">{{ onlineDevices.length ? onlineDevices.map(deviceName).join(\'、\') : \'—\' }}</span></div>',
+      '      <div class="sc-row"><span class="k sc-off">离线</span>',
+      '        <span class="v">{{ offlineDevices.length ? offlineDevices.map(deviceName).join(\'、\') : \'—\' }}</span></div>',
+      '    </div>',
       '  </div>',
       '  <div class="workspace-grid">',
       '    <trend-chart title="水温与溶解氧趋势（左右轴分单位）" :series="envTrend" />',

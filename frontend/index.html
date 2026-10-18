@@ -10,6 +10,10 @@
 <!-- 免构建：库全部落地在本地 vendor/，现场不依赖网络 -->
 <script src="vendor/vue.global.prod.js"></script>
 <script src="vendor/echarts.min.js"></script>
+<!-- 三维：网箱模型（总览首页 / 结构安全总览）与鱼群点云热力图（鱼类）都用它。
+     2026-10-18 队长加 —— 原来这个文件在 vendor/ 里但**从没被引过**，
+     所以任何用 THREE 的地方都拿不到 window.THREE。 -->
+<script src="vendor/three.min.js"></script>
 </head>
 <body>
 <div id="app"></div>
