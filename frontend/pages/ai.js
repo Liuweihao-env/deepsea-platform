@@ -1119,6 +1119,7 @@
         };
         if (self.inject === 'fail') cmd.inject = 'fail';
         if (self.inject === 'timeout') cmd.inject = 'timeout';
+        if (self.inject === 'offline') cmd.inject = 'offline';
         if (isCage02) {
           this.cage02CraneCmds = [cmd].concat(this.cage02CraneCmds);
           try { localStorage.setItem(key, JSON.stringify(this.cage02CraneCmds.slice(0,20))); } catch(e){}
@@ -1139,7 +1140,7 @@
           }
           self.tick++;
         }
-        if (self.inject === 'fail') {
+        if (self.inject === 'fail' || self.inject === 'offline') {
           setTimeout(function(){ bump('sent'); }, 800);
           setTimeout(function(){ bump('failed'); }, 1800);
         } else if (self.inject === 'timeout') {
@@ -1223,7 +1224,11 @@
       '        <div class="row" style="gap:8px">',
       '          <label class="small"><input type="radio" value="" v-model="inject"> 正常</label>',
       '          <label class="small"><input type="radio" value="timeout" v-model="inject"> 命令超时</label>',
+      '          <label class="small"><input type="radio" value="fail" v-model="inject"> 命令失败</label>',
       '          <label class="small"><input type="radio" value="offline" v-model="inject"> 设备离线</label>',
+      '        </div>',
+      '        <div v-if="inject" class="hint small" style="margin-top:8px;background:#FEF2F2;border-color:#FECACA;color:#991B1B">',
+      '          已选造故障，下次下发会走失败链（超时/失败/离线）',
       '        </div>',
       '      </div>',
       '      </details>',
