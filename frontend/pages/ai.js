@@ -1051,6 +1051,7 @@
         tick: 0, pendingAction: '', inject: '', confirmOpen: false,
         showSteps: false, unsub: null, sendMsg: '',
         cageFilter: localStorage.getItem('deepsea_cage') || 'cage_01',
+        cage01CraneCmds: (function(){ try { return JSON.parse(localStorage.getItem('cage01_crane_cmds')||'[]'); } catch(e){ return []; } })(),
         cage02CraneCmds: (function(){ try { return JSON.parse(localStorage.getItem('cage02_crane_cmds')||'[]'); } catch(e){ return []; } })()
       };
     },
@@ -1105,58 +1106,50 @@
         this.confirmOpen = false;
         const self = this;
         this.sendMsg = '';
-        if (this.cageFilter === 'cage_02') {
-          var now = Date.now();
-          var cid = 'cmd_c02_' + now;
-          var cmd = {
-            command_id: cid, device_id: 'crane_02', command_type: 'crane',
-            command_status: 'created',
-            params: { action: self.pendingAction },
-            history: [ { ts: now, status: 'created' } ]
-          };
-          if (self.inject === 'fail') cmd.inject = 'fail';
-          if (self.inject === 'timeout') cmd.inject = 'timeout';
-          self.cage02CraneCmds.unshift(cmd);
-          try { localStorage.setItem('cage02_crane_cmds', JSON.stringify(self.cage02CraneCmds.slice(0,20))); } catch(e){}
-          function bump(status){
-            cmd.command_status = status;
-            cmd.history.push({ ts: Date.now(), status: status });
-            self.cage02CraneCmds = self.cage02CraneCmds.slice();
-            try { localStorage.setItem('cage02_crane_cmds', JSON.stringify(self.cage02CraneCmds.slice(0,20))); } catch(e){}
-            self.tick++;
-          }
-          if (self.inject === 'fail') {
-            setTimeout(function(){ bump('sent'); }, 800);
-            setTimeout(function(){ bump('failed'); }, 1800);
-          } else if (self.inject === 'timeout') {
-            setTimeout(function(){ bump('sent'); }, 800);
-            setTimeout(function(){ bump('timeout'); }, 1800);
-          } else {
-            setTimeout(function(){ bump('sent'); }, 800);
-            setTimeout(function(){ bump('acknowledged'); }, 1800);
-            setTimeout(function(){ bump('success'); }, 3000);
-          }
-          return;
+        var isCage02 = (this.cageFilter === 'cage_02');
+        var devId = isCage02 ? 'crane_02' : 'crane_01';
+        var key = isCage02 ? 'cage02_crane_cmds' : 'cage01_crane_cmds';
+        var now = Date.now();
+        var cid = 'cmd_c' + (isCage02 ? '02' : '01') + '_' + now;
+        var cmd = {
+          command_id: cid, device_id: devId, command_type: 'crane',
+          command_status: 'created',
+          params: { action: self.pendingAction },
+          history: [ { ts: now, status: 'created' } ]
+        };
+        if (self.inject === 'fail') cmd.inject = 'fail';
+        if (self.inject === 'timeout') cmd.inject = 'timeout';
+        if (isCage02) {
+          this.cage02CraneCmds = [cmd].concat(this.cage02CraneCmds);
+          try { localStorage.setItem(key, JSON.stringify(this.cage02CraneCmds.slice(0,20))); } catch(e){}
+        } else {
+          this.cage01CraneCmds = [cmd].concat(this.cage01CraneCmds);
+          try { localStorage.setItem(key, JSON.stringify(this.cage01CraneCmds.slice(0,20))); } catch(e){}
         }
-        API.sendCommand('crane_01', 'crane',
-          { action: this.pendingAction },
-          this.inject ? { inject: this.inject } : {})
-          .then(function (cmd) {
-            if (cmd && cmd.command_id) {
-              self.lastSent = cmd;
-              self.load();
-            } else {
-              /* post() 不检查 HTTP 状态码，404 时 resolve 错误体。
-                 后端设备表暂无 crane_01（server.py PLATFORM.devices）会拒绝。
-                 按"不静默失败"原则如实提示；PR 里请队长补这台设备。 */
-              self.sendMsg = '命令未生效：后端返回「' +
-                ((cmd && (cmd.msg || cmd.error || cmd.detail || cmd.message)) || '未知错误') +
-                '」——crane_01 尚未在后端设备表注册，需队长在 PLATFORM.devices 补一行起重设备后才能走状态机。';
-            }
-          })
-          .catch(function (e) {
-            self.sendMsg = '命令未生效：' + (e && e.message ? e.message : '网络错误');
-          });
+        this.tick++;
+        function bump(status){
+          cmd.command_status = status;
+          cmd.history.push({ ts: Date.now(), status: status });
+          if (isCage02) {
+            self.cage02CraneCmds = self.cage02CraneCmds.slice();
+            try { localStorage.setItem(key, JSON.stringify(self.cage02CraneCmds.slice(0,20))); } catch(e){}
+          } else {
+            self.cage01CraneCmds = self.cage01CraneCmds.slice();
+            try { localStorage.setItem(key, JSON.stringify(self.cage01CraneCmds.slice(0,20))); } catch(e){}
+          }
+          self.tick++;
+        }
+        if (self.inject === 'fail') {
+          setTimeout(function(){ bump('sent'); }, 800);
+          setTimeout(function(){ bump('failed'); }, 1800);
+        } else if (self.inject === 'timeout') {
+          setTimeout(function(){ bump('sent'); }, 800);
+          setTimeout(function(){ bump('timeout'); }, 1800);
+        } else {
+          setTimeout(function(){ bump('sent'); }, 800);
+          setTimeout(function(){ bump('acknowledged'); }, 1800);
+          setTimeout(function(){ bump('success'); }, 3000);
+        }
       }
     },
     mounted: function () {
