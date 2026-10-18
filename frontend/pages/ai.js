@@ -905,11 +905,19 @@
       filteredCommands: function () {
         var cid = this.cageFilter;
         var self = this;
-        return this.commands.filter(function (c) {
+        var real = this.commands.filter(function (c) {
           var f = self.farmList.filter(function (x) { return x.device_id === c.device_id; })[0];
-          if (!f) return true;  // 台账里没有的设备（如 crane_01）不过滤
+          if (!f) return true;
           return (f.location || '').indexOf(cid) >= 0;
         });
+        if (cid !== 'cage_02') return real;
+        var local = [];
+        try {
+          var feed = JSON.parse(localStorage.getItem('cage02_cmds') || '[]');
+          var light = JSON.parse(localStorage.getItem('cage02_light_cmds') || '[]');
+          local = feed.concat(light);
+        } catch (e) {}
+        return real.concat(local).sort(function(a,b){ return (b.history&&b.history[0]?b.history[0].ts:0) - (a.history&&a.history[0]?a.history[0].ts:0); });
       }
     },
     methods: {
