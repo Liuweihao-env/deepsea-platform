@@ -118,6 +118,72 @@
   };
 
   /* ---------- 顶部大板块切换 ---------- */
+  /* ---------- 全局「当前网箱」（2026-10-16 会上定 第 10 条）----------
+     老师要求：全局**只存一个**"当前网箱"，**切一次所有页面跟着变**
+     （首页、设备状态、投喂、指令日志…），归队长管（骨架级）。
+
+     为什么做成全局单例而不是各页面自己存：
+       各页面自己存就会出现"首页选了 2 号箱、投喂页还是 1 号箱"这种事 ——
+       这正是老师这次提的问题。**只有一个真相源**才不会对不上。
+
+     机制：
+       · set() 时写 localStorage（刷新/重开浏览器后还记得）→
+       · 通知自己的订阅者 → 调 API._bump() ——各页面都订阅了 _bump，
+         **一 bump 全部重算重取**，这就是"切一次全变"的实现方式。
+       · 不动各页面的取数逻辑，只让它们多读一个参数。
+
+     ⚠️ 与"环境数据"的关系（刘伟豪问的那个）：
+       环境数据**永远来自真实台站**（嵊山 / 小麦岛，NMDC 历史实测），
+       "当前网箱"只决定**用哪片海的数据**，**绝不往台站里塞模拟值**。
+       网箱 → 海域的对应关系写在 farm.json 里（cage.site_id）。 */
+  const CurrentCage = (function () {
+    const KEY = 'deepsea.currentCage';
+    let id = 'cage_01';
+    try {
+      const v = window.localStorage && window.localStorage.getItem(KEY);
+      if (v) id = v;
+    } catch (e) { /* 隐私模式下 localStorage 可能报错，忽略 */ }
+    const subs = [];
+
+    function cages() {
+      const f = (window.API && window.API.farm && window.API.farm()) || {};
+      /* 按 cage_id 排序：后端 /api/farm 的顺序不保证（实测 2 号箱排前面），
+         界面上要稳定是「1 号网箱 | 2 号网箱」。 */
+      return (f.cages || []).slice().sort(function (a, b) {
+        return String(a.cage_id) < String(b.cage_id) ? -1 : 1;
+      });
+    }
+    function get() { return id; }
+    function cage() {
+      const list = cages();
+      for (let i = 0; i < list.length; i++) if (list[i].cage_id === id) return list[i];
+      return null;
+    }
+    function site() { const c = cage(); return c ? c.site_id : null; }
+    function siteName() { const c = cage(); return c ? (c.site_name || '') : ''; }
+
+    function set(v) {
+      if (!v || v === id) return;
+      id = v;
+      try { if (window.localStorage) window.localStorage.setItem(KEY, id); } catch (e) { /* 忽略 */ }
+      for (let i = 0; i < subs.length; i++) {
+        try { subs[i](id); } catch (e) { /* 单个订阅者出错不影响别人 */ }
+      }
+      /* 关键一步：一 bump，所有订阅了 API 的页面全部重算 */
+      if (window.API && window.API._bump) window.API._bump();
+    }
+    function subscribe(f) {
+      subs.push(f);
+      return function () {
+        const i = subs.indexOf(f);
+        if (i >= 0) subs.splice(i, 1);
+      };
+    }
+    return { get: get, set: set, cage: cage, site: site, siteName: siteName,
+             cages: cages, subscribe: subscribe };
+  })();
+  window.CurrentCage = CurrentCage;
+
   /* ---------- 板块入口的告警小红点（老师意见 2026-10-09 第 2 条）----------
    老师原话：「挂鱼类/环境/结构安全/智能四入口；有未解除告警就亮（**不分等级**）；
                **告警解除才消**（点进去不消）；**纯红点**；管理与跨板块不挂」
@@ -154,7 +220,9 @@ const TABS = [
             「没有响应式依赖的 computed」会被 Vue **永久缓存**：红点第一次算完
             就再也不更新，告警解除了点也不会灭。
          所以这里订阅 API 变化 → tick 自增 → boardDots 里读一下 this.tick 逼它重算。 */
-      return { path: '/overview', menu: MENU, tabs: TABS, err: null, tick: 0 };
+      return { path: '/overview', menu: MENU, tabs: TABS, err: null, tick: 0,
+               /* 当前网箱（跟随全局单例；页面里改动都走 pickCage） */
+               curCageId: CurrentCage.get() };
     },
     computed: {
       /* 每个板块「未解除」的告警条数 —— 顶部红点亮不亮看它。
@@ -170,6 +238,20 @@ const TABS = [
           if (b && out[b] !== undefined) out[b] += 1;
         });
         return out;
+      },
+
+      /* 顶栏网箱切换器的数据源 */
+      cageList: function () {
+        this.tick;                       /* 跟着数据变（farm 是异步拉的） */
+        return CurrentCage.cages();
+      },
+      curCageSite: function () {
+        this.tick;
+        const list = CurrentCage.cages();
+        for (let i = 0; i < list.length; i++) {
+          if (list[i].cage_id === this.curCageId) return list[i].site_name || '';
+        }
+        return '';
       },
 
       /* 当前一级板块 */
@@ -223,6 +305,11 @@ const TABS = [
     methods: {
       pick: function (p) { Router.go(p); },
       tabPick: function (t) { Router.go(t.first); },
+      /* 切网箱 —— 走全局单例，切完所有页面自动重算 */
+      pickCage: function (id) {
+        this.curCageId = id;
+        CurrentCage.set(id);
+      },
       /* 角标文字：1~99 显示数字，100 及以上显示 99+ —— 微信/iOS 同款约定，
          三位数会把标签挤变形。 */
       dotText: function (b) {
@@ -264,7 +351,16 @@ const TABS = [
       '      </div>',
       '    </div>',
       '    <div class="spacer"></div>',
-      '    ',
+      '    <!-- 全局「当前网箱」切换器（2026-10-16 会上定 第 10 条）：',
+      '         切一次所有页面跟着变。放在顶栏是为了任何页面都能切。',
+      '         右边显示该网箱所在海域，让人知道"这个网箱在哪片海"。 -->',
+      '    <div class="cage-switch" v-if="cageList.length">',
+      '      <span class="cs-label">当前网箱</span>',
+      '      <button v-for="c in cageList" :key="c.cage_id"',
+      '              :class="{ active: c.cage_id === curCageId }"',
+      '              @click="pickCage(c.cage_id)">{{ c.cage_name }}</button>',
+      '      <span class="cs-site" v-if="curCageSite">{{ curCageSite }}</span>',
+      '    </div>',
       '  </div>',
       '',
       '  <div class="body">',

@@ -532,3 +532,46 @@ button { min-height: 32px; }
   .pagination { gap: 6px; flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) { .cam-dot { animation: none; } }
+
+
+/* ---------- 顶栏「当前网箱」切换器（2026-10-16 会上定 第 10 条）----------
+   放在顶栏（深蓝底 #2F5496）上，任何页面都能切。
+   切一次所有页面跟着变 —— 机制在 app.js 的 CurrentCage 里。 */
+.cage-switch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 12px;
+  padding: 3px 4px 3px 10px;
+  background: rgba(255, 255, 255, .12);
+  border-radius: 16px;
+}
+.cage-switch .cs-label {
+  font-size: 12px;
+  color: #C7D6EA;
+  margin-right: 4px;
+  white-space: nowrap;
+}
+.cage-switch button {
+  padding: 4px 12px;
+  font-size: 13px;
+  color: #DCE6F1;
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .16s ease, color .16s ease;
+}
+.cage-switch button:hover { background: rgba(255, 255, 255, .16); color: #fff; }
+.cage-switch button.active {
+  background: #fff;
+  color: var(--c-info);
+  font-weight: 700;
+}
+.cage-switch .cs-site {
+  font-size: 12px;
+  color: #C7D6EA;
+  padding-right: 8px;
+  white-space: nowrap;
+}
