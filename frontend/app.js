@@ -22,6 +22,10 @@
       { path: '/overview', label: '总览大屏', ready: true }
     ]},
     { group: '鱼类监测', owner: '王浩然', items: [
+      /* 🔴 2026-10-18 队长按「重要 × 常用」复核过，**顺序保持不变**：
+         监测总览 → 热力图 → 鱼种档案 → 生长模型 → 原始明细 → 仿真控制。
+         鱼种档案排第 3 不是因为它常用（改一次鱼种用很久），
+         而是老师 10-09 点名把它从「管理」挪进「鱼类」当卖点，重要性高。 */
       { path: '/fish/monitor',  label: '鱼类监测总览', ready: true },
       { path: '/fish/heatmap',  label: '鱼群分布热力图', ready: true },
       { path: '/fish/species',  label: '鱼种档案', ready: true },
@@ -43,8 +47,12 @@
          完整记录见 backend/api/env.py 的 2026-10-08 追加说明第 2 条。 */
     ]},
     { group: '结构安全预警', owner: '邓宇涵', items: [
-      { path: '/struct/overview', label: '结构安全总览', ready: false },
+      /* 🔴 2026-10-18 队长按「重要 × 常用」重排：**灾害分级预警提到第 1**。
+         原来「结构安全总览」在第 1 —— 但值班的人打开这个板块，
+         第一眼要看的是"现在有没有告警、几级"，不是先看总览再点进来。
+         顶部 tab 的入口（TABS 的 first）也一起改成了 /struct/alarm，两处保持一致。 */
       { path: '/struct/alarm',  label: '灾害分级预警', ready: true },
+      { path: '/struct/overview', label: '结构安全总览', ready: false },
       { path: '/struct/detail', label: '监测详情', ready: false },
       { path: '/struct/rules',  label: '规则配置', ready: false },
       /* 🔴 2026-10-15 队长删：原「造故障工具 /struct/fault」菜单项**已移除**
@@ -62,6 +70,10 @@
             那些说法在"这一页从未实现"之后就不成立了，已在相关文档里改成如实口径。 */
     ]},
     { group: '智能管控', owner: '李志成', items: [
+      /* 🔴 2026-10-18 队长按「重要 × 常用」复核过，**顺序保持不变**：
+         自动投喂 → 智能补光 → 设备状态 → 指令日志 → 起重设备。
+         控制类在前（投喂/补光每天操作）、查询类居中（设备/日志排查用）、
+         工具类最后（起重设备是特殊作业，一星期也用不上一次）。 */
       { path: '/ai/feed',  label: '自动投喂', ready: true },
       { path: '/ai/light', label: '智能补光', ready: true },
       { path: '/ai/devices', label: '设备状态', ready: false },
@@ -83,12 +95,21 @@
     /* 管理板块 —— 养殖生产视角（场长用）。
        现在它还接管了原来「跨板块」的告警/处置，以及结构安全的能源保障。 */
     { group: '生产管理', owner: '场长 / 运维', items: [
+      /* 🔴 2026-10-18 队长按「重要 × 常用」重排。原来顺序是
+         网箱 / 台账 / 标定 / 能源 / 告警 / 处置 —— **告警和处置排在第 5、6**，
+         可值班的人每天点的是告警中心，位置明显不对。现在：
+           网箱与站点   场长配置的核心，也是"配置驱动"的落点 → 第 1
+           告警中心     值班每天看 → 第 2
+           处置中心     告警之后紧接着的动作 → 第 3
+           存箱量台账   场长定期看 → 第 4
+           能源保障     运维定期看 → 第 5
+           标定与维护   周期最长，一个月看一次 → 沉底 */
       { path: '/mgmt/cages',       label: '网箱与站点',   ready: true },
-      { path: '/mgmt/ledger',      label: '存箱量台账',   ready: true },
-      { path: '/mgmt/calibration', label: '标定与维护',   ready: true },
-      { path: '/mgmt/energy',      label: '能源保障',     ready: true },
       { path: '/mgmt/alarm',       label: '告警中心',     ready: true },
-      { path: '/mgmt/handle',      label: '处置中心',     ready: true }
+      { path: '/mgmt/handle',      label: '处置中心',     ready: true },
+      { path: '/mgmt/ledger',      label: '存箱量台账',   ready: true },
+      { path: '/mgmt/energy',      label: '能源保障',     ready: true },
+      { path: '/mgmt/calibration', label: '标定与维护',   ready: true }
     ]}
   ];
 
@@ -204,7 +225,7 @@ const TABS = [
     { key: 'overview', label: '总览', first: '/overview' },
     { key: 'fish',     label: '鱼类监测', first: '/fish/monitor' , board: 'fish' },
     { key: 'env',      label: '环境监测', first: '/env/sea' , board: 'env' },
-    { key: 'struct',   label: '结构安全预警', first: '/struct/overview' , board: 'struct' },
+    { key: 'struct',   label: '结构安全预警', first: '/struct/alarm' , board: 'struct' },
     { key: 'ai',       label: '智能管控', first: '/ai/feed' , board: 'ai' },
     /* 🔴 2026-10-15 队长删：拆掉「跨板块」（老师第 3 条）。告警/处置已挪进「管理」，
        追溯查询删除，参数配置拆解。侧边菜单里的 MENU 也同步删了那一组。 */
