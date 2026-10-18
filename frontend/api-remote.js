@@ -92,7 +92,11 @@
                              offline: opts.offline ? 1 : 0 });
   };
   M.fish = function (m) { return get('/api/fish', { minutes: m || 60 }); };
-  M.struct = function (m) { return get('/api/struct', { minutes: m || 60 }); };
+  M.struct = function (m, opts) {
+    opts = opts || {};
+    return get('/api/struct', { minutes: m || 60, storm: opts.storm ? 1 : 0,
+                                cage_id: opts.cageId || 'cage_01' });
+  };
   M.heatGrid = function () { return get('/api/heatmap').then(function (d) { return d.grid; }); };
   M.feedDecision = function () { return get('/api/feed/decision'); };
   M.feedRecords = function () { return get('/api/feed/records'); };
