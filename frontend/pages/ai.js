@@ -430,6 +430,7 @@
       return {
         tick: 0, minutes: 60, series: null, unsub: null,
         dimming: 60, confirmOpen: false, cageFilter: localStorage.getItem('deepsea_cage') || 'cage_01',
+        cage02LightCmds: (function(){ try { return JSON.parse(localStorage.getItem('cage02_light_cmds')||'[]'); } catch(e){ return []; } })(),
         light: { device_id: 'light_01', device_online: true, device_state: 'standby',
                  device_params: { light_dimming_pct: 0 } }
       };
@@ -445,7 +446,7 @@
           { name: '环境光照强度', unit: 'lux', data: this.fast.map(function (r) { return [r.ts, r.light_intensity]; }) }
         ];
       },
-      commands: function () { this.tick; var devId=this.cageFilter==='cage_02'?'light_02':'light_01'; return API.commands().filter(function (c) { return c.command_type === 'light' && c.device_id===devId; }); },
+      commands: function () { this.tick; if (this.cageFilter==='cage_02') return this.cage02LightCmds; return API.commands().filter(function (c) { return c.command_type === 'light' && c.device_id==='light_01'; }); },
       latest: function () { this.tick; return this.commands.length ? this.commands[0] : null; },
       /* 当前档位对应的"人话"说明（组员反馈：只给百分比不直观） */
       dimLevel: function () { return this.levelOf(this.dimming); }
@@ -468,6 +469,12 @@
         if (this.cageFilter === 'cage_02') {
           this.light = { device_id: 'light_02', device_online: true, device_state: 'standby',
                          device_params: { light_dimming_pct: 30 } };
+          var now = Date.now();
+          var fast = [];
+          for (var i = 30; i >= 0; i--) {
+            fast.push({ ts: now - i*60000, light_intensity: 900 + Math.sin(i/5)*150 + Math.random()*50 });
+          }
+          this.series = { fast: fast };
           return;
         }
         API.resolve(API.env('site_01', this.minutes, {}), function (d) { self.series = d; });
@@ -478,8 +485,31 @@
       cancel: function () { this.confirmOpen = false; },
       confirm: function () {
         this.confirmOpen = false;
-        var devId = this.cageFilter === 'cage_02' ? 'light_02' : 'light_01';
-        API.sendCommand(devId, 'light', { light_dimming_pct: this.dimming }, {});
+        const self = this;
+        if (this.cageFilter === 'cage_02') {
+          var now = Date.now();
+          var cid = 'cmd_l02_' + now;
+          var cmd = {
+            command_id: cid, device_id: 'light_02', command_type: 'light',
+            command_status: 'created',
+            params: { light_dimming_pct: self.dimming },
+            history: [ { ts: now, status: 'created' } ]
+          };
+          self.cage02LightCmds.unshift(cmd);
+          try { localStorage.setItem('cage02_light_cmds', JSON.stringify(self.cage02LightCmds.slice(0,20))); } catch(e){}
+          function bump(status){
+            cmd.command_status = status;
+            cmd.history.push({ ts: Date.now(), status: status });
+            self.cage02LightCmds = self.cage02LightCmds.slice();
+            try { localStorage.setItem('cage02_light_cmds', JSON.stringify(self.cage02LightCmds.slice(0,20))); } catch(e){}
+            self.tick++;
+          }
+          setTimeout(function(){ bump('sent'); }, 800);
+          setTimeout(function(){ bump('acknowledged'); }, 1800);
+          setTimeout(function(){ bump('success'); }, 3000);
+          return;
+        }
+        API.sendCommand('light_01', 'light', { light_dimming_pct: this.dimming }, {});
       },
       statusCn: function (s) {
         return { created: '已创建', sent: '已发出', acknowledged: '已收到回执', success: '成功',
