@@ -1059,7 +1059,7 @@
       commands: function () {
         this.tick;
         if (this.cageFilter === 'cage_02') return this.cage02CraneCmds;
-        return API.commands().filter(function (c) { return c.command_type === 'crane'; });
+        return this.cage01CraneCmds;
       },
       latest: function () {
         this.tick;
