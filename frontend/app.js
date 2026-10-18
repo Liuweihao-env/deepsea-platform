@@ -76,15 +76,13 @@
          工具类最后（起重设备是特殊作业，一星期也用不上一次）。 */
       { path: '/ai/feed',  label: '自动投喂', ready: true },
       { path: '/ai/light', label: '智能补光', ready: true },
-      { path: '/ai/devices', label: '设备状态', ready: false },
-      { path: '/ai/commands',label: '指令日志', ready: false },
       /* 🔴 2026-10-15 队长挂上菜单。
          李志成按老师意见第 10 条做了这一页 —— 而且**做了查证**：
          「中集来福士（CIMC Raffles）官网载明，经海001/002/003/006、长鲸一号等
-           大型坐底式网箱（68×68m）每座配网衣绞车 10–20 台」，指名道姓 + 给了出处。
-         但他不能改 app.js（公共文件），所以页面**写完却进不去**。
-         这正是约定里"需要改公共文件就写在 PR 描述里、队长来改"的那一步。 */
-      { path: '/ai/crane', label: '起重设备', ready: true }
+           大型坐底式网箱（68×68m）每座配网衣绞车 10–20 台」，指名道姓 + 给了出处。 */
+      { path: '/ai/crane', label: '起重设备', ready: true },
+      { path: '/ai/devices', label: '设备状态', ready: false },
+      { path: '/ai/commands',label: '指令日志', ready: false }
     ]},
     /* 🔴 2026-10-15 队长改：**拆掉「跨板块」**（老师意见 2026-10-09 第 3 条）
          告警中心 / 处置中心  → 挪进「管理」
@@ -162,7 +160,14 @@
     let id = 'cage_01';
     try {
       const v = window.localStorage && window.localStorage.getItem(KEY);
-      if (v) id = v;
+      if (v) {
+        id = v;
+      } else {
+        /* 没有我们的键时，看看有没有他那个旧键（deepsea_cage），有就迁过来 ——
+           免得组员浏览器里已经切过的网箱设置丢掉。 */
+        const old = window.localStorage && window.localStorage.getItem('deepsea_cage');
+        if (old) { id = old; }
+      }
     } catch (e) { /* 隐私模式下 localStorage 可能报错，忽略 */ }
     const subs = [];
 
@@ -190,6 +195,22 @@
       for (let i = 0; i < subs.length; i++) {
         try { subs[i](id); } catch (e) { /* 单个订阅者出错不影响别人 */ }
       }
+      /* 🔴 2026-10-18 合并李志成 PR #9 时加的兼容层。
+         他的 30 个提交是按 window.__currentCage + cagechange 自定义事件写的，
+         我们这边是 CurrentCage 单例 + subscribe。
+         **状态源统一成 CurrentCage，但把他的两个接口都喂上** ——
+         他的页面一行不用改，照样跑。
+         （他原来还有个 localStorage 键 deepsea_cage，下面初始化时会读一次并迁移。） */
+      try {
+        window.__currentCage = id;
+        /* ⚠️ **必须同时写他的 localStorage 键**（deepsea_cage）。
+           他的 ai.js 有 6 处是在 data() 里 localStorage.getItem('deepsea_cage')
+           做**初始值**的 —— 只派发事件不够：事件只通知已经挂载的页面，
+           而新打开的页面会在挂载时读这个键。不写就会出现
+           「顶栏切到 2 号箱，但新打开的设备状态页还显示 1 号箱」。 */
+        if (window.localStorage) window.localStorage.setItem('deepsea_cage', id);
+        window.dispatchEvent(new CustomEvent('cagechange', { detail: { cage: id } }));
+      } catch (e) { /* CustomEvent / localStorage 出错就算了，不影响主流程 */ }
       /* 关键一步：一 bump，所有订阅了 API 的页面全部重算 */
       if (window.API && window.API._bump) window.API._bump();
     }
@@ -241,6 +262,11 @@ const TABS = [
             「没有响应式依赖的 computed」会被 Vue **永久缓存**：红点第一次算完
             就再也不更新，告警解除了点也不会灭。
          所以这里订阅 API 变化 → tick 自增 → boardDots 里读一下 this.tick 逼它重算。 */
+      /* 🔴 2026-10-18 合并李志成 PR #9 时手工解冲突。
+         他那边 App.data 里加了 currentCage / showCage（给侧边栏那个 picker 用的），
+         我们这版用的是 window.CurrentCage 单例 + 顶栏切换器。
+         **取舍：状态源统一走 CurrentCage**（他的 30 个提交靠兼容层照常跑），
+         所以他的 currentCage / showCage 两个字段不要了。 */
       return { path: '/overview', menu: MENU, tabs: TABS, err: null, tick: 0,
                /* 当前网箱（跟随全局单例；页面里改动都走 pickCage） */
                curCageId: CurrentCage.get() };

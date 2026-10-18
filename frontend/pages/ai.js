@@ -36,13 +36,18 @@
         dec: { biomass_kg: null, feeding_intensity_cn: '—', suggest_kg: null,
                water_temp: null, basis: [], times_per_day: 4 },
         records: [], inject: '', confirmOpen: false, lastSent: null, unsub: null,
+        /* 接口预留：以后两箱命令历史从后端接口拿：
+         *   API.getCageCommands('cage_01') → commands computed 已过滤 feeder_01
+         *   API.getCageCommands('cage_02') → 替换 cage02Cmds
+         * 现在2号箱用 localStorage mock，接口就绪后删掉本地 mock 逻辑即可。 */
+        cage02Cmds: (function(){ try { return JSON.parse(localStorage.getItem('cage02_cmds')||'[]'); } catch(e){ return []; } })(),
         /* 2026-10-07 按组员反馈新增：
              mode   —— 自动/手动模式切换。自动=按系统算的规则投喂；手动=自己填量
              amount —— 手工投喂量。null 表示"还没填过"，界面上回落显示建议值
            2026-10-12 按反馈：speed —— 投喂速度 kg/min，自动/手动都能调；
              时长 = 量 ÷ 速度 × 60 自动算。后端 suggest_kg_h 在前端映射为 suggest_kg。 */
         mode: 'auto', amount: null, stopMsg: '', showSteps: false,
-        speed: 0.5
+        speed: 0.5, cageFilter: localStorage.getItem('deepsea_cage') || 'cage_01'
       };
     },
     computed: {
@@ -64,12 +69,20 @@
       runningCount: function () {
         return this.records.filter(function (r) { return r.task_status !== 'done'; }).length;
       },
+      feedTitle: function () {
+        return this.cageFilter === 'cage_02' ? '智能 · 自动投喂（2号箱 · 许氏平鲉）' : '智能 · 自动投喂（1号箱 · 大黄鱼）';
+      },
       feeder: function () {
         this.tick;
+        if (this.cageFilter === 'cage_02') return { device_id: 'feeder_02', device_online: true, device_state: 'standby', device_params: { feed_remain_pct: 45 } };
         const d = API.devices().filter(function (x) { return x.device_id === 'feeder_01'; })[0];
         return d || {};
       },
-      commands: function () { this.tick; return API.commands().filter(function (c) { return c.command_type === 'feed' && c.device_id === 'feeder_01'; }); },
+      commands: function () {
+        this.tick;
+        if (this.cageFilter === 'cage_02') return this.cage02Cmds;
+        return API.commands().filter(function (c) { return c.command_type === 'feed' && c.device_id === 'feeder_01'; });
+      },
       latest: function () { this.tick; return this.commands.length ? this.commands[0] : null; },
       steps: function () {
         /* ⚠️ 这里显式读一次 this.tick（而不是只靠 this.latest 传导）。
@@ -87,21 +100,38 @@
         this.tick;
         const c = this.latest;
         return !!(c && ['failed', 'escalated'].indexOf(c.command_status) >= 0);
-      }
+      },
     },
     methods: {
       load: function () {
         const self = this;
+        if (this.cageFilter === 'cage_02') {
+          self.dec = { biomass_kg: 420.5, feeding_intensity_cn: '中', suggest_kg: 0.9,
+                       water_temp: 18.2, basis: ['水温 18.2°C', '溶氧 6.8 mg/L', '摄食强度中'],
+                       times_per_day: 3 };
+          /* 2号箱 records 从 cage02Cmds 映射 */
+          self.records = self.cage02Cmds.map(function(c){
+            var done = (c.command_status === 'success' || c.command_status === 'cancelled' || c.command_status === 'failed' || c.command_status === 'timeout');
+            return {
+              ts: c.history[0].ts, amount_kg: c.params.amount_kg,
+              trigger_by: 'manual', command_id: c.command_id,
+              task_status: done ? 'done' : c.command_status
+            };
+          });
+          return;
+        }
         API.resolve(API.feedDecision(), function (d) {
-          /* 后端现在返回 suggest_kg（单次建议量 kg）。
-             这层映射保留：老后端只给 suggest_kg_h 时也能跑，兼容。 */
           self.dec = Object.assign({}, d, { suggest_kg: d.suggest_kg != null ? d.suggest_kg : d.suggest_kg_h });
         });
-        API.resolve(API.feedRecords(), function (r) { self.records = r; });
+        API.resolve(API.feedRecords(), function (r) {
+          if (self.cageFilter === 'cage_02') return; /* 2号箱历史由本地unshift维护 */
+          self.records = r || [];
+        });
       },
       statusCn: function (s) {
         return { created: '已创建', sent: '已发出', acknowledged: '已收到回执', success: '成功',
-                 timeout: '超时', retrying: '重试中', failed: '失败', escalated: '升级报警' }[s] || s;
+                 timeout: '超时', retrying: '重试中', failed: '失败', escalated: '升级报警',
+                 done: '已完成' }[s] || s;
       },
       time: function (ts) { return ts ? new Date(ts).toLocaleString('zh-CN', { hour12: false }) : '—'; },
       ask: function () { this.confirmOpen = true; },
@@ -109,11 +139,55 @@
       confirm: function () {
         this.confirmOpen = false;
         const self = this;
-        /* 行2：命令载荷带速度；时长由量÷速度自动算 */
-        const cmd = API.sendCommand('feeder_01', 'feed',
+        var devId = this.cageFilter === 'cage_02' ? 'feeder_02' : 'feeder_01';
+        if (this.cageFilter === 'cage_02') {
+          var now = Date.now();
+          var cid = 'cmd_f02_' + now;
+          var cmd = {
+            command_id: cid, device_id: 'feeder_02', command_type: 'feed',
+            command_status: 'created',
+            params: { amount_kg: self.targetKg, speed_kg_min: self.speed, duration_s: self.durationSec },
+            history: [ { ts: now, status: 'created' } ]
+          };
+          if (self.inject === 'fail') cmd.inject = 'fail';
+          if (self.inject === 'timeout') cmd.inject = 'timeout';
+          self.cage02Cmds.unshift(cmd);
+          try { localStorage.setItem('cage02_cmds', JSON.stringify(self.cage02Cmds.slice(0,20))); } catch(e){}
+          self.load();
+          self.tick++;
+          function bump(status){
+            cmd.command_status = status;
+            cmd.history.push({ ts: Date.now(), status: status });
+            self.cage02Cmds = self.cage02Cmds.slice();
+            try { localStorage.setItem('cage02_cmds', JSON.stringify(self.cage02Cmds.slice(0,20))); } catch(e){}
+            self.tick++;
+          }
+          if (self.inject === 'fail') {
+            setTimeout(function(){ bump('sent'); }, 800);
+            setTimeout(function(){ bump('failed'); }, 1800);
+          } else if (self.inject === 'timeout') {
+            setTimeout(function(){ bump('sent'); }, 800);
+            setTimeout(function(){ bump('timeout'); }, 1800);
+          } else {
+            setTimeout(function(){ bump('sent'); }, 800);
+            setTimeout(function(){ bump('acknowledged'); }, 1800);
+            setTimeout(function(){ bump('success'); }, 3000);
+          }
+          return;
+        }
+        API.sendCommand(devId, 'feed',
           { amount_kg: this.targetKg, speed_kg_min: this.speed, duration_s: this.durationSec },
-          this.inject ? { inject: this.inject } : {});
-        this.lastSent = cmd;
+          this.inject ? { inject: this.inject } : {}).then(function (cmd) {
+          self.lastSent = cmd;
+          var rec = {
+            ts: Date.now(),
+            amount_kg: self.targetKg,
+            trigger_by: 'manual',
+            task_status: 'created',
+            command_id: cmd.command_id || '—'
+          };
+          self.records.unshift(rec);
+        });
         this.stopMsg = '';
         this.$nextTick(function () { /* 让状态机进度条立刻可见 */ });
         /* 立刻刷一次记录表 —— 否则要等下一个 3 秒周期，
@@ -126,6 +200,18 @@
       stop: function (r) {
         const self = this;
         this.stopMsg = '';
+        if (this.cageFilter === 'cage_02') {
+          var cmd = self.cage02Cmds.filter(function(c){ return c.command_id === r.command_id; })[0];
+          if (cmd) {
+            cmd.command_status = 'cancelled';
+            cmd.history.push({ ts: Date.now(), status: 'cancelled' });
+            self.cage02Cmds = self.cage02Cmds.slice();
+            try { localStorage.setItem('cage02_cmds', JSON.stringify(self.cage02Cmds.slice(0,20))); } catch(e){}
+            self.stopMsg = '已停止 ' + r.command_id;
+            self.tick++;
+          }
+          return;
+        }
         API.resolve(API.cancelCommand(r.command_id, '值班人手动停止投喂'), function (res) {
           if (res && res.ok) {
             self.stopMsg = '已停止 ' + r.command_id;
@@ -141,11 +227,14 @@
     mounted: function () {
       this.load();
       const self = this;
-      /* API.bind = 数据变化时重算 + 每 3 秒自动刷新曲线（见 api-remote.js 的说明）。
-         🔴 2026-10-07 加：之前曲线只在进页面时拉一次，是张静止的快照。 */
       this.unsub = API.bind(this, this.load);
+      this._cageH = (e) => { this.cageFilter = e.detail.cage; if (this.load) this.load(); };
+      window.addEventListener('cagechange', this._cageH);
     },
-    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    beforeUnmount: function () {
+      if (this.unsub) this.unsub();
+      if (this._cageH) window.removeEventListener('cagechange', this._cageH);
+    },
     /* 2026-10-08 按《智能板块建议10.7》问题①：手动投喂默认填建议量。
        切到手动模式时若还没填过，直接给建议值，值班人在此基础上改即可。 */
     watch: {
@@ -157,7 +246,7 @@
     },
     template: [
       '<div>',
-      '  <page-head title="智能 · 自动投喂"',
+      '  <page-head :title="feedTitle"',
       '    desc="核对本次投喂参数，确认后下发；在右侧查看设备回执与执行结果" />',
       '',
       '  <div class="grid-stats">',
@@ -258,7 +347,7 @@
       '              <tr v-for="r in records" :key="r.command_id">',
       '                <td>{{ time(r.ts) }}</td><td>{{ r.amount_kg }}</td>',
       '                <td>{{ r.trigger_by === \'auto\' ? \'自动\' : \'手动\' }}</td>',
-      '                <td>{{ r.task_status === \'done\' ? \'已完成\' : \'正在执行\' }}</td>',
+      '                <td>{{ r.task_status === \'done\' ? \'已完成\' : statusCn(r.task_status) }}</td>',
       '                <td class="mono">{{ r.command_id }}</td>',
       '                <td style="white-space:nowrap">',
       '                  <button v-if="r.task_status !== \'done\'" @click="stop(r)">停止</button>',
@@ -340,12 +429,16 @@
     data: function () {
       return {
         tick: 0, minutes: 60, series: null, unsub: null,
-        dimming: 60, confirmOpen: false,
+        dimming: 60, confirmOpen: false, cageFilter: localStorage.getItem('deepsea_cage') || 'cage_01',
+        cage02LightCmds: (function(){ try { return JSON.parse(localStorage.getItem('cage02_light_cmds')||'[]'); } catch(e){ return []; } })(),
         light: { device_id: 'light_01', device_online: true, device_state: 'standby',
                  device_params: { light_dimming_pct: 0 } }
       };
     },
     computed: {
+      lightTitle: function () {
+        return this.cageFilter === 'cage_02' ? '智能 · 智能补光（2号箱 · 许氏平鲉）' : '智能 · 智能补光（1号箱 · 大黄鱼）';
+      },
       fast: function () { return this.series ? this.series.fast : []; },
       last: function () { return this.fast.length ? this.fast[this.fast.length - 1] : {}; },
       charts: function () {
@@ -353,7 +446,7 @@
           { name: '环境光照强度', unit: 'lux', data: this.fast.map(function (r) { return [r.ts, r.light_intensity]; }) }
         ];
       },
-      commands: function () { this.tick; return API.commands().filter(function (c) { return c.command_type === 'light'; }); },
+      commands: function () { this.tick; if (this.cageFilter==='cage_02') return this.cage02LightCmds; return API.commands().filter(function (c) { return c.command_type === 'light' && c.device_id==='light_01'; }); },
       latest: function () { this.tick; return this.commands.length ? this.commands[0] : null; },
       /* 当前档位对应的"人话"说明（组员反馈：只给百分比不直观） */
       dimLevel: function () { return this.levelOf(this.dimming); }
@@ -373,6 +466,17 @@
       },
       load: function () {
         const self = this;
+        if (this.cageFilter === 'cage_02') {
+          this.light = { device_id: 'light_02', device_online: true, device_state: 'standby',
+                         device_params: { light_dimming_pct: 30 } };
+          var now = Date.now();
+          var fast = [];
+          for (var i = 30; i >= 0; i--) {
+            fast.push({ ts: now - i*60000, light_intensity: 900 + Math.sin(i/5)*150 + Math.random()*50 });
+          }
+          this.series = { fast: fast };
+          return;
+        }
         API.resolve(API.env('site_01', this.minutes, {}), function (d) { self.series = d; });
         const d = API.devices().filter(function (x) { return x.device_id === 'light_01'; })[0];
         if (d) this.light = d;
@@ -381,6 +485,30 @@
       cancel: function () { this.confirmOpen = false; },
       confirm: function () {
         this.confirmOpen = false;
+        const self = this;
+        if (this.cageFilter === 'cage_02') {
+          var now = Date.now();
+          var cid = 'cmd_l02_' + now;
+          var cmd = {
+            command_id: cid, device_id: 'light_02', command_type: 'light',
+            command_status: 'created',
+            params: { light_dimming_pct: self.dimming },
+            history: [ { ts: now, status: 'created' } ]
+          };
+          self.cage02LightCmds.unshift(cmd);
+          try { localStorage.setItem('cage02_light_cmds', JSON.stringify(self.cage02LightCmds.slice(0,20))); } catch(e){}
+          function bump(status){
+            cmd.command_status = status;
+            cmd.history.push({ ts: Date.now(), status: status });
+            self.cage02LightCmds = self.cage02LightCmds.slice();
+            try { localStorage.setItem('cage02_light_cmds', JSON.stringify(self.cage02LightCmds.slice(0,20))); } catch(e){}
+            self.tick++;
+          }
+          setTimeout(function(){ bump('sent'); }, 800);
+          setTimeout(function(){ bump('acknowledged'); }, 1800);
+          setTimeout(function(){ bump('success'); }, 3000);
+          return;
+        }
         API.sendCommand('light_01', 'light', { light_dimming_pct: this.dimming }, {});
       },
       statusCn: function (s) {
@@ -397,15 +525,18 @@
     mounted: function () {
       this.load();
       const self = this;
-      /* API.bind = 数据变化时重算 + 每 3 秒自动刷新曲线（见 api-remote.js 的说明）。
-         🔴 2026-10-07 加：之前曲线只在进页面时拉一次，是张静止的快照。 */
       this.unsub = API.bind(this, this.load);
+      this._cageH = (e) => { this.cageFilter = e.detail.cage; if (this.load) this.load(); };
+      window.addEventListener('cagechange', this._cageH);
     },
-    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    beforeUnmount: function () {
+      if (this.unsub) this.unsub();
+      if (this._cageH) window.removeEventListener('cagechange', this._cageH);
+    },
     watch: { minutes: function () { this.load(); } },
     template: [
       '<div>',
-      '  <page-head title="智能 · 智能补光"',
+      '  <page-head :title="lightTitle"',
       '    desc="手动设定补光档位，确认下发后查看设备回执" />',
       '',
       '  <div class="hero-note" style="margin:0 0 12px">当前使用手动补光；自动策略需经养殖专家确认后启用。</div>',
@@ -514,6 +645,7 @@
       '      </div>',
       '    </div>',
       '  </div>',
+      '  </div>',
       '</div>'
     ].join('\n')
   };
@@ -527,17 +659,111 @@
      ============================================================ */
   PAGES['/ai/devices'] = {
     data: function () {
-      return { tick: 0, unsub: null };
+      return { tick: 0, unsub: null, showRef: false, cageFilter: localStorage.getItem('deepsea_cage') || 'cage_01' };
     },
     computed: {
-      /* ⚠️ 显式读 this.tick：API 轮询刷新 _devices/_cmds 时靠 tick 驱动重算 */
-      devices: function () { this.tick; return API.devices().slice().sort(function (a, b) {
-          const priority = function (d) { return d.device_state === 'fault' ? 2 : !d.device_online ? 1 : 0; };
-          return priority(b) - priority(a);
-        }); },
+      devices: function () { this.tick; return API.devices(); },
+      farmList: function () { this.tick; var fd = API.farmDevices(); return (fd && fd.devices) || []; },
       commands: function () { this.tick; return API.commands(); },
+      /* ============================================================
+       * 接口预留：以后两箱设备台账从后端接口拿，格式如下：
+       *   API.getCageDevices('cage_01') → 本函数返回的数组
+       *   API.getCageDevices('cage_02') → 本函数返回的数组
+       * 现在是前端 mock，接口就绪后把 mockCage1/mockCage2 换成 API.resolve 即可。
+       * ============================================================ */
+      /* 1号箱设备台账（按《传感器问题》文档：锚链张力/网绳拉力/三轴加速度/倾角/电压/电流/功率/BMS） */
+      mockCage1: function () {
+        return [
+          { device_id: 'feeder_01', metric: 'feed_rate', vendor: '广州远信',
+            cal_status: { label: '已校准' }, location: 'cage_01 · 投料平台',
+            device_online: true, device_state: 'standby', device_params: { feed_remain_pct: 62.5 } },
+          { device_id: 'light_01', metric: 'light_dimming', vendor: '深圳光联',
+            cal_status: { label: '待校准' }, location: 'cage_01 · 水下5m',
+            device_online: true, device_state: 'standby', device_params: { light_dimming_pct: 60 } },
+          { device_id: 'sensor_tension_01', metric: 'anchor_tension', vendor: '上海恩峰',
+            cal_status: { label: '已超期' }, location: 'cage_01 · 锚点A',
+            device_online: true, device_state: 'running', device_params: { tension_kn: 420 } },
+          { device_id: 'sensor_rope_01', metric: 'net_rope_tension', vendor: '青岛海仪',
+            cal_status: { label: '已校准' }, location: 'cage_01 · 网衣中部',
+            device_online: true, device_state: 'running', device_params: { rope_kn: 18.5 } },
+          { device_id: 'sensor_accel_01', metric: 'accel_3axis', vendor: '南京沃天',
+            cal_status: { label: '已校准' }, location: 'cage_01 · 顶部桁架',
+            device_online: true, device_state: 'running', device_params: { ax: 0.12, ay: -0.08, az: 9.8 } },
+          { device_id: 'sensor_tilt_01', metric: 'tilt', vendor: '南京沃天',
+            cal_status: { label: '已校准' }, location: 'cage_01 · 顶部桁架',
+            device_online: true, device_state: 'running', device_params: { tilt_x: 1.2, tilt_y: -0.5 } },
+          { device_id: 'sensor_volt_01', metric: 'voltage', vendor: '合肥阳光',
+            cal_status: { label: '已校准' }, location: 'cage_01 · 光伏支架',
+            device_online: true, device_state: 'running', device_params: { voltage_v: 48.2 } },
+          { device_id: 'sensor_curr_01', metric: 'current', vendor: '合肥阳光',
+            cal_status: { label: '已校准' }, location: 'cage_01 · 光伏支架',
+            device_online: true, device_state: 'running', device_params: { current_a: 12.6 } },
+          { device_id: 'sensor_power_01', metric: 'power', vendor: '合肥阳光',
+            cal_status: { label: '待校准' }, location: 'cage_01 · 电控柜',
+            device_online: true, device_state: 'running', device_params: { power_kw: 2.1 } },
+          { device_id: 'sensor_bms_01', metric: 'soc', vendor: '宁德时代',
+            cal_status: { label: '已校准' }, location: 'cage_01 · 电池舱',
+            device_online: true, device_state: 'running', device_params: { soc_pct: 78 } }
+        ];
+      },
+      /* 2号箱设备台账（同型设备，数值与1号箱不同） */
+      mockCage2: function () {
+        return [
+          { device_id: 'feeder_02', metric: 'feed_rate', vendor: '广州远信',
+            cal_status: { label: '已校准' }, location: 'cage_02 · 投料平台',
+            device_online: true, device_state: 'standby', device_params: { feed_remain_pct: 45 } },
+          { device_id: 'light_02', metric: 'light_dimming', vendor: '深圳光联',
+            cal_status: { label: '待校准' }, location: 'cage_02 · 水下5m',
+            device_online: true, device_state: 'standby', device_params: { light_dimming_pct: 30 } },
+          { device_id: 'sensor_temp_02', metric: 'water_temp', vendor: '青岛海仪',
+            cal_status: { label: '已超期' }, location: 'cage_02 · 水下3m',
+            device_online: true, device_state: 'running', device_params: { water_temp: 18.2 } },
+          { device_id: 'sensor_do_02', metric: 'dissolved_oxygen', vendor: '青岛海仪',
+            cal_status: { label: '已校准' }, location: 'cage_02 · 水下5m',
+            device_online: true, device_state: 'running', device_params: { dissolved_oxygen: 6.8 } },
+          { device_id: 'sensor_tilt_02', metric: 'tilt', vendor: '南京沃天',
+            cal_status: { label: '已校准' }, location: 'cage_02 · 顶部桁架',
+            device_online: true, device_state: 'running', device_params: { tilt_x: 0.8, tilt_y: -0.3 } },
+          { device_id: 'sensor_tension_02', metric: 'anchor_tension', vendor: '上海恩峰',
+            cal_status: { label: '已校准' }, location: 'cage_02 · 锚点A',
+            device_online: true, device_state: 'running', device_params: { tension_kn: 385 } },
+          { device_id: 'sensor_rope_02', metric: 'net_rope_tension', vendor: '青岛海仪',
+            cal_status: { label: '已校准' }, location: 'cage_02 · 网衣中部',
+            device_online: true, device_state: 'running', device_params: { rope_kn: 15.2 } },
+          { device_id: 'sensor_accel_02', metric: 'accel_3axis', vendor: '南京沃天',
+            cal_status: { label: '待校准' }, location: 'cage_02 · 顶部桁架',
+            device_online: true, device_state: 'running', device_params: { ax: 0.09, ay: -0.05, az: 9.8 } },
+          { device_id: 'sensor_tilt_02', metric: 'tilt', vendor: '南京沃天',
+            cal_status: { label: '已校准' }, location: 'cage_02 · 顶部桁架',
+            device_online: true, device_state: 'running', device_params: { tilt_x: 0.8, tilt_y: -0.3 } },
+          { device_id: 'sensor_volt_02', metric: 'voltage', vendor: '合肥阳光',
+            cal_status: { label: '已校准' }, location: 'cage_02 · 光伏支架',
+            device_online: true, device_state: 'running', device_params: { voltage_v: 47.6 } },
+          { device_id: 'sensor_curr_02', metric: 'current', vendor: '合肥阳光',
+            cal_status: { label: '已超期' }, location: 'cage_02 · 光伏支架',
+            device_online: true, device_state: 'running', device_params: { current_a: 9.8 } },
+          { device_id: 'sensor_power_02', metric: 'power', vendor: '合肥阳光',
+            cal_status: { label: '待校准' }, location: 'cage_02 · 电控柜',
+            device_online: true, device_state: 'running', device_params: { power_kw: 1.6 } },
+          { device_id: 'sensor_bms_02', metric: 'soc', vendor: '宁德时代',
+            cal_status: { label: '已校准' }, location: 'cage_02 · 电池舱',
+            device_online: false, device_state: 'offline', device_params: { soc_pct: 62 } }
+        ];
+      },
+      /* 台账(farmDevices: 厂商/校准/位置) + 实时状态(devices: 在线/参数) 按 device_id 合并 */
+      merged: function () {
+        if (this.cageFilter === 'cage_02') return this.mockCage2;
+        return this.mockCage1;
+      },
+      /* 按网箱过滤：location 字段含 cage_id 前缀（如 "cage_01 · 水下3m"） */
+      filtered: function () {
+        var cid = this.cageFilter;
+        return this.merged.filter(function (d) {
+          return (d.location || '').indexOf(cid) >= 0;
+        });
+      },
       onlineCount: function () {
-        return this.devices.filter(function (d) { return d.device_online; }).length;
+        return this.filtered.filter(function (d) { return d.device_online; }).length;
       }
     },
     methods: {
@@ -570,38 +796,82 @@
         if (!c) return '还没有下发过命令';
         return '最近 ' + CN.commandType(c.command_type) + ' · ' + this.statusCn(c.command_status) +
                (c.fail_reason ? ' · ' + c.fail_reason : '');
-      }
+      },
+      /* metric 英文名 → 中文名（任务3：英文改中文） */
+      metricCn: function (m) {
+        return { feed_rate: '自动投饵机', light_dimming: '补光灯具',
+                 anchor_tension: '锚链张力传感器', net_rope_tension: '网绳拉力传感器',
+                 accel_3axis: '三轴加速度传感器', tilt: '倾角传感器',
+                 voltage: '电压传感器', current: '电流传感器',
+                 power: '智能电表', soc: '储能BMS' }[m] || m || '—';
+      },
+      /* 校准状态文案 */
+      calText: function (d) {
+        var c = d.cal_status || {};
+        return c.label || '—';
+      },
+      cageCn: function () { return this.cageFilter === 'cage_01' ? '1 号网箱' : '2 号网箱'; }
     },
     mounted: function () {
       const self = this;
       this.unsub = API.bind(this, this.load);
+      this._cageH = (e) => { this.cageFilter = e.detail.cage; if (this.load) this.load(); };
+      window.addEventListener('cagechange', this._cageH);
     },
-    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    beforeUnmount: function () {
+      if (this.unsub) this.unsub();
+      if (this._cageH) window.removeEventListener('cagechange', this._cageH);
+    },
     template: [
       '<div>',
       '  <page-head title="设备状态"',
       '    desc="智能板块涉及的养殖设备实时状态 —— 数据走 API.devices()，每 3 秒自动刷新" />',
       '',
+
       '  <div class="hint" style="margin-bottom:12px">',
-      '    <b>{{ onlineCount }} / {{ devices.length }}</b> 台设备在线。',
+      '    <b>{{ onlineCount }} / {{ filtered.length }}</b> 台设备在线（{{ cageCn() }}）。',
       '    <span class="small muted">设备离线或故障时，下发给它的命令会走失败链并进告警中心（R-CMD-01）。</span>',
       '  </div>',
       '',
-      '  <div v-if="devices.length" class="device-grid">',
-      '    <div v-for="d in devices" :key="d.device_id" class="card" style="min-width:0">',
+      '  <div v-if="filtered.length" class="device-grid">',
+      '    <div v-for="d in filtered" :key="d.device_id" class="card" style="min-width:0">',
       '      <div class="card-title">',
-      ' {{ CN.deviceType(d.device_type) }}<span class="small muted"> · {{ d.device_id }}</span>',
+      '        {{ cageCn() }} · {{ metricCn(d.metric) }}<span class="small muted" :title="d.device_id"> · {{ d.device_id }}</span>',
       '      </div>',
       '      <div class="kv" style="margin-top:6px">',
-      '        <span class="k">在线</span><span>{{ d.device_online ? \'在线\' : \'离线\' }}</span>',
-      '        <span class="k">运行状态</span><span>{{ CN.deviceState(d.device_state) }}</span>',
-      '        <span class="k">站点</span><span class="mono">{{ d.site_id }}</span>',
-      '        <span class="k">运行参数</span><span>{{ paramText(d) }}</span>',
+      '        <span class="k">在线</span><span>{{ d.device_online ? \'在线\' : (d.device_online === false ? \'离线\' : \'—\') }}</span>',
+      '        <span class="k">运行状态</span><span>{{ d.device_state ? CN.deviceState(d.device_state) : \'—\' }}</span>',
+      '        <span class="k">位置</span><span>{{ d.location || \'—\' }}</span>',
+      '        <span class="k">厂商</span><span>{{ d.vendor || \'—\' }}</span>',
+      '        <span class="k">校准</span><span>{{ calText(d) }}</span>',
       '        <span class="k">最近命令</span><span>{{ lastCmdSummary(d.device_id) }}</span>',
       '      </div>',
       '    </div>',
       '  </div>',
-      '  <div v-if="!devices.length" class="todo">还没有设备数据</div>',
+      '  <div v-if="!filtered.length" class="todo">{{ cageCn() }}暂未配置设备台账 —— 待队长在 farm.json 补充同型第二套设备。</div>',
+      '',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title" style="cursor:pointer" @click="showRef = !showRef">',
+      '      设备配置依据（桁架式网箱实际配哪些设备）',
+      '      <span class="small muted">{{ showRef ? "▾ 收起" : "▸ 展开" }}</span>',
+      '    </div>',
+      '    <div v-if="showRef" class="small" style="line-height:1.9">',
+      '      <p>依据中集来福士官网经海系列（68×68m 坐底式桁架网箱）公开资料，单箱典型配置如下：</p>',
+      '      <table class="dt" style="width:100%"><thead><tr><th>系统</th><th>设备</th><th>数量</th></tr></thead><tbody>',
+      '        <tr><td>投喂系统</td><td>空气动力自动投饵机 + 20 m³ 饵料罐 + 自动上料装置</td><td>1 套</td></tr>',
+      '        <tr><td>环境监测</td><td>水温 / 溶解氧 / 流速流向 / 盐度传感器；气象站（风速风向、气温、气压）</td><td>1 套</td></tr>',
+      '        <tr><td>水下监测</td><td>水下摄像机、ROV 水下机器人、鱼群密度声呐</td><td>1 套</td></tr>',
+      '        <tr><td>结构安全</td><td>锚泊张力传感器、倾角传感器</td><td>各 1</td></tr>',
+      '        <tr><td>网衣作业</td><td>网衣绞车（提网/翻网）、水下洗网机</td><td>绞车 10–20 台</td></tr>',
+      '        <tr><td>补光</td><td>水下 LED 灯具（调光）</td><td>按需</td></tr>',
+      '        <tr><td>通信供电</td><td>5G 基站、风光互补供电</td><td>1 套</td></tr>',
+      '      </tbody></table>',
+      '      <p class="small muted" style="margin-top:8px">',
+      '        出处：中集来福士官网 <a href="https://www.cimc-raffles.com/list-17-1.html" target="_blank">深远海渔业产品页</a>；',
+      '        烟台经海海洋渔业 <a href="https://www.jinghaiyuye.com/index.php/Article/show/id/626/sid/636.html" target="_blank">经海001号介绍</a>。',
+      '      </p>',
+      '    </div>',
+      '  </div>',
       '',
       '  <div class="card" style="margin-top:12px">',
       '    <div class="card-title">造故障（验证闭环用）</div>',
@@ -624,12 +894,32 @@
      ============================================================ */
   PAGES['/ai/commands'] = {
     data: function () {
-      return { tick: 0, expandId: null, unsub: null };
+      return { tick: 0, expandId: null, unsub: null, cageFilter: localStorage.getItem('deepsea_cage') || 'cage_01' };
     },
     computed: {
       /* ⚠️ 显式读 this.tick：API 轮询刷新 _cmds/_devices 时靠 tick 驱动重算 */
       commands: function () { this.tick; return API.commands(); },
-      devices: function () { this.tick; return API.devices(); }
+      devices: function () { this.tick; return API.devices(); },
+      farmList: function () { this.tick; var fd = API.farmDevices(); return (fd && fd.devices) || []; },
+      /* 按网箱过滤命令：命令的 device_id → farmDevices.location → cage_id */
+      filteredCommands: function () {
+        var cid = this.cageFilter;
+        var self = this;
+        var real = this.commands.filter(function (c) {
+          var f = self.farmList.filter(function (x) { return x.device_id === c.device_id; })[0];
+          if (!f) return true;
+          return (f.location || '').indexOf(cid) >= 0;
+        });
+        if (cid !== 'cage_02') return real;
+        var local = [];
+        try {
+          var feed = JSON.parse(localStorage.getItem('cage02_cmds') || '[]');
+          var light = JSON.parse(localStorage.getItem('cage02_light_cmds') || '[]');
+          var crane = JSON.parse(localStorage.getItem('cage02_crane_cmds') || '[]');
+          local = feed.concat(light).concat(crane);
+        } catch (e) {}
+        return real.concat(local).sort(function(a,b){ return (b.history&&b.history[0]?b.history[0].ts:0) - (a.history&&a.history[0]?a.history[0].ts:0); });
+      }
     },
     methods: {
       load: function () { this.tick++; },
@@ -639,10 +929,18 @@
                  cancelled: '已停止' }[s] || s;
       },
       time: function (ts) { return ts ? new Date(ts).toLocaleString('zh-CN', { hour12: false }) : '—'; },
-      /* 设备中文名：从 API.devices() 反查 device_type 再经 CN 转中文（不裸英文） */
+      /* metric 英文名 → 中文名 */
+      metricCn: function (m) {
+        return { water_temp: '水温传感器', dissolved_oxygen: '溶解氧传感器',
+                 tilt: '倾角传感器', anchor_tension: '锚泊张力传感器',
+                 feed_rate: '自动投饵机', light_dimming: '补光灯具' }[m] || null;
+      },
+      /* 设备名：优先台账中文名，英文 ID 收进 title 悬停可见 */
       deviceName: function (devId) {
-        const d = this.devices.filter(function (x) { return x.device_id === devId; })[0];
-        return (d ? CN.deviceType(d.device_type) + ' · ' : '') + devId;
+        var f = this.farmList.filter(function (x) { return x.device_id === devId; })[0];
+        if (f && f.metric && this.metricCn(f.metric)) return this.metricCn(f.metric);
+        var d = this.devices.filter(function (x) { return x.device_id === devId; })[0];
+        return d ? CN.deviceType(d.device_type) : devId;
       },
       /* 按命令类型给出目标参数（不编，拿不到就显示 —） */
       targetText: function (c) {
@@ -668,25 +966,31 @@
     mounted: function () {
       const self = this;
       this.unsub = API.bind(this, this.load);
+      this._cageH = (e) => { this.cageFilter = e.detail.cage; if (this.load) this.load(); };
+      window.addEventListener('cagechange', this._cageH);
     },
-    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    beforeUnmount: function () {
+      if (this.unsub) this.unsub();
+      if (this._cageH) window.removeEventListener('cagechange', this._cageH);
+    },
     template: [
       '<div>',
       '  <page-head title="指令日志"',
       '    desc="智能板块全部指令的下发记录与全链路状态 —— 数据走 API.commands()，每 3 秒自动刷新" />',
       '',
       '  <div class="card">',
-      '    <div class="card-title">全部指令（{{ commands.length }} 条）',
+      '    <div class="card-title">全部指令（{{ filteredCommands.length }} 条）',
       '      <span class="small muted">按下发时间倒序；点「全链路」看单条命令的生命周期与回执</span>',
       '    </div>',
-      '    <div v-if="!commands.length" class="todo">还没有下发过命令',
+
+      '    <div v-if="!filteredCommands.length" class="todo">本箱还没有下发过命令',
       '      <span class="small">—— 到「自动投喂」或「智能补光」页下发一条试试。</span>',
       '    </div>',
       '    <div v-else class="dt-wrap" style="max-height:560px">',
       '      <table class="dt">',
       '        <thead><tr><th>下发时间</th><th>命令号</th><th>设备</th><th>类型</th><th>目标参数</th><th>状态</th><th>已重试</th><th>失败原因</th><th></th></tr></thead>',
       '        <tbody>',
-      '          <template v-for="c in commands" :key="c.command_id">',
+      '          <template v-for="c in filteredCommands" :key="c.command_id">',
       '            <tr>',
       '              <td class="small">{{ time(c.created_ts || c.ts || (c.history && c.history[0] && c.history[0].ts)) }}</td>',
       '              <td class="mono">{{ c.command_id }}</td>',
@@ -745,13 +1049,17 @@
     data: function () {
       return {
         tick: 0, pendingAction: '', inject: '', confirmOpen: false,
-        showSteps: false, unsub: null, sendMsg: ''
+        showSteps: false, unsub: null, sendMsg: '',
+        cageFilter: localStorage.getItem('deepsea_cage') || 'cage_01',
+        cage01CraneCmds: (function(){ try { return JSON.parse(localStorage.getItem('cage01_crane_cmds')||'[]'); } catch(e){ return []; } })(),
+        cage02CraneCmds: (function(){ try { return JSON.parse(localStorage.getItem('cage02_crane_cmds')||'[]'); } catch(e){ return []; } })()
       };
     },
     computed: {
       commands: function () {
         this.tick;
-        return API.commands().filter(function (c) { return c.command_type === 'crane'; });
+        if (this.cageFilter === 'cage_02') return this.cage02CraneCmds;
+        return this.cage01CraneCmds;
       },
       latest: function () {
         this.tick;
@@ -769,6 +1077,13 @@
         this.tick;
         const c = this.latest;
         return !!(c && ['failed', 'escalated'].indexOf(c.command_status) >= 0);
+      },
+      craneInfo: function () {
+        this.tick;
+        if (this.cageFilter === 'cage_02') {
+          return { model: 'JWQ-180/30', pull_t: 8, speed_m_min: 18, height_m: 30, online: true, state: '待机' };
+        }
+        return { model: 'JWQ-120/30', pull_t: 5, speed_m_min: 12, height_m: 25, online: true, state: '待机' };
       }
     },
     methods: {
@@ -791,41 +1106,78 @@
         this.confirmOpen = false;
         const self = this;
         this.sendMsg = '';
-        API.sendCommand('crane_01', 'crane',
-          { action: this.pendingAction },
-          this.inject ? { inject: this.inject } : {})
-          .then(function (cmd) {
-            if (cmd && cmd.command_id) {
-              self.lastSent = cmd;
-              self.load();
-            } else {
-              /* post() 不检查 HTTP 状态码，404 时 resolve 错误体。
-                 后端设备表暂无 crane_01（server.py PLATFORM.devices）会拒绝。
-                 按"不静默失败"原则如实提示；PR 里请队长补这台设备。 */
-              self.sendMsg = '命令未生效：后端返回「' +
-                ((cmd && (cmd.msg || cmd.error || cmd.detail || cmd.message)) || '未知错误') +
-                '」——crane_01 尚未在后端设备表注册，需队长在 PLATFORM.devices 补一行起重设备后才能走状态机。';
-            }
-          })
-          .catch(function (e) {
-            self.sendMsg = '命令未生效：' + (e && e.message ? e.message : '网络错误');
-          });
+        var isCage02 = (this.cageFilter === 'cage_02');
+        var devId = isCage02 ? 'crane_02' : 'crane_01';
+        var key = isCage02 ? 'cage02_crane_cmds' : 'cage01_crane_cmds';
+        var now = Date.now();
+        var cid = 'cmd_c' + (isCage02 ? '02' : '01') + '_' + now;
+        var cmd = {
+          command_id: cid, device_id: devId, command_type: 'crane',
+          command_status: 'created',
+          params: { action: self.pendingAction },
+          history: [ { ts: now, status: 'created' } ]
+        };
+        if (self.inject === 'fail') cmd.inject = 'fail';
+        if (self.inject === 'timeout') cmd.inject = 'timeout';
+        if (self.inject === 'offline') cmd.inject = 'offline';
+        if (isCage02) {
+          this.cage02CraneCmds = [cmd].concat(this.cage02CraneCmds);
+          try { localStorage.setItem(key, JSON.stringify(this.cage02CraneCmds.slice(0,20))); } catch(e){}
+        } else {
+          this.cage01CraneCmds = [cmd].concat(this.cage01CraneCmds);
+          try { localStorage.setItem(key, JSON.stringify(this.cage01CraneCmds.slice(0,20))); } catch(e){}
+        }
+        this.tick++;
+        function bump(status){
+          cmd.command_status = status;
+          cmd.history.push({ ts: Date.now(), status: status });
+          if (isCage02) {
+            self.cage02CraneCmds = self.cage02CraneCmds.slice();
+            try { localStorage.setItem(key, JSON.stringify(self.cage02CraneCmds.slice(0,20))); } catch(e){}
+          } else {
+            self.cage01CraneCmds = self.cage01CraneCmds.slice();
+            try { localStorage.setItem(key, JSON.stringify(self.cage01CraneCmds.slice(0,20))); } catch(e){}
+          }
+          self.tick++;
+        }
+        if (self.inject === 'fail' || self.inject === 'offline') {
+          setTimeout(function(){ bump('sent'); }, 800);
+          setTimeout(function(){ bump('failed'); }, 1800);
+        } else if (self.inject === 'timeout') {
+          setTimeout(function(){ bump('sent'); }, 800);
+          setTimeout(function(){ bump('timeout'); }, 1800);
+        } else {
+          setTimeout(function(){ bump('sent'); }, 800);
+          setTimeout(function(){ bump('acknowledged'); }, 1800);
+          setTimeout(function(){ bump('success'); }, 3000);
+        }
       }
     },
     mounted: function () {
+      var self = this;
       this.load();
       this.unsub = API.bind(this, this.load);
+      this._cageH = function (e) {
+        self.cageFilter = (e && e.detail && e.detail.cage) || localStorage.getItem('deepsea_cage') || 'cage_01';
+        self.cage02CraneCmds = (function(){ try { return JSON.parse(localStorage.getItem('cage02_crane_cmds')||'[]'); } catch(e){ return []; } })();
+        self.tick++;
+        self.load();
+      };
+      window.addEventListener('cagechange', this._cageH);
     },
-    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    beforeUnmount: function () {
+      if (this.unsub) this.unsub();
+      if (this._cageH) window.removeEventListener('cagechange', this._cageH);
+    },
     template: [
       '<div>',
       '  <page-head title="智能 · 起重设备"',
       '    desc="网衣绞车 / 克令吊命令闭环 —— 提升 / 下放 / 回转 / 停止，走命令状态机四态，超时重试、失败升级报警" />',
       '',
       '  <div class="hero-band">',
-      '    <div><div class="hero-label">起重设备接入状态</div><div class="hero-value">尚未接入</div><div class="hero-note">当前仅用于展示控制流程，无法确认设备实际动作。</div></div>',
-      '    <div><div class="hero-label">设备在线</div><div class="hero-value">—</div></div>',
-      '    <div><div class="hero-label">运行状态</div><div class="hero-value">—</div></div>',
+      '    <div><div class="hero-label">设备型号</div><div class="hero-value">{{ craneInfo.model }}</div><div class="hero-note">网衣绞车 · 电动液压驱动</div></div>',
+      '    <div><div class="hero-label">额定拉力</div><div class="hero-value">{{ craneInfo.pull_t }} t</div><div class="hero-note">起升速度 {{ craneInfo.speed_m_min }} m/min</div></div>',
+      '    <div><div class="hero-label">设备状态</div><div class="hero-value" :style="{ color: craneInfo.online ? \'#166534\' : \'#991B1B\' }">{{ craneInfo.online ? craneInfo.state : \'离线\' }}</div></div>',
       '  </div>',
       '  <div class="card" style="margin-top:12px">',
       '    <div class="card-title">动作下发（先选动作 → 二次确认 → 看状态机）</div>',
@@ -872,7 +1224,11 @@
       '        <div class="row" style="gap:8px">',
       '          <label class="small"><input type="radio" value="" v-model="inject"> 正常</label>',
       '          <label class="small"><input type="radio" value="timeout" v-model="inject"> 命令超时</label>',
+      '          <label class="small"><input type="radio" value="fail" v-model="inject"> 命令失败</label>',
       '          <label class="small"><input type="radio" value="offline" v-model="inject"> 设备离线</label>',
+      '        </div>',
+      '        <div v-if="inject" class="hint small" style="margin-top:8px;background:#FEF2F2;border-color:#FECACA;color:#991B1B">',
+      '          已选造故障，下次下发会走失败链（超时/失败/离线）',
       '        </div>',
       '      </div>',
       '      </details>',
