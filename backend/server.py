@@ -637,7 +637,7 @@ def fish_cameras():
     return {"cameras": cams, "offline": offline}
 
 
-def struct_series(minutes=60, storm=False):
+def struct_series(minutes=60, storm=False, cage_id="cage_01"):
     """结构安全（接口文档 第五节）
 
     storm 参数：造故障「大风大浪」要能让网箱倾角与锚泊张力真的抬起来。
@@ -647,7 +647,10 @@ def struct_series(minutes=60, storm=False):
     n = max(2, int(minutes * 60 * 1000 / STEP_FAST))
     now = int(time.time() * 1000) // 1000 * 1000
     t0 = now - minutes * 60 * 1000
-    r = _rng()
+    # 两个网箱同处 site_01，使用同一海况；结构测点按 cage_id 分开模拟。
+    # 下列差异仅是演示曲线，不代表两箱的实际设计载荷或现场测量。
+    second_cage = cage_id == "cage_02"
+    r = _rng(20261006 if second_cage else 20261005)
     out, soc, design = [], 68.0, 60.0
     for i in range(n):
         ts = t0 + i * STEP_FAST
@@ -664,35 +667,80 @@ def struct_series(minutes=60, storm=False):
         #    演示时也有明确路径：点「触发大风大浪」→ 倾角抬升 → 红色预警。
         per = 120                       # 120 个点 = 10 分钟
         phase = i % per
-        if phase < 14:
-            # mag 5.5 → 峰值约 6.7°，越过 5° 黄色线；台风级 mag 15 → 峰值约 16°，越过 15° 红色线
-            if storm:
-                mag = 15.0              # 造故障：大风大浪 → 达到 CCS 稳性衡准角量级
-            else:
-                # 平常幅值刻意压在 5° 提示线**下方**（峰 4.2° + 噪声 ≈ 4.9°），
-                # 否则每 10 分钟就报一次橙色预警，又变成「狼来了」
-                mag = 3.0 if (i // per) % 2 == 0 else 1.6
+        if storm:
+            # 仅在当前窗口末尾注入一次异常，便于追溯且不反复刷告警。
+            excursion = 15.0 if i >= n - 14 else 0.0
+        elif phase < 14:
+            # 平常幅值压在 5° 提示线以下，避免周期性误报。
+            mag = 3.0 if (i // per) % 2 == 0 else 1.6
             excursion = mag * math.sin(phase / 14 * math.pi)
         else:
             excursion = 0.0
 
-        roll = 1.1 + excursion * 0.5 + r.gauss(0, .18)
-        pitch = 1.2 + excursion + r.gauss(0, .22)
+        roll = (0.8 if second_cage else 1.1) + excursion * 0.5 + r.gauss(0, .18)
+        pitch = (0.9 if second_cage else 1.2) + excursion + r.gauss(0, .22)
         # 海况差 → 张力跟着涨（物理上说得通：大浪对锚泊的载荷是非线性的，
         # 所以造故障时耦合系数更大）。
         # 数值配着 design_tension = 60 kN 调，让两条线各就各位 ——
         # **平常海况不许越 80% 黄线**，否则黄色预警天天响，等于没有预警（"狼来了"）：
         #   平常（excursion 峰 4.6，系数 1.15）→ 约 42.8 + 噪声 ≈ 77%  < 80%  ✅
         #   造故障（excursion 峰 15，系数 1.6） → 约 61.5 + 噪声 ≈ 105% > 95%  ✅
-        tension = 37.5 + excursion * (1.6 if storm else 1.15) + r.gauss(0, 1.2)
+        tension = (34.0 if second_cage else 37.5) + excursion * (1.6 if storm else 1.15) + r.gauss(0, 1.2)
+        # 四角系泊与六片侧网分别生成模拟测点。数组是主要数据；旧单值字段保留为
+        # 已上报测点的最大值，供尚未改用数组的页面读取。测点编号与方位仍需现场核对。
+        mooring_lines = []
+        for j, factor in enumerate((1.00, 0.94, 0.89, 0.97), 1):
+            value = round(max(0.0, tension * factor + r.gauss(0, 0.45)), 1)
+            mooring_lines.append({
+                "chain_id": "chain_%02d" % j,
+                "anchor_id": "anchor_%02d" % j,
+                "anchor_tension": value,
+                "design_tension": design,
+                "source": "simulated",
+                "quality": "good",
+            })
+        max_anchor_tension = max(line["anchor_tension"] for line in mooring_lines)
+        max_tension_pct = max(
+            line["anchor_tension"] / line["design_tension"] * 100
+            for line in mooring_lines
+        )
+
+        net_base = r.gauss(16.7 if second_cage else 18.3, 0.8) + excursion * 0.12
+        net_areas = []
+        for j, (zone, factor) in enumerate(zip(
+                ("A1", "A2", "B", "C1", "C2", "D"),
+                (0.94, 1.01, 1.06, 0.98, 1.04, 0.96)), 1):
+            value = round(max(0.0, net_base * factor + r.gauss(0, 0.25)), 1)
+            net_areas.append({
+                "net_area_id": "netarea_%02d" % j,
+                "net_rope_id": "netrope_%02d" % j,
+                "net_zone": zone,
+                "net_area_tension": value,
+                "allowable_tension": None,  # 未获现场设计允许值，不据此判断承载风险
+                "source": "simulated",
+                "quality": "good",
+            })
+        max_net_tension = max(area["net_area_tension"] for area in net_areas)
         soc = min(100.0, max(8.0, soc + (0.18 if day > .2 else -0.22) + r.gauss(0, .12)))
         out.append({
             "ts": ts,
             "site_id": "site_01",
-            "anchor_tension": round(tension, 1),
+            "cage_id": cage_id,
+            "source": "simulated",
+            "quality": "good",
+            "sim_scenario": "storm" if storm else "normal",
+            "mooring_expected_count": 4,
+            "net_expected_count": 6,
+            "mooring_lines": mooring_lines,
+            "anchor_tension": max_anchor_tension,
             "design_tension": design,
-            "tension_pct": round(tension / design * 100, 1),
-            "net_tension": round(r.gauss(18.3, .8), 1),
+            "tension_pct": round(max_tension_pct, 1),
+            "net_areas": net_areas,
+            "net_layout": "truss_six_side_v1",
+            "net_tension_dist": [area["net_area_tension"] for area in net_areas],
+            "net_area_ids": [area["net_area_id"] for area in net_areas],
+            "net_area_tension": max_net_tension,
+            "net_tension": max_net_tension,
             "tilt_roll": round(roll, 1),
             "tilt_pitch": round(pitch, 1),
             "tilt_angle": round(max(abs(roll), abs(pitch)), 1),
@@ -1290,7 +1338,11 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/struct":
             # storm 透传：造故障「大风大浪」要能让网箱倾角真的抬起来，
             # 否则倾角阈值改成 5°/15° 之后演示时永远触发不到（2026-10-06 踩过）
-            return self._json(struct_series(minutes, one("storm", "0") in ("1", "true")))
+            cage_id = one("cage_id", "cage_01")
+            if cage_id not in ("cage_01", "cage_02") or not FARM.cage(cage_id):
+                return self._err(404, "网箱不存在")
+            return self._json(struct_series(
+                minutes, one("storm", "0") in ("1", "true"), cage_id))
 
         if p == "/api/feed/decision":
             return self._json(feed_decision())
