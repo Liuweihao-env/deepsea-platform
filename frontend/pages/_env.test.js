@@ -18,10 +18,11 @@ sandbox.API = {
   resolve: function (v, cb) { cb(v); },
   sites: function () {
     return [
-      { site_id: 'site_01', site_name: '模拟养殖站点', kind: 'farm' },
-      { site_id: 'site_02', site_name: '墨西哥湾中部', kind: 'obs', station_id: '42001' },
-      { site_id: 'site_03', site_name: '阿拉斯加湾西部', kind: 'obs', station_id: '46001' },
-      { site_id: 'site_04', site_name: '夏威夷西北', kind: 'obs', station_id: '51001' }
+      { site_id: 'site_01', site_name: '仿真演示站点', kind: 'farm' },
+      { site_id: 'site_02', site_name: '中国近海观测站点 · 芝罘岛（渤海海峡）', kind: 'obs', station_id: 'ZFD' },
+      { site_id: 'site_03', site_name: '中国近海观测站点 · 小麦岛（黄海）', kind: 'obs', station_id: 'XMD' },
+      { site_id: 'site_04', site_name: '中国近海观测站点 · 嵊山（东海）', kind: 'obs', station_id: 'SSN' },
+      { site_id: 'site_05', site_name: '中国近海观测站点 · 遮浪（南海）', kind: 'obs', station_id: 'ZLG' }
     ];
   },
   /* 水温规则（与后端同口径）：≥28 红（上限）、≥25.5 黄（提示） */
@@ -82,7 +83,7 @@ section('验收第 2 条关键字（一条竖线，不能删）');
 const all = sea.template + water.template;
 assert(all.indexOf('水温上限') >= 0, '模板含「水温上限」');
 assert(all.indexOf('28.0') >= 0 || all.indexOf('28') >= 0, '模板含 28.0 / 28');
-assert(all.indexOf('#/trace') >= 0, '模板含 #/trace');
+assert(all.indexOf('#/mgmt/alarm') >= 0, '模板含追溯查询链接（去追溯查询看完整链路）');
 
 section('问题1：调试面板/原始数据所需方法已定义');
 ['ensurePer', 'load', 'setSite', 'onMinutes', 'onCustomMin', 'togglePause', 'exportCsv', 'srcCn', 'qCn', 'fmtTs']
@@ -105,7 +106,7 @@ section('共享纯函数');
 }
 {
   const per = H.buildPer(sandbox.API.sites());
-  assert(Object.keys(per).length === 4, 'buildPer 覆盖全部 4 个站点');
+  assert(Object.keys(per).length === 5, 'buildPer 覆盖全部 5 个站点（1 养殖 + 4 观测）');
   assert(per.site_01.paused === false && per.site_01.storm === false, '默认状态：运行中、无风暴');
   assert(H.pausedText(per) === '', '无暂停站点时聚合文本为空');
   per.site_01.paused = true;
@@ -172,10 +173,10 @@ assert(sea.template.indexOf('fmtTs(r.ts)') >= 0, '原始数据表时间用年/�
 /* 标题改为 computed rawTitle（历史区间/实时窗口动态标注），源码须同时含两种数据来源文案 */
 {
   const rt = sea.computed.rawTitle.toString();
-  assert(rt.indexOf('NOAA NDBC 公开历史数据') >= 0 && rt.indexOf('仿真数据') >= 0,
+  assert(rt.indexOf('中国近海台站实测数据') >= 0 && rt.indexOf('仿真数据') >= 0,
     '原始数据标题动态标注公开历史数据/仿真');
 }
-assert(sea.template.indexOf('backend/api/env.py') >= 0, '精确历史日期接口的降级说明已展示');
+assert(sea.template.indexOf('自定义起止时间') >= 0, '精确历史日期接口的降级说明已展示');
 assert(water.template.indexOf('快变量') >= 0 && water.template.indexOf('慢变量（盐度 / pH）') >= 0,
   '水质页原始数据分快变量/慢变量两张表');
 assert(water.template.indexOf('导出 CSV') >= 0, '水质页有导出 CSV 按钮');
@@ -196,6 +197,9 @@ assert(water.template.indexOf('导出 CSV') >= 0, '水质页有导出 CSV 按钮
     fast: [{ ts: 1760000000000, site_id: 'site_01', source: 'simulated', quality: 'good',
              wave_height: 1.5, wind_speed: 8.3, current_speed: 0.6, air_temp: 22.4 }]
   };
+  seaInst.siteDisplay = sea.methods.siteDisplay;
+  seaInst.srcCn = sea.methods.srcCn;
+  seaInst.qCn = sea.methods.qCn;
   seaInst.siteName = function () { return sea.methods.siteName.call(seaInst); };
   seaInst.exportCsv = sea.methods.exportCsv;
   seaInst.exportCsv();
@@ -203,8 +207,8 @@ assert(water.template.indexOf('导出 CSV') >= 0, '水质页有导出 CSV 按钮
     '海况导出 CSV 表头完整且带 UTF-8 BOM');
   assert(capturedCsv && capturedCsv.indexOf('仿真数据') >= 0 && capturedCsv.indexOf('良好') >= 0,
     '海况导出 CSV 来源/质量为中文（无裸英文）');
-  assert(capturedName === '海况原始数据_模拟养殖站点.csv',
-    '海况导出文件名用中文站点名（实际：' + capturedName + '）');
+  assert(capturedName === '海况原始数据_仿真演示站点.csv',
+    '海况导出文件名用中文站点名（site_01 显示为仿真演示站点，实际：' + capturedName + '）');
 }
 {
   const wInst = {
@@ -212,6 +216,9 @@ assert(water.template.indexOf('导出 CSV') >= 0, '水质页有导出 CSV 按钮
     fast: [{ ts: 1760000000000, site_id: 'site_01', source: 'simulated', quality: 'good',
              water_temp: 18.6, dissolved_oxygen: 9.2, light_intensity: 12000 }]
   };
+  wInst.siteDisplay = water.methods.siteDisplay;
+  wInst.srcCn = water.methods.srcCn;
+  wInst.qCn = water.methods.qCn;
   wInst.siteName = function () { return water.methods.siteName.call(wInst); };
   wInst.exportCsv = water.methods.exportCsv;
   let csv2 = null, name2 = null;
@@ -224,7 +231,7 @@ assert(water.template.indexOf('导出 CSV') >= 0, '水质页有导出 CSV 按钮
   wInst.exportCsv();
   assert(csv2 && csv2.indexOf('\ufeff时间,站点,来源,质量,水温 (℃),溶解氧 (mg/L),光照 (lux)') === 0,
     '水质导出 CSV 表头完整且带 UTF-8 BOM');
-  assert(name2 === '水质原始数据_模拟养殖站点.csv', '水质导出文件名用中文站点名（实际：' + name2 + '）');
+  assert(name2 === '水质原始数据_仿真演示站点.csv', '水质导出文件名用中文站点名（site_01 显示为仿真演示站点，实际：' + name2 + '）');
 }
 
 section('问题4：站点独立 + 切换（per-site 状态互不影响）');
@@ -277,9 +284,9 @@ assert(sea.template.indexOf('暂停生成') >= 0 && water.template.indexOf('暂�
 section('新问题1：真实站点（公开数据）不参与仿真控制');
 {
   assert(sea.template.indexOf('公开数据不参与仿真控制') >= 0, '海况调试面板：观测站点无暂停/风暴操作按钮');
-  assert(sea.template.indexOf('实时实测（不可模拟）') >= 0, '海况调试面板：观测站点模式为实时实测');
+  assert(sea.template.indexOf('历史观测（不可模拟）') >= 0, '海况调试面板：观测站点模式为历史观测（不可模拟）');
   assert(water.template.indexOf('公开数据不参与仿真控制') >= 0, '水质调试面板：观测站点无暂停/骤升/离线按钮');
-  assert(water.template.indexOf('实时实测（不可模拟）') >= 0, '水质调试面板：观测站点模式为实时实测');
+  assert(water.template.indexOf('历史观测（不可模拟）') >= 0, '水质调试面板：观测站点模式为历史观测（不可模拟）');
   const stormZone = sea.template.slice(sea.template.indexOf('大风大浪细化'));
   assert(stormZone.indexOf('v-if="!isObs"') >= 0, '风暴细化选项仅养殖站点显示（观测站点不可模拟）');
   assert(typeof sea.methods.isObsSite === 'function' && typeof water.methods.isObsSite === 'function',
@@ -324,7 +331,7 @@ section('新问题2：真实站点自定义时间历史 + 数据时间范围');
   assert(sea.template.indexOf('查询历史') >= 0 && sea.template.indexOf('返回实时') >= 0, '海况页有查询历史/返回实时按钮');
   assert(water.template.indexOf('datetime-local') >= 0 && water.template.indexOf('查询历史') >= 0,
     '水质页有自定义起止时间输入与查询按钮');
-  assert(sea.template.indexOf('数据时间范围') >= 0, '浮标表头改为「数据时间范围」');
+  assert(sea.template.indexOf('观测时间范围') >= 0, '台站表头为「观测时间范围」（真实站点标明数据时间范围）');
   assert(typeof sea.methods.queryRange === 'function' && typeof sea.methods.exitRange === 'function',
     '海况页有 queryRange / exitRange 方法');
   assert(typeof sea.methods.loadRanges === 'function' && typeof water.methods.loadRanges === 'function',
@@ -332,6 +339,33 @@ section('新问题2：真实站点自定义时间历史 + 数据时间范围');
   assert(typeof sea.computed.rawRows === 'function' && typeof sea.computed.rawTitle === 'function',
     '海况页有 rawRows / rawTitle');
   assert(typeof water.computed.slowRows === 'function', '水质页有 slowRows（慢变量倒序）');
+}
+{
+  /* 问题二：水质页 hero-note 标注真实站点观测时间范围（obsRangeText 读 ndbcList / ndbcStatus） */
+  sandbox.API.ndbcStatus = function () {
+    return { stations: [
+      { station_id: 'ZFD', station: { cn: '芝罘岛' }, count: 10248,
+        first_local: '2024-07-01 00:00', last_local: '2025-08-31 23:00' },
+      { station_id: 'XMD', station: { cn: '小麦岛' }, count: 10248,
+        first_local: '2024-07-01 00:00', last_local: '2025-08-31 23:00' },
+      { station_id: 'SSN', station: { cn: '嵊山' }, count: 10248,
+        first_local: '2024-07-01 00:00', last_local: '2025-08-31 23:00' },
+      { station_id: 'ZLG', station: { cn: '遮浪' }, count: 9504,
+        first_local: '2024-08-01 00:00', last_local: '2025-08-31 23:00' }
+    ] };
+  };
+  const w2 = { tick: 1, site: 'site_03' };
+  w2.ndbc = water.computed.ndbc.call(w2);
+  w2.ndbcList = water.computed.ndbcList.call(w2);
+  const rt = water.methods.obsRangeText.call(w2);
+  assert(rt.indexOf('2024-07-01 00:00') >= 0 && rt.indexOf('2025-08-31 23:00') >= 0
+    && rt.indexOf('北京时间') >= 0,
+    '水质页真实站点 hero-note 标注观测时间范围（北京时间）');
+  const w1 = { tick: 1, site: 'site_01' };
+  w1.ndbc = water.computed.ndbc.call(w1);
+  w1.ndbcList = water.computed.ndbcList.call(w1);
+  assert(water.methods.obsRangeText.call(w1) === '—',
+    '养殖站点（非台站）不显示观测时间范围');
 }
 {
   /* 无效时间提示（同步） */
@@ -343,6 +377,8 @@ section('新问题2：真实站点自定义时间历史 + 数据时间范围');
 {
   const inst = { site: 'site_02', rangeStart: '2026-09-01T00:00', rangeEnd: '2026-09-02T00:00',
                  rangeMode: false, rangeSeries: null, rangeMsg: '', ranges: {},
+                 $refs: {}, $nextTick: function (cb) { if (cb) cb(); },
+                 renderChart: function () {},
                  loadRanges: sea.methods.loadRanges };
   let firstUrl = '', calledUrl = '';
   sandbox.fetch = function (url) {
@@ -380,7 +416,7 @@ section('新问题2：真实站点自定义时间历史 + 数据时间范围');
   };
   sea.methods.queryRange.call(failInst);
   await new Promise(function (r) { setTimeout(r, 0); });
-  assert(failInst.rangeMode === false && failInst.rangeMsg.indexOf('需队长在 server.py 挂载') >= 0,
+  assert(failInst.rangeMode === false && failInst.rangeMsg.indexOf('历史区间接口不可用') >= 0,
     '接口未挂载（404）→ 诚实降级提示，不假装成功');
   /* exitRange 复位并回到实时 */
   let loadCalled = 0;
@@ -397,7 +433,8 @@ section('新问题2：真实站点自定义时间历史 + 数据时间范围');
   assert(exact.indexOf('2026-08-25 00:10 ~ 2026-10-08 03:30 UTC') >= 0, '挂载后显示精确数据时间范围');
   const est = sea.methods.ndbcRangeText.call({ ranges: {} },
     { station_id: '46001', latest_ts: 1700000000000, count: 6373 });
-  assert(est.indexOf('估算') >= 0 && est.indexOf('~') >= 0, '未挂载时按缓存估算并诚实标注「估算」');
+  assert(est.indexOf('实测覆盖范围') >= 0 && est.indexOf('~') >= 0,
+    '未挂载时按缓存估算并诚实标注「实测覆盖范围」');
   const none = sea.methods.ndbcRangeText.call({ ranges: {} },
     { station_id: '51001', latest_ts_utc: '2026-10-08 03:30' });
   assert(none === '2026-10-08 03:30', '仅有 latest 时显示原值');
@@ -440,6 +477,8 @@ section('新问题3：原始数据最新在最上面（倒序显示，导出保�
                         { ts: 2000, site_id: 'site_01', source: 'simulated', quality: 'good',
                           wave_height: 1.5, wind_speed: 8.0, current_speed: 0.5, air_temp: 21.0 }] };
   inst.siteName = function () { return '模拟养殖站点'; };
+  inst.srcCn = sea.methods.srcCn;
+  inst.qCn = sea.methods.qCn;
   inst.exportCsv = sea.methods.exportCsv;
   inst.exportCsv();
   const H = sandbox.__ENV_HELPERS__;
@@ -450,15 +489,15 @@ section('新问题3：原始数据最新在最上面（倒序显示，导出保�
 section('新问题4：水质时序补盐度 + 光照强度纵轴完整显示');
 {
   const wData = water.data();
-  assert(wData.show.salinity === true, '水质页默认显示盐度曲线开关（salinity=true）');
+  assert(wData.show.salinity === false, '水质页盐度曲线开关默认收起（勾选后显示，界面更清爽）');
   assert(water.template.indexOf('v-model="show.salinity"') >= 0, '模板有盐度曲线 checkbox');
   const rc = water.methods.renderChart.toString();
   assert(rc.indexOf('盐度（‰）') >= 0, '时序图新增盐度曲线');
-  assert(rc.indexOf('this.slow.map') >= 0, '盐度曲线数据来自慢变量（30 秒一条）');
-  assert(rc.indexOf('max: 14000') >= 0 && rc.indexOf('光照(lux)') >= 0,
-    '光照右轴固定量程 0–14000 lux 并带轴名，刻度完整显示');
-  assert(rc.indexOf('grid: needAxis2') >= 0 && rc.indexOf('right: 58') >= 0,
-    '右轴有轴名/标签时留足右侧空间（grid right 58），避免纵轴被裁');
+  assert(rc.indexOf('slowForChart.map') >= 0, '盐度曲线数据来自慢变量（实时窗口；历史区间无慢变量）');
+  assert(rc.indexOf('max: 14000') >= 0 && rc.indexOf('光照强度') >= 0,
+    '光照轴固定量程 0–14000 lux 并带轴名，刻度完整显示');
+  assert(rc.indexOf('grids') >= 0 && rc.indexOf('right: 26') >= 0,
+    '多指标独立 grid 布局，轴名/标签留足空间避免纵轴被裁');
 }
 
 section('新问题5：所有异常数据进事件列表（含时间/站点/数据，真实站点同列）');

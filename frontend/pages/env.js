@@ -106,7 +106,7 @@
   };
 
   /* ============================================================
-     模拟养殖站点：流式仿真数据生成器（问题一 ~ 问题三）
+     仿真演示站点：流式仿真数据生成器（问题一 ~ 问题三）
      ============================================================
      为什么不用 API.env（mock / server 整窗重生成）？
        整窗重生成 = 每次 load 都把「历史窗口」重新算一遍：
@@ -271,6 +271,11 @@
         return !cs || this.site === cs;
       },
       fast: function () { return this.series ? this.series.fast : []; },
+      /* 时序图数据源：历史区间查询时用查询结果（rangeSeries），否则实时窗口（fast）。
+         问题二：自定义时间查询后，时序图应随所选区间一起变化。 */
+      chartFast: function () {
+        return this.rangeMode ? (this.rangeSeries || []) : this.fast;
+      },
       /* 问题二：事件数据源 —— 养殖站点用「全量生成序列」（异常记录不因窗口滑动而消失）；
          观测站点（公开数据）用后端返回窗口。读 this.fast 建立依赖，fast 更新时重算。 */
       allFast: function () {
@@ -331,7 +336,7 @@
       /* 数据来源：观测站点实时读的是本地缓存，不是每次渲染去联网 */
       srcLabel: function () {
         if (this.isObs) return '中国近海台站实测（本地入库，不联网）';
-        return '仿真生成（模拟养殖站点）';
+        return '仿真生成（仿真演示站点）';
       },
       events: function () {
         /* 由真实数据算出的事件：越限即列为事件（不做假数据）。
@@ -388,7 +393,7 @@
       /* 浪高异常点（问题 2）：命中异常界定指标的点用圆点标记，颜色与指标表一致 */
       waveDots: function () {
         const out = [];
-        this.fast.forEach(function (r) {
+        (this.chartFast || this.fast || []).forEach(function (r) {
           const w = r.wave_height;
           if (w == null) return;
           let color = null;
@@ -403,7 +408,7 @@
       /* 风速异常点：≥17.2 m/s（8 级及以上大风） */
       windDots: function () {
         const out = [];
-        this.fast.forEach(function (r) {
+        (this.chartFast || this.fast || []).forEach(function (r) {
           const w = r.wind_speed;
           if (w == null) return;
           if (w >= 17.2) out.push({ coord: [r.ts, w], value: w, itemStyle: { color: '#991B1B' } });
@@ -438,8 +443,8 @@
          ⚠️ 这是**方法不是 computed** —— 它带参数（lines / field）。
          computed 的 getter 不收参数，放错地方会报 lines.slice is not a function。 */
       linesNearRange: function (lines, field) {
-        const vals = this.fast.map(function (r) { return r[field]; })
-                             .filter(function (v) { return v !== null && v !== undefined; });
+        const vals = this.chartFast.map(function (r) { return r[field]; })
+                                   .filter(function (v) { return v !== null && v !== undefined; });
         if (!vals.length) return (lines || []).slice(0, 1);   // 没数据：留一条做刻度参考
         const mx = Math.max.apply(null, vals);
         const cap = Math.max(mx * 3, 1);
@@ -482,7 +487,13 @@
       siteName: function () {
         const sid = this.site;
         const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
-        return s ? s.site_name : sid;
+        return s ? this.siteDisplay(s) : sid;
+      },
+      /* 站点显示名：site_01 由「模拟养殖站点」统一改「仿真演示站点」（2026-10-19 确认）。
+         只在前端显示层映射 —— server.py 的 SITES / farm.json 的配置都不动。 */
+      siteDisplay: function (s) {
+        if (s && s.site_id === 'site_01') return '仿真演示站点';
+        return s ? (s.site_name || s.site_id) : '';
       },
       /* 问题一：事件列表行内圆点颜色类（与公共 event-list 一致：bg-蓝/黄/橙/红） */
       lvClass: function (lv) { return 'bg-' + (lv || 'blue'); },
@@ -554,9 +565,9 @@
         const H = global.__ENV_HELPERS__;
         const src = this.rangeMode ? (this.rangeSeries || []) : this.fast;
         const rows = src.map(function (r) {
-          return [H.fmtTs(r.ts), r.site_id,
+          return [H.fmtTs(r.ts), r.site_id, this.srcCn(r.source), this.qCn(r.quality),
                   r.wave_height, r.wind_speed, r.current_speed, r.air_temp];
-        });
+        }.bind(this));
         const csv = H.toCsv(['时间', '站点', '来源', '质量', '浪高 (m)', '风速 (m/s)', '流速 (m/s)', '气温 (℃)'], rows);
         downloadCsv('海况原始数据_' + this.siteName() + '.csv', csv);
       },
@@ -641,6 +652,8 @@
               self.rangeMode = true;
               /* 后端已挂载（查询成功）→ 顺带取精确「数据时间范围」 */
               self.loadRanges();
+              /* 问题二：时序图随所选时间区间一起变化 */
+              self.$nextTick(function () { self.renderChart(); });
               self.rangeMsg = '已加载 ' + d.count + ' 条公开历史数据（' +
                 global.__ENV_HELPERS__.fmtTs(recs[0].ts) + ' ~ ' +
                 global.__ENV_HELPERS__.fmtTs(recs[recs.length - 1].ts) + '）';
@@ -690,7 +703,7 @@
         let inst = E.getInstanceByDom(el);
         if (!inst) inst = E.init(el);
         this.chart = inst;
-        const fast = this.fast;
+        const fast = this.chartFast;
         if (!fast.length) {
           inst.clear();
           inst.setOption({
@@ -835,7 +848,7 @@
       '      <span class="small muted">站点：</span>',
       '      <button v-for="s in API.sites()" :key="s.site_id"',
       '              :class="{ primary: site === s.site_id }" style="padding:3px 10px"',
-      '              @click="setSite(s.site_id)">{{ s.site_name }}',
+      '              @click="setSite(s.site_id)">{{ siteDisplay(s) }}',
       '        <span v-if="CurrentCageSite() === s.site_id" style="color:#B45309"',
       '              title="当前网箱所在海域"> ★</span></button>',
       '      <span style="flex:1"></span>',
@@ -897,14 +910,14 @@
       '  <div class="card" style="margin-bottom:12px">',
       '    <div class="card-title">数据来源 · 中国近海台站观测数据（NMDC）</div>',
       '',
-      '    <!-- ⚠️ 这块提示是必须的：默认站点是「模拟养殖站点」，数据本来就是仿真；',
+      '    <!-- ⚠️ 这块提示是必须的：默认站点是「仿真演示站点」，数据本来就是仿真；',
       '         真实台站数据要切站点才有。不提示的话用户会以为"没生效"。 -->',
       '    <div class="hint" style="margin-bottom:10px"',
       '         :style="isObs ? { background: \'#F0FDF4\', borderColor: \'#86EFAC\' } : { background: \'#FFFBEB\', borderColor: \'#FDE68A\' }">',
       '      <div style="font-size:14px">',
       '        当前站点：<b>{{ siteName() }}</b>',
       '        <span v-if="isObs" style="color:#166534"> —— ✅ 正在显示 <b>中国近海台站实测数据</b></span>',
-      '        <span v-else style="color:#92400E"> —— ⚠️ 这是<b>模拟养殖站点，数据是仿真生成的</b></span>',
+      '        <span v-else style="color:#92400E"> —— ⚠️ 这是<b>仿真演示站点，数据是仿真生成的</b></span>',
       '      </div>',
       '      <div v-if="!isObs" style="margin-top:6px">',
       '        <b>想看真实台站数据？</b>点下面任意一行，或点上方任意一个 <b>中国近海观测站点</b>。',
@@ -1046,7 +1059,7 @@
       '        <thead><tr><th>站点</th><th>类型</th><th>状态</th><th>当前模式</th><th>操作</th></tr></thead>',
       '        <tbody>',
       '          <tr v-for="s in API.sites()" :key="s.site_id">',
-      '            <td class="small"><b>{{ s.site_name }}</b> <span class="muted mono">{{ s.site_id }}</span></td>',
+      '            <td class="small"><b>{{ siteDisplay(s) }}</b> <span class="muted mono">{{ s.site_id }}</span></td>',
       '            <td class="small">{{ s.kind === \'obs\' ? \'观测\' : \'养殖\' }}</td>',
       '            <td class="small">',
       '              <!-- 问题一：真实站点是公开数据，不参与仿真，不存在暂停生成 -->',
@@ -1096,7 +1109,7 @@
       '    <span style="width:12px"></span>',
       '    <span class="small muted">站点</span>',
       '    <select v-model="site">',
-      '      <option v-for="s in API.sites()" :key="s.site_id" :value="s.site_id">{{ s.site_name }}</option>',
+      '      <option v-for="s in API.sites()" :key="s.site_id" :value="s.site_id">{{ siteDisplay(s) }}</option>',
       '    </select>',
       '    <span style="flex:1"></span>',
       '    <span class="small muted">{{ isObs ? \'历史观测 · 按实际观测日期展示\' : \'养殖站点仿真 · 控制仅影响当前页与站点\' }}</span>',
@@ -1126,6 +1139,9 @@
                rangeStart: '', rangeEnd: '', ranges: {} };
     },
     computed: {
+      /* 台站观测数据状态（四站入库条数 / 观测时间范围）—— 与海况页同一来源 */
+      ndbc: function () { this.tick; return API.ndbcStatus(); },
+      ndbcList: function () { const n = this.ndbc; return (n && n.stations) || []; },
       /* 「是否在查看其他海域」—— 直接由事实推出，不存状态：
            跟随 = 当前站点 就是 当前网箱所在海域。
          这样切网箱、手动切站，提示条都会立刻正确，不会不同步。 */
@@ -1137,6 +1153,11 @@
       },
       fast: function () { return this.series ? this.series.fast : []; },
       slow: function () { return this.series ? this.series.slow : []; },
+      /* 时序图数据源：历史区间查询时用查询结果（rangeSeries），否则实时窗口（fast）。
+         问题二：自定义时间查询后，时序图应随所选区间一起变化。 */
+      chartFast: function () {
+        return this.rangeMode ? (this.rangeSeries || []) : this.fast;
+      },
       /* 问题二：事件数据源 —— 养殖站点用「全量生成序列」（异常记录不因窗口滑动而消失）；
          观测站点（公开数据）用后端返回窗口。读 this.fast 建立依赖，fast 更新时重算。 */
       allFast: function () {
@@ -1175,12 +1196,12 @@
       },
       srcLabel: function () {
         if (this.isObs) return '中国近海台站实测（本地入库，不联网）';
-        return '仿真生成（模拟养殖站点）';
+        return '仿真生成（仿真演示站点）';
       },
       /* 水温异常点（问题 2）：黄 ≥25.5（R-TEMP-02 偏高提示），红 ≥28.0（R-TEMP-01 水温上限告警） */
       waterDots: function () {
         const out = [];
-        this.fast.forEach(function (r) {
+        (this.chartFast || this.fast || []).forEach(function (r) {
           const w = r.water_temp;
           if (w == null) return;
           let color = null;
@@ -1293,7 +1314,30 @@
       siteName: function () {
         const sid = this.site;
         const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
-        return s ? s.site_name : sid;
+        return s ? this.siteDisplay(s) : sid;
+      },
+      /* 站点显示名：site_01 由「模拟养殖站点」统一改「仿真演示站点」（2026-10-19 确认）。
+         只在前端显示层映射 —— server.py 的 SITES / farm.json 的配置都不动。 */
+      siteDisplay: function (s) {
+        if (s && s.site_id === 'site_01') return '仿真演示站点';
+        return s ? (s.site_name || s.site_id) : '';
+      },
+      /* 问题二：当前真实站点的观测数据时间范围（读 nmdis 状态，本地入库不联网） */
+      obsRangeText: function () {
+        const list = this.ndbcList;
+        if (!list || !list.length) return '—';
+        const cur = API.sites().filter(function (x) { return x.site_id === this.site; }.bind(this))[0];
+        const st = cur ? (cur.station_id || '') : '';
+        for (let i = 0; i < list.length; i++) {
+          if (list[i].station_id === st) {
+            const s = list[i];
+            if (s.first_local && s.last_local) {
+              return s.first_local + ' ~ ' + s.last_local + '（北京时间）';
+            }
+            if (s.latest_ts_local) return '截至 ' + s.latest_ts_local;
+          }
+        }
+        return '—';
       },
       /* 问题一：事件列表行内圆点颜色类（与公共 event-list 一致：bg-蓝/黄/橙/红） */
       lvClass: function (lv) { return 'bg-' + (lv || 'blue'); },
@@ -1342,9 +1386,9 @@
         /* 问题三：页面按「最新在上」显示，导出保持时间正序（历史区间则导出查询结果） */
         const src = this.rangeMode ? (this.rangeSeries || []) : this.fast;
         const rows = src.map(function (r) {
-          return [H.fmtTs(r.ts), r.site_id,
+          return [H.fmtTs(r.ts), r.site_id, this.srcCn(r.source), this.qCn(r.quality),
                   r.water_temp, r.dissolved_oxygen, r.light_intensity];
-        });
+        }.bind(this));
         const csv = H.toCsv(['时间', '站点', '来源', '质量', '水温 (℃)', '溶解氧 (mg/L)', '光照 (lux)'], rows);
         downloadCsv('水质原始数据_' + this.siteName() + '.csv', csv);
       },
@@ -1381,6 +1425,8 @@
               const recs = d.records;
               self.rangeSeries = recs;
               self.rangeMode = true;
+              /* 问题二：时序图随所选时间区间一起变化 */
+              self.$nextTick(function () { self.renderChart(); });
               self.rangeMsg = '已加载 ' + d.count + ' 条公开历史数据（' +
                 global.__ENV_HELPERS__.fmtTs(recs[0].ts) + ' ~ ' +
                 global.__ENV_HELPERS__.fmtTs(recs[recs.length - 1].ts) + '）';
@@ -1413,7 +1459,9 @@
         let inst = E.getInstanceByDom(el);
         if (!inst) inst = E.init(el);
         this.chart = inst;
-        const fast = this.fast;
+        const fast = this.chartFast;
+        /* 历史区间只有快变量（浪高/风速/气温/水温等），盐度慢变量实时窗口才有 */
+        const slowForChart = this.rangeMode ? [] : this.slow;
         if (!fast.length) {
           inst.clear();
           inst.setOption({
@@ -1443,7 +1491,7 @@
           series.push({
             name: '盐度（‰）', type: 'line', showSymbol: false, smooth: true, yAxisIndex: 0,
             lineStyle: { width: 1.6, color: '#7C3AED' }, itemStyle: { color: '#7C3AED' },
-            data: this.slow.map(function (r) { return [r.ts, r.salinity]; })
+            data: slowForChart.map(function (r) { return [r.ts, r.salinity]; })
           });
         }
         /* 阈值线 + 异常点只挂在水温曲线上（水温有界定规则） */
@@ -1471,7 +1519,15 @@
             return { type: 'time', gridIndex: i, axisLabel: { fontSize: 10, hideOverlap: true, formatter: function (v) { return H.fmtShort(v); } }, splitLine: { show: false } };
           }) : { type: 'time' },
           yAxis: series.length ? series.map(function (line, i) {
-            return { type: 'value', gridIndex: i, scale: true, name: line.name, nameTextStyle: { fontSize: 11 }, axisLabel: { fontSize: 10 }, splitLine: { lineStyle: { color: '#EEF2F6' } } };
+            /* 问题四：光照强度量级远大于水温/溶氧，走独立轴并**固定量程 0–14000 lux**，
+               保证纵轴刻度完整显示（不会被数据范围压缩裁切）；其余指标保持自适应。 */
+            const isLight = line.name.indexOf('光照') >= 0;
+            const fixed = isLight ? { min: 0, max: 14000 } : {};
+            return Object.assign({
+              type: 'value', gridIndex: i, scale: !isLight, name: line.name,
+              nameTextStyle: { fontSize: 11 }, axisLabel: { fontSize: 10 },
+              splitLine: { lineStyle: { color: '#EEF2F6' } }
+            }, fixed);
           }) : { type: 'value' },
           dataZoom: [
             { type: 'inside', xAxisIndex: series.map(function (_, i) { return i; }) },
@@ -1535,7 +1591,7 @@
       '      <span class="small muted">站点：</span>',
       '      <button v-for="s in API.sites()" :key="s.site_id"',
       '              :class="{ primary: site === s.site_id }" style="padding:3px 10px"',
-      '              @click="setSite(s.site_id)">{{ s.site_name }}',
+      '              @click="setSite(s.site_id)">{{ siteDisplay(s) }}',
       '        <span v-if="CurrentCageSite() === s.site_id" style="color:#B45309"',
       '              title="当前网箱所在海域"> ★</span></button>',
       '      <span style="flex:1"></span>',
@@ -1548,7 +1604,7 @@
       '    </div>',
       '  </div>',
       '',
-      '  <div class="hero-note" style="margin:0 0 12px">{{ siteName() }} · {{ isObs ? \'历史台站观测，非实时\' : \'养殖站点仿真\' }} · 水温观测 {{ last.ts ? fmtTs(last.ts) : \'—\' }}<span v-if="isObs"> · 溶氧 / pH 月度观测 {{ wqNow.ts ? fmtTs(wqNow.ts) : \'—\' }}</span></div>',
+      '  <div class="hero-note" style="margin:0 0 12px">{{ siteName() }} · {{ isObs ? \'历史台站观测，非实时\' : \'养殖站点仿真\' }} · 水温观测 {{ last.ts ? fmtTs(last.ts) : \'—\' }}<span v-if="isObs"> · 溶氧 / pH 月度观测 {{ wqNow.ts ? fmtTs(wqNow.ts) : \'—\' }} · 台站观测数据 {{ obsRangeText() }}</span></div>',
       '  <!-- 一条竖线的可视化：命中规则时当场显示，点得开、看得见依据 -->',
       '  <div v-if="topAlarm" class="hint" style="margin-bottom:12px;background:#FEF2F2;border-color:#FECACA">',
       '    <b>⚠ 本时段命中规则：{{ topAlarm.hit.rule_name }}</b>',
@@ -1726,7 +1782,7 @@
       '        <thead><tr><th>站点</th><th>类型</th><th>状态</th><th>当前模式</th><th>操作</th></tr></thead>',
       '        <tbody>',
       '          <tr v-for="s in API.sites()" :key="s.site_id">',
-      '            <td class="small"><b>{{ s.site_name }}</b> <span class="muted mono">{{ s.site_id }}</span></td>',
+      '            <td class="small"><b>{{ siteDisplay(s) }}</b> <span class="muted mono">{{ s.site_id }}</span></td>',
       '            <td class="small">{{ s.kind === \'obs\' ? \'观测\' : \'养殖\' }}</td>',
       '            <td class="small">',
       '              <!-- 问题一：真实站点是公开数据，不参与仿真，不存在暂停生成 -->',
@@ -1768,7 +1824,7 @@
       '    <span style="width:12px"></span>',
       '    <span class="small muted">站点</span>',
       '    <select v-model="site">',
-      '      <option v-for="s in API.sites()" :key="s.site_id" :value="s.site_id">{{ s.site_name }}</option>',
+      '      <option v-for="s in API.sites()" :key="s.site_id" :value="s.site_id">{{ siteDisplay(s) }}</option>',
       '    </select>',
       '    <span style="flex:1"></span>',
       '    <span class="small muted">{{ isObs ? \'历史观测 · 按实际观测日期展示\' : \'养殖站点仿真 · 控制仅影响当前页与站点\' }}</span>',
