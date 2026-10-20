@@ -70,7 +70,14 @@
         return this.records.filter(function (r) { return r.task_status !== 'done'; }).length;
       },
       feedTitle: function () {
-        return this.cageFilter === 'cage_02' ? '智能 · 自动投喂（2号箱 · 许氏平鲉）' : '智能 · 自动投喂（1号箱 · 大黄鱼）';
+        /* 🔴 2026-10-20 队长改：原来这里把鱼种名**写死**成「许氏平鲉 / 大黄鱼」。
+      2 号箱按队-1 告警合理性换成了黑鲷（farm.json 已改），标题却还显示旧名 ——
+      改成从 API.farm() 动态读该网箱的 species，以后换种只需改数据一处。 */
+      const f = (API.farm && API.farm()) || {};
+      const cid = this.cageFilter;
+      const me = (f.cages || []).filter(function (c) { return c.cage_id === cid; })[0] || {};
+      const no = cid === 'cage_02' ? '2号箱' : '1号箱';
+      return '智能 · 自动投喂（' + no + ' · ' + (me.species || '—') + '）';
       },
       feeder: function () {
         this.tick;
@@ -437,7 +444,14 @@
     },
     computed: {
       lightTitle: function () {
-        return this.cageFilter === 'cage_02' ? '智能 · 智能补光（2号箱 · 许氏平鲉）' : '智能 · 智能补光（1号箱 · 大黄鱼）';
+        /* 🔴 2026-10-20 队长改：原来这里把鱼种名**写死**成「许氏平鲉 / 大黄鱼」。
+      2 号箱按队-1 告警合理性换成了黑鲷（farm.json 已改），标题却还显示旧名 ——
+      改成从 API.farm() 动态读该网箱的 species，以后换种只需改数据一处。 */
+      const f = (API.farm && API.farm()) || {};
+      const cid = this.cageFilter;
+      const me = (f.cages || []).filter(function (c) { return c.cage_id === cid; })[0] || {};
+      const no = cid === 'cage_02' ? '2号箱' : '1号箱';
+      return '智能 · 智能补光（' + no + ' · ' + (me.species || '—') + '）';
       },
       fast: function () { return this.series ? this.series.fast : []; },
       last: function () { return this.fast.length ? this.fast[this.fast.length - 1] : {}; },
