@@ -85,7 +85,10 @@
     methods: {
       load: function () {
         const self = this;
-        API.resolve(API.fish(this.minutes), function (d) { self.series = d; });
+        API.resolve(/* 🔴 2026-10-20 队长代王浩然补（任务 王-1）：鱼类按**当前网箱**出数。
+         后端 fish_series 早就支持 cage_id，前端一直没传 —— 所以切网箱时鱼类 KPI 不变。
+         切网箱会调 API._bump()，而本页 API.bind(this, load) 会重跑 load，所以自动刷新。 */
+        API.fish(this.minutes, window.CurrentCage ? window.CurrentCage.get() : null), function (d) { self.series = d; });
       },
       cn: function (v) { return { none: '无', weak: '弱', mid: '中', strong: '强' }[v] || v; },
       time: function (ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); },
@@ -628,7 +631,7 @@
       load: function () {
         const self = this;
         API.resolve(API.farm(), function (f) { self.farm = f; });
-        API.resolve(API.fish(5), function (d) { self.live = (d && d.slice) ? d.slice() : []; });
+        API.resolve(API.fish(5, window.CurrentCage ? window.CurrentCage.get() : null), function (d) { self.live = (d && d.slice) ? d.slice() : []; });
       },
       fmtDate: function (ts) { return ts ? new Date(ts).toLocaleDateString('zh-CN') : ''; },
       /* 生长曲线（跨数月，公共 TrendChart 的横轴只格式化为时分，故在此按日期轴渲染） */
@@ -792,7 +795,7 @@
     methods: {
       load: function () {
         const self = this;
-        API.resolve(API.fish(this.minutes), function (d) {
+        API.resolve(API.fish(this.minutes, window.CurrentCage ? window.CurrentCage.get() : null), function (d) {
           self.rows = (d && d.slice) ? d.slice() : [];
         });
       },
