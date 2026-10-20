@@ -76,8 +76,16 @@ import json
 import math
 import os
 import random
+import sys
 import time
 from datetime import datetime, timezone
+
+# 中国近海台站数据源（backend/datasource/public/nmdis.py）
+#   🔴 2026-10-19：观测站点已从 NOAA NDBC 整体换成中国近海四站（NMDC 入库数据），
+#   历史查询 / 时间范围也随之切到 nmdis —— 与 server.py 主数据源保持一致。
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "datasource", "public"))
+import nmdis                                                  # noqa: E402
 
 # 与 backend/server.py 保持一致的时间刻度
 STEP_FAST = 5000          # 快变量 5 秒一条（水温/溶解氧/光照/海况）
@@ -109,7 +117,7 @@ def site(site_id):
 
 
 def station_id_of(site_id):
-    """观测站点对应的 NDBC 浮标号；养殖站点返回 None。"""
+    """观测站点对应的台站站码（ZFD/XMD/SSN/ZLG）；养殖站点返回 None。"""
     s = site(site_id)
     return (s or {}).get("station_id")
 
@@ -206,10 +214,14 @@ def env_series(site_id, minutes=60, storm=False, storm_type="all",
 
 
 # ----------------------------------------------------------------------
-# 精确历史区间查询（观测站点读 NDBC 缓存；养殖站点按区间模拟）
+# 精确历史区间查询（观测站点读中国近海台站 NMDC 入库数据；养殖站点按区间模拟）
 # ----------------------------------------------------------------------
 def historical(site_id, start_ts, end_ts, max_points=720):
-    """按 [start_ts, end_ts]（毫秒）返回历史时序。"""
+    """按 [start_ts, end_ts]（毫秒）返回历史时序。
+
+    2026-10-19：观测站点已从 NOAA NDBC 换成中国近海四站（NMDC），
+    历史数据改读 data/china_stations/（本地入库，断网可用）。
+    """
     start_ts = int(start_ts or 0)
     end_ts = int(end_ts or 0)
     if end_ts <= start_ts:
@@ -217,32 +229,42 @@ def historical(site_id, start_ts, end_ts, max_points=720):
                 "note": "end_ts 必须大于 start_ts"}
 
     sid = station_id_of(site_id)
-    if sid:  # 观测站点：真实公开历史（NDBC 本地缓存）
-        cache = _load_ndbc_cache(sid)
-        recs = (cache or {}).get("records", [])
+    if sid:  # 观测站点：真实公开历史（中国近海台站 NMDC 本地入库）
+        d = nmdis.load_station(sid)
+        recs = ((d or {}).get("records") or [])
         hits = [r for r in recs if start_ts <= r.get("ts", 0) <= end_ts]
         out = []
-        for r in hits[-max_points:]:
+        # 2026-10-19：不再截断到最近 720 条 —— 用户自定义时间范围时，
+        # 应返回该范围内**全部**逐时记录（最多约 1 万条，JSON 几百 KB，页面可承受）。
+        for r in hits:
             out.append({
                 "ts": r["ts"],
-                "ts_utc": r.get("ts_utc"),
+                "ts_local": r.get("ts_local"),
                 "site_id": site_id,
                 "source": "public",
                 "quality": "good",
+                # NMDC 台站提供的四要素（浪高/风速/气温/水温）
                 "wave_height": r.get("wave_height"),
                 "wind_speed": r.get("wind_speed"),
                 "air_temp": r.get("air_temp"),
                 "water_temp": r.get("water_temp"),
-                "current_speed": None,      # NDBC 不提供 → 平台口径：不测，不给仿真值
+                # 台站不测的 → None → 页面显示「—」，不给仿真值
+                "current_speed": None,
                 "dissolved_oxygen": None,
                 "salinity": None,
                 "ph": None,
                 "light_intensity": None,
+                # 台站另有风向/气压/浪周期，页面要用就挂上（向后兼容）
+                "wind_dir": r.get("wind_dir"),
+                "pressure": r.get("pressure"),
+                "wave_period": r.get("wave_period"),
             })
+        meta = (d or {}).get("meta") or {}
         return {
             "site_id": site_id,
             "source": "public",
-            "source_detail": (cache or {}).get("source", "NOAA NDBC 公开浮标（实时）"),
+            "source_detail": "国家海洋科学数据中心（NMDC）中国台站观测数据 · %s（%s）实测"
+                             % (meta.get("station_cn", sid), meta.get("sea", "")),
             "start_ts": start_ts,
             "end_ts": end_ts,
             "count": len(out),
@@ -266,25 +288,31 @@ def historical(site_id, start_ts, end_ts, max_points=720):
 
 
 # ----------------------------------------------------------------------
-# NDBC 缓存时间范围（浮标「数据时间范围」精确值；未挂载时前端降级用估算并标注）
+# 中国近海台站数据时间范围（观测站点「数据时间范围」精确值；未挂载时前端降级用估算并标注）
 # ----------------------------------------------------------------------
 def ndbc_ranges():
-    """返回每个观测站点缓存数据的起止时间（供前端「数据时间范围」列显示）。"""
+    """返回每个观测站点缓存数据的起止时间（供前端「观测时间范围」列显示）。
+
+    2026-10-19：改读 data/china_stations/（NMDC 中国近海四站，本地入库）。
+    字段同时给 first_local / last_local（北京时间）与 first_ts / latest_ts（毫秒），
+    前端 ndbcRangeText 优先用本地时间显示。
+    """
     out = []
     for s in _load_farm():
         sid = s.get("station_id")
         if not sid:
             continue
-        cache = _load_ndbc_cache(sid)
-        recs = (cache or {}).get("records", [])
+        d = nmdis.load_station(sid)
+        recs = ((d or {}).get("records") or [])
         if recs:
             out.append({
                 "station_id": sid,
+                "site_id": s.get("site_id"),
                 "count": len(recs),
                 "first_ts": recs[0]["ts"],
                 "latest_ts": recs[-1]["ts"],
-                "first_ts_utc": recs[0].get("ts_utc"),
-                "latest_ts_utc": recs[-1].get("ts_utc"),
+                "first_local": recs[0].get("ts_local"),
+                "last_local": recs[-1].get("ts_local"),
             })
     return {"ranges": out}
 

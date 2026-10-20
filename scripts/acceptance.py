@@ -229,7 +229,16 @@ def check_2(base):
 
     # ④ 越限页面的曲线卡挂了阈值参考线（图上能看出越限）
     pages = read_pages(base)
-    threshold_ok = ("28.0" in pages or "28" in pages) and ("水温上限" in pages) and ("#/trace" in pages)
+    # 🔴 2026-10-20 队长修：原来这里要求页面里有「#/trace」链接。
+    #    但 2026-10-15 按老师第 3 条拆「跨板块」时，**追溯查询页已经删了**，
+    #    能力并进了告警中心（点一行就地展开三段）。
+    #    这条检查因此变成了要求已经删除的东西存在 —— 一直是靠别的页面
+    #    里残留的 #/trace 死链才通过的，不是真的在验什么。
+    #    改成验**新的追溯入口**：告警中心 + 就地展开三段。
+    threshold_ok = (( "28.0" in pages or "28" in pages)
+                     and ("水温上限" in pages)
+                     and ("#/mgmt/alarm" in pages)
+                     and ("① 哪条数据触发的" in pages))
 
     # ⑤ 告警可追溯：按编号能反查到「哪条数据触发的、命中哪条规则」
     alarm_ok, sample = False, "—"

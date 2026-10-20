@@ -64,40 +64,53 @@ class TestEnvSeries(unittest.TestCase):
 
 
 class TestHistorical(unittest.TestCase):
-    """精确历史区间：观测站点读 NDBC 缓存，养殖站点按区间模拟"""
+    """精确历史区间：观测站点读中国近海台站（NMDC）入库数据，养殖站点按区间模拟"""
 
-    def _cache(self):
+    def _nmdis_cache(self):
         return {
-            "station_id": "42001",
-            "source": "NOAA NDBC 公开浮标（实时）",
+            "meta": {"station_id": "XMD", "station_cn": "小麦岛", "sea": "黄海",
+                     "source": "NMDC 中国台站观测数据"},
             "records": [
-                {"ts": 1000, "ts_utc": "2026-10-01 00:00",
+                {"ts": 1000, "ts_local": "2026-10-01 00:00",
                  "wave_height": 1.1, "wind_speed": 6.0, "air_temp": 20.0, "water_temp": 21.0},
-                {"ts": 2000, "ts_utc": "2026-10-01 00:10",
+                {"ts": 2000, "ts_local": "2026-10-01 01:00",
                  "wave_height": 1.4, "wind_speed": 7.0, "air_temp": 20.2, "water_temp": 21.1},
-                {"ts": 3000, "ts_utc": "2026-10-01 00:20",
+                {"ts": 3000, "ts_local": "2026-10-01 02:00",
                  "wave_height": 2.6, "wind_speed": 9.0, "air_temp": 20.4, "water_temp": 21.3},
-                {"ts": 4000, "ts_utc": "2026-10-01 00:30",
+                {"ts": 4000, "ts_local": "2026-10-01 03:00",
                  "wave_height": 1.0, "wind_speed": 5.0, "air_temp": 20.0, "water_temp": 21.0},
             ],
         }
 
     def test_obs_filters_by_range(self):
-        with mock.patch.object(env, "_load_ndbc_cache", return_value=self._cache()):
-            out = env.historical("site_02", 2000, 3000)
+        with mock.patch.object(env.nmdis, "load_station", return_value=self._nmdis_cache()):
+            out = env.historical("site_03", 2000, 3000)
         self.assertEqual(out["source"], "public", msg="观测站点历史来源为 public")
         self.assertEqual(out["count"], 2, msg="只返回区间 [2000,3000] 内的 2 条")
         self.assertEqual([r["ts"] for r in out["records"]], [2000, 3000], msg="区间外记录被剔除")
         r0 = out["records"][0]
-        self.assertEqual(r0["wave_height"], 1.4, msg="NDBC 四要素保留")
-        self.assertIsNone(r0["current_speed"], msg="NDBC 不测字段一律 None（不许仿真值充数）")
+        self.assertEqual(r0["wave_height"], 1.4, msg="中国台站四要素保留")
+        self.assertIsNone(r0["current_speed"], msg="台站不测字段一律 None（不许仿真值充数）")
         self.assertIsNone(r0["dissolved_oxygen"], msg="溶氧 None")
         self.assertIsNone(r0["light_intensity"], msg="光照 None")
+        self.assertIn("NMDC", out["source_detail"], msg="来源标注为中国台站实测")
 
     def test_obs_no_cache(self):
-        with mock.patch.object(env, "_load_ndbc_cache", return_value=None):
-            out = env.historical("site_02", 0, 5000)
-        self.assertEqual(out["count"], 0, msg="无缓存返回空，不编造数据")
+        with mock.patch.object(env.nmdis, "load_station", return_value=None):
+            out = env.historical("site_03", 0, 5000)
+        self.assertEqual(out["count"], 0, msg="无入库数据返回空，不编造数据")
+
+    def test_obs_real_china_station(self):
+        """真实验证（问题三修复）：site_03 小麦岛在入库区间内能查到真实公开数据"""
+        # 2024-07-01 00:00（北京） ~ 2025-08-31 23:00（北京）
+        out = env.historical("site_03", 1719763200000, 1756652400000)
+        self.assertGreater(out["count"], 0, msg="小麦岛入库区间内应返回真实数据")
+        self.assertIn("NMDC", out["source_detail"], msg="来源标注为中国近海台站实测")
+        r0 = out["records"][0]
+        self.assertTrue(any(r0.get(f) is not None for f in
+                            ("wave_height", "wind_speed", "air_temp", "water_temp")),
+                        msg="记录至少含一项台站观测值")
+        self.assertIsNotNone(r0.get("ts_local"), msg="记录带北京时间文本")
 
     def test_farm_simulated(self):
         t0 = 1760000000000
@@ -132,39 +145,40 @@ class TestSimControl(unittest.TestCase):
 
 
 class TestNdbcRanges(unittest.TestCase):
-    """浮标「数据时间范围」精确值（供前端列显示）"""
+    """中国近海台站「数据时间范围」精确值（供前端列显示）"""
 
     def _farm(self):
         return [
             {"site_id": "site_01", "kind": "farm"},
-            {"site_id": "site_02", "kind": "obs", "station_id": "42001"},
-            {"site_id": "site_03", "kind": "obs", "station_id": "46001"},
+            {"site_id": "site_02", "kind": "obs", "station_id": "ZFD"},
+            {"site_id": "site_03", "kind": "obs", "station_id": "XMD"},
         ]
 
-    def _cache(self):
-        return {"records": [
-            {"ts": 1000, "ts_utc": "2026-01-01 00:00"},
-            {"ts": 2000, "ts_utc": "2026-01-01 00:10"},
-            {"ts": 3000, "ts_utc": "2026-01-01 00:20"},
-        ]}
+    def _nmdis_cache(self):
+        return {"meta": {"station_cn": "小麦岛", "sea": "黄海"},
+                "records": [
+                    {"ts": 1000, "ts_local": "2026-01-01 00:00"},
+                    {"ts": 2000, "ts_local": "2026-01-01 01:00"},
+                    {"ts": 3000, "ts_local": "2026-01-01 02:00"},
+                ]}
 
     def test_ranges_obs_only(self):
         with mock.patch.object(env, "_load_farm", return_value=self._farm()), \
-             mock.patch.object(env, "_load_ndbc_cache",
-                               side_effect=lambda sid: self._cache() if sid == "42001" else None):
+             mock.patch.object(env.nmdis, "load_station",
+                               side_effect=lambda sid: self._nmdis_cache() if sid == "ZFD" else None):
             out = env.ndbc_ranges()["ranges"]
-            self.assertEqual(len(out), 1, msg="只统计有缓存的观测站点，无 station_id 的养殖站点跳过")
-            self.assertEqual(out[0]["station_id"], "42001", msg="正确关联浮标")
+            self.assertEqual(len(out), 1, msg="只统计有入库数据的观测站点，无 station_id 的养殖站点跳过")
+            self.assertEqual(out[0]["station_id"], "ZFD", msg="正确关联台站")
             self.assertEqual(out[0]["first_ts"], 1000, msg="首条时间戳")
             self.assertEqual(out[0]["latest_ts"], 3000, msg="末条时间戳")
-            self.assertEqual(out[0]["first_ts_utc"], "2026-01-01 00:00", msg="首条 UTC 文本")
-            self.assertEqual(out[0]["latest_ts_utc"], "2026-01-01 00:20", msg="末条 UTC 文本")
-            self.assertEqual(out[0]["count"], 3, msg="缓存条数")
+            self.assertEqual(out[0]["first_local"], "2026-01-01 00:00", msg="首条北京时间文本")
+            self.assertEqual(out[0]["last_local"], "2026-01-01 02:00", msg="末条北京时间文本")
+            self.assertEqual(out[0]["count"], 3, msg="入库条数")
 
     def test_no_cache_empty(self):
         with mock.patch.object(env, "_load_farm", return_value=self._farm()), \
-             mock.patch.object(env, "_load_ndbc_cache", return_value=None):
-            self.assertEqual(env.ndbc_ranges()["ranges"], [], msg="无缓存 → 空列表")
+             mock.patch.object(env.nmdis, "load_station", return_value=None):
+            self.assertEqual(env.ndbc_ranges()["ranges"], [], msg="无入库数据 → 空列表")
 
 
 class TestRoutes(unittest.TestCase):
