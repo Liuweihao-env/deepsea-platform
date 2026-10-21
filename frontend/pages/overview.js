@@ -29,7 +29,7 @@
 
   PAGES['/overview'] = {
     data: function () {
-      return { tick: 0, env: {}, fish: {}, st: {}, envTrend: [], unsub: null };
+      return { tick: 0, env: {}, fish: {}, st: {}, envTrend: [], unsub: null, requestId: 0 };
     },
     computed: {
       alarms: function () { this.tick; return API.alarms(); },
@@ -38,17 +38,35 @@
       },
       unresolved: function () {
         const rank = { red: 4, orange: 3, yellow: 2, blue: 1 };
-        return this.alarms.filter(function (a) { return a.alarm_status !== 'recovered'; }).slice().sort(function (a, b) { return (rank[b.risk_level] || 0) - (rank[a.risk_level] || 0); });
+        return this.alarms.filter(function (a) { return a.alarm_status !== 'recovered' && this.matchesCage(a); }, this).slice().sort(function (a, b) { return (rank[b.risk_level] || 0) - (rank[a.risk_level] || 0); });
+      },
+      /* 横幅只放鱼类 / 环境 / 结构三块；智能告警只进入口红点（2026-10-16 会上定） */
+      bannerAlarms: function () {
+        const MAP = {
+          feeding: 'fish', feeding_abnormal: 'fish', fish_anomaly: 'fish', density: 'fish',
+          water_temp: 'env', dissolved_oxygen: 'env', salinity: 'env', ph: 'env', light: 'env',
+          tension: 'struct', tilt: 'struct', net_damage: 'struct', deformation: 'struct'
+        };
+        return this.unresolved.filter(function (a) {
+          const b = MAP[a.alarm_type];
+          /* 没有 alarm_type 的历史/测试告警仍按横幅告警处理；有类型的智能告警只进红点 */
+          return a.alarm_type === undefined || b === 'fish' || b === 'env' || b === 'struct';
+        });
       },
       topAlarm: function () {
         const rank = { red: 4, orange: 3, yellow: 2, blue: 1 };
-        return this.unresolved.slice().sort(function (a, b) { return rank[b.risk_level] - rank[a.risk_level]; })[0] || null;
+        return this.bannerAlarms.slice().sort(function (a, b) { return rank[b.risk_level] - rank[a.risk_level]; })[0] || null;
       },
-      devices: function () { this.tick; return API.devices(); },
-      /* 按在线 / 离线分组，并直接列设备名（2026-10-16 会上定第 1 条：
-         「设备在线」卡改成**分在线 / 离线两行、直接列设备名**）。
-         ⚠️ 现在只能显示 device_id（英文）；《设备状态》页那条
-            「设备名改中文」是李志成的活，他加了 device_name_cn 之后这里跟着显示中文。 */
+      devices: function () {
+        this.tick;
+        const fd = API.farmDevices();
+        const ledger = (fd && fd.devices) || [];
+        return (API.devices() || []).map(function (d) {
+          const detail = ledger.find(function (x) { return x.device_id === d.device_id; }) || {};
+          return Object.assign({}, detail, d);
+        }).filter(this.matchesCage);
+      },
+      /* 设备名优先读台账；尚未提供中文名的旧设备按现有类型表显示。 */
       onlineDevices: function () {
         return this.devices.filter(function (d) { return d.device_online; });
       },
@@ -56,8 +74,10 @@
         return this.devices.filter(function (d) { return !d.device_online; });
       },
       deviceName: function () {
-        /* 占位：等 device_name_cn 上线后自动变成中文 */
-        return function (d) { return d.device_name_cn || d.device_id; };
+        const names = { water_temp: '水温传感器', dissolved_oxygen: '溶氧传感器',
+          anchor_tension: '锚泊张力传感器', tilt: '倾角传感器', feed_rate: '投饵机', light_dimming: '补光灯' };
+        const legacy = { tension_01: '锚泊张力传感器', pv_01: '光伏监测设备' };
+        return function (d) { return d.device_name_cn || names[d.metric] || legacy[d.device_id] || CN.deviceType(d.device_type); };
       },
       /* 三张板块卡（鱼类 / 环境 / 结构安全）—— 智能不进横幅，只在入口亮红点。
          每条告警按 alarm_type 归到板块（和顶栏红点用的是同一套映射）。 */
@@ -100,21 +120,41 @@
     methods: {
       load: function () {
         const self = this;
+        const requestId = ++this.requestId;
+        this.env = {}; this.fish = {}; this.st = {}; this.envTrend = [];
         /* 🔴 2026-10-18 队长改：原来写死 site_01。
            改成读全局「当前网箱」所在海域 —— 环境数据仍然来自**真实台站**，
            只是换成该网箱那片海的那个站，不往台站里塞任何值。 */
         const cs = (global.CurrentCage && global.CurrentCage.site)
           ? global.CurrentCage.site() : null;
         API.resolve(API.env(cs || 'site_01', 60, {}), function (d) {
+          if (requestId !== self.requestId) return;
+          const fast = (d && d.fast) || [], slow = (d && d.slow) || [];
+          const latest = fast.length ? fast[fast.length - 1] : {};
+          const monthly = slow.length ? slow[slow.length - 1] : {};
           self.envTrend = [
-            { name: '水温', unit: '℃', data: d.fast.map(function (r) { return [r.ts, r.water_temp]; }) },
-            { name: '溶解氧', unit: 'mg/L', axis: 1, data: d.fast.map(function (r) { return [r.ts, r.dissolved_oxygen]; }) }
+            { name: '水温', unit: '℃', data: fast.map(function (r) { return [r.ts, r.water_temp]; }) },
+            { name: '溶解氧', unit: 'mg/L', axis: 1, data: fast.map(function (r) { return [r.ts, r.dissolved_oxygen]; }) }
           ];
-          self.env = d.fast.length ? d.fast[d.fast.length - 1] : {};
+          self.env = Object.assign({}, latest, {
+            dissolved_oxygen: latest.dissolved_oxygen == null ? monthly.dissolved_oxygen : latest.dissolved_oxygen,
+            oxygenTs: latest.dissolved_oxygen == null ? monthly.ts : latest.ts,
+            oxygenCadence: latest.dissolved_oxygen == null ? monthly.cadence : null
+          });
         });
         /* 鱼类/结构按当前网箱出数（后端接 cage_id） */
-        API.resolve(API.fish(30, this.cageArg()), function (f) { self.fish = f.length ? f[f.length - 1] : {}; });
-        API.resolve(API.struct(30, { cageId: this.cageArg() }), function (s) { self.st = s.length ? s[s.length - 1] : {}; });
+        API.resolve(API.fish(30, this.cageArg()), function (f) { if (requestId === self.requestId) self.fish = f.length ? f[f.length - 1] : {}; });
+        API.resolve(API.struct(30, { cageId: this.cageArg() }), function (s) { if (requestId === self.requestId) self.st = s.length ? s[s.length - 1] : {}; });
+      },
+      matchesCage: function (item) {
+        const id = this.cageArg();
+        if (!id) return true;
+        if (item.cage_id) return item.cage_id === id;
+        const location = (item.location || '').match(/cage_\d+/);
+        if (location) return location[0] === id;
+        if (item.device_id && /_\d+$/.test(item.device_id)) return item.device_id.match(/_\d+$/)[0] === id.slice(4);
+        if (item.site_id) return item.site_id === global.CurrentCage.site();
+        return true;
       },
       /* 当前网箱 id —— 传给 fish/struct 让它按网箱出数 */
       /* 当前网箱的尺寸，给 3D 模型用（桁架式：长 × 宽 × 养殖水深）。
@@ -142,7 +182,7 @@
          🔴 2026-10-07 加：之前曲线只在进页面时拉一次，是张静止的快照。 */
       this.unsub = API.bind(this, this.load);
     },
-    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    beforeUnmount: function () { this.requestId++; if (this.unsub) this.unsub(); },
     template: [
       '<div>',
       '  <page-head title="养殖运行总览" desc="先看当前风险，再查看环境、鱼群与设备运行情况" />',
@@ -175,19 +215,21 @@
       '      </div>',
       '    </div>',
       '  </div>',
-      '  <div class="grid-stats">',
+      '  <div class="grid-stats overview-kpis">',
       '    <stat-card name="预估总体重" unit="kg" :value="fish.total_biomass_kg" />',
       '    <stat-card name="现存尾数" unit="尾" :value="fish.fish_count" :digits="0" />',
       '    <stat-card name="水温" unit="℃" :value="env.water_temp" :quality="env.quality" :ts="env.ts" />',
+      '    <stat-card name="溶解氧" unit="mg/L" :value="env.dissolved_oxygen" :ts="env.oxygenTs" />',
       '    <!-- 设备卡：分「在线 / 离线」两行，直接列设备名（会上定第 1 条） -->',
       '    <div class="card stat-card-devices">',
-      '      <div class="sc-title">设备在线 · {{ onlineCount }} / {{ devices.length }}</div>',
+      '      <div class="sc-title">{{ devices.length ? \'设备在线 · \' + onlineCount + \' / \' + devices.length : \'本箱设备状态尚未接入\' }}</div>',
       '      <div class="sc-row"><span class="k sc-on">在线</span>',
       '        <span class="v">{{ onlineDevices.length ? onlineDevices.map(deviceName).join(\'、\') : \'—\' }}</span></div>',
       '      <div class="sc-row"><span class="k sc-off">离线</span>',
       '        <span class="v">{{ offlineDevices.length ? offlineDevices.map(deviceName).join(\'、\') : \'—\' }}</span></div>',
       '    </div>',
       '  </div>',
+      '  <div v-if="env.oxygenCadence === \'monthly\'" class="small muted" style="margin-bottom:12px">溶解氧为附近监测点月度均值，观测时间见数值卡；非实时养殖现场读数。</div>',
       '  <div class="workspace-grid">',
       '    <trend-chart title="水温与溶解氧趋势（左右轴分单位）" :series="envTrend" />',
       '    <div class="card">',
@@ -208,7 +250,7 @@
       '      <div class="card-title">设备运行</div>',
       '      <div class="dt-wrap"><table class="dt">',
       '        <thead><tr><th>设备</th><th>类型</th><th>连接</th><th>运行状态</th></tr></thead>',
-      '        <tbody><tr v-for="d in devices" :key="d.device_id"><td class="mono">{{ d.device_id }}</td><td>{{ CN.deviceType(d.device_type) }}</td><td>{{ d.device_online ? \'在线\' : \'离线\' }}</td><td>{{ CN.deviceState(d.device_state) }}</td></tr></tbody>',
+      '        <tbody><tr v-for="d in devices" :key="d.device_id"><td :title="d.device_id">{{ deviceName(d) }}</td><td>{{ CN.deviceType(d.device_type) }}</td><td>{{ d.device_online ? \'在线\' : \'离线\' }}</td><td>{{ CN.deviceState(d.device_state) }}</td></tr></tbody>',
       '      </table></div>',
       '    </div>',
       '    <div class="card">',

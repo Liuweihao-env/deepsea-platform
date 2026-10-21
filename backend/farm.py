@@ -153,16 +153,29 @@ class Farm(object):
         raise ValueError("网箱不存在：%s" % cage_id)
 
     # ------------------------------------------------------------------
-    def devices(self):
+    def devices(self, cage_id=None):
+        """设备台账。可按网箱过滤 —— 两个网箱同型各一套，不能串箱。"""
         out = []
         for s in self.farm_sites():
+            cages = s.get("cages") or []
+            only_cage = cages[0]["cage_id"] if len(cages) == 1 else None
             for d in s.get("devices", []):
+                cid = d.get("cage_id") or only_cage
+                if cage_id and cid != cage_id:
+                    continue
                 x = dict(d)
+                x["cage_id"] = cid
                 x["site_id"] = s["site_id"]
                 x["site_name"] = s["site_name"]
                 x["cal_status"] = self.cal_status(d)
                 out.append(x)
         return out
+
+    def device(self, device_id):
+        for d in self.devices():
+            if d["device_id"] == device_id:
+                return d
+        return None
 
     def cal_status(self, dev):
         """标定状态。
@@ -171,7 +184,11 @@ class Farm(object):
           · 不适用 —— 灯具/开关这类非计量器件，本来就不需要标定
           · 未标定 —— 该标的没标
           · 已超期 / 即将到期 / 有效
+          · 待确认 —— 台账里明确标了出处未核实（不编厂商/证书）
         """
+        if dev.get("provenance") == "pending_confirmation":
+            return {"state": "unconfirmed", "label": "待确认", "days_left": None,
+                    "detail": dev.get("source_note") or "厂商与校准记录待确认"}
         cal = dev.get("calibration") or {}
         cycle = cal.get("cycle_days")
         last = cal.get("last")
@@ -231,6 +248,7 @@ class Farm(object):
             "cal_never": sum(1 for c in cals if c["state"] == "never"),
             "cal_ok": sum(1 for c in cals if c["state"] == "ok"),
             "cal_na": sum(1 for c in cals if c["state"] == "na"),
+            "cal_unconfirmed": sum(1 for c in cals if c["state"] == "unconfirmed"),
         }
 
 
@@ -249,5 +267,5 @@ if __name__ == "__main__":
                  s["current_count"], s["init_count"], s["survival_pct"]))
     print()
     for d in f.devices():
-        print("  %-18s %-16s %s" % (d["device_id"], d["device_name"] if "device_name" in d else d["metric"],
+        print("  %-18s %-16s %s" % (d["device_id"], d.get("device_name_cn") or d["metric"],
                                     d["cal_status"]["label"]))

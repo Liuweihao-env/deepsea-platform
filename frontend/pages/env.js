@@ -29,6 +29,38 @@
   /* 自己初始化，不依赖文件加载顺序 —— 这样谁先谁后都不会出错 */
   const PAGES = global.PAGES || (global.PAGES = {});
 
+
+  /* 两页共用同一份网箱跟随机制；台账异步就绪前等待，手动切站后不抢回。 */
+  function bindCageSite(page) {
+    page._waitingForCage = true;
+    function follow() {
+      const site = global.CurrentCage && global.CurrentCage.site();
+      if (!site) return;
+      page._waitingForCage = false;
+      if (page.site !== site) { page.site = site; page.load(); }
+    }
+    follow();
+    page.unsub = API.subscribe(function () {
+      page.tick++;
+      if (page._waitingForCage) follow();
+    });
+    page.cageUnsub = global.CurrentCage ? global.CurrentCage.subscribe(function () {
+      page.rangeSeq = (page.rangeSeq || 0) + 1;
+      page._waitingForCage = true;
+      follow();
+    }) : null;
+  }
+
+  function beginRangeQuery(page) {
+    const seq = page.rangeSeq = (page.rangeSeq || 0) + 1;
+    const site = page.site;
+    const cage = global.CurrentCage && global.CurrentCage.get ? global.CurrentCage.get() : null;
+    return function () {
+      return page.rangeSeq === seq && page.site === site &&
+        (!global.CurrentCage || !global.CurrentCage.get || global.CurrentCage.get() === cage);
+    };
+  }
+
   /* ============================================================
      共享纯函数（挂 global.__ENV_HELPERS__ 供页面与测试使用）
      ============================================================ */
@@ -251,13 +283,13 @@
       /* 问题六：站点选择存全局 __ENV_SESSION__，跨页切换后保留；
          仿真控制状态（per）两页各自独立（问题一：海况↔水质互不影响） */
       const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = { seaPer: null, waterPer: null, site: 'site_01' });
-      return { pageKey: 'sea', site: S.site || 'site_01', picked: null, series: null,
+      return { pageKey: 'sea', site: (global.CurrentCage && global.CurrentCage.site()) || S.site || 'site_01', picked: null, series: null,
                tick: 0, unsub: null, timer: null,
                refreshing: false, refreshMsg: '', refreshOk: null,
                per: S.seaPer, loadSeq: 0, chart: null,
                evOpen: false,
                /* 问题二：历史区间（真实站点公开数据可自定义时间查看更长远历史） */
-               rangeMode: false, rangeSeries: null, rangeMsg: '',
+               rangeSeq: 0, rangeMode: false, rangeSeries: null, rangeMsg: '',
                rangeStart: '', rangeEnd: '', ranges: {} };
     },
     computed: {
@@ -296,6 +328,7 @@
       },
       /* 当前站点是不是中国近海观测站点 —— 决定页面显示"实测"还是"仿真" */
       isObs: function () {
+        this.tick;
         const sid = this.site;
         const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
         return !!(s && s.kind === 'obs');
@@ -514,7 +547,7 @@
          「是否在查看其他海域」由计算属性 followCage 自动判断 —— 
          不需要在这里维护状态，也就不会出现状态和事实不一致。
          ⚠️ **不改当前网箱** —— 只在顶栏切换器上改网箱。 */
-      setSite: function (sid) { this.site = sid; },
+      setSite: function (sid) { this._waitingForCage = false; this.site = sid; },
       /* 当前网箱所在海域的 site_id —— 给站点按钮的 ★ 标记用。
          没有 CurrentCage（比如纯前端兜底模式）时返回空串，★ 就不显示。 */
       CurrentCageSite: function () {
@@ -632,6 +665,7 @@
       /* 问题二：真实站点按自定义起止时间查询公开历史（后端 /api/env/historical，随 api/env.py 挂载） */
       queryRange: function () {
         const self = this;
+        const isCurrent = beginRangeQuery(this);
         const st = Date.parse(this.rangeStart);
         const en = Date.parse(this.rangeEnd);
         if (!st || !en || en <= st) {
@@ -646,6 +680,7 @@
         fetch('/api/env/historical?site_id=' + this.site + '&start_ts=' + st + '&end_ts=' + en)
           .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
           .then(function (d) {
+            if (!isCurrent()) return;
             if (d.count > 0) {
               const recs = d.records;
               self.rangeSeries = recs;
@@ -653,7 +688,7 @@
               /* 后端已挂载（查询成功）→ 顺带取精确「数据时间范围」 */
               self.loadRanges();
               /* 问题二：时序图随所选时间区间一起变化 */
-              self.$nextTick(function () { self.renderChart(); });
+              self.$nextTick(function () { if (isCurrent()) self.renderChart(); });
               self.rangeMsg = '已加载 ' + d.count + ' 条公开历史数据（' +
                 global.__ENV_HELPERS__.fmtTs(recs[0].ts) + ' ~ ' +
                 global.__ENV_HELPERS__.fmtTs(recs[recs.length - 1].ts) + '）';
@@ -664,6 +699,7 @@
             }
           })
           .catch(function (e) {
+            if (!isCurrent()) return;
             self.rangeMode = false;
             self.rangeMsg = '历史区间接口不可用（' + e.message + '）；' +
                            '当前可按「自定义分钟数」查看尾部窗口。';
@@ -671,6 +707,7 @@
       },
       /* 退出历史区间，回到实时尾部窗口 */
       exitRange: function () {
+        this.rangeSeq = (this.rangeSeq || 0) + 1;
         this.rangeMode = false;
         this.rangeSeries = null;
         this.rangeMsg = '';
@@ -773,56 +810,31 @@
       const self = this;
       const H = global.__ENV_HELPERS__;
       this.ensurePer();
-      /* 问题二：历史区间输入默认 最近 1 天（ndbc-ranges 不在此请求——未挂载会 404 产生 console error，
-         改为查询历史成功后惰性请求，见 queryRange） */
+      bindCageSite(this);
       if (!this.rangeStart) {
         const en = new Date();
         const st = new Date(en.getTime() - 24 * 3600 * 1000);
         this.rangeStart = H.localInput(st);
         this.rangeEnd = H.localInput(en);
       }
-      this.unsub = API.subscribe(function () { self.tick++; });
-      /* 🔴 2026-10-18 队长加：顶栏切网箱时，本页自动跟到新网箱所在海域
-         （前提是用户没手动切到别的台站看）。 */
-      this.cageUnsub = (global.CurrentCage && global.CurrentCage.subscribe)
-        ? global.CurrentCage.subscribe(function (cid) {
-            /* 🔴 2026-10-18：切网箱是「我要看这个网箱」的明确动作，
-               所以**强制重置跟随** —— 哪怕刚才手动看了别的海域，也拉回来。
-               否则会出现「顶栏显示 1 号箱、环境页还在看芝罘岛」，对不上号。 */
-            const cs = global.CurrentCage.site();
-            if (cs) {
-              if (cs !== self.site) { self.site = cs; self.load(); }
-            }
-          })
-        : null;
       this.load();
       this.$nextTick(function () { self.renderChart(); });
-      /* 轮询：只刷新「未暂停」的当前站点；暂停站点冻结（站点独立）；
-         历史区间模式下保持查询结果，不被实时窗口覆盖（问题二） */
       this.timer = setInterval(function () {
         if (self.rangeMode) return;
         if (global.__ENV_HELPERS__.shouldRefresh(self.per, self.site)) self.load();
       }, 5000);
-      /* 🔴 2026-10-18 队长加：顶栏切网箱时本页自动跟到新网箱所在海域
-         （这一页没有 API.subscribe，所以单独订阅 CurrentCage）。
-         用户手动切到别的台站看时（followCage=false）不打扰他。 */
-      this.cageUnsub = (global.CurrentCage && global.CurrentCage.subscribe)
-        ? global.CurrentCage.subscribe(function (cid) {
-            /* 切网箱 → 强制重置跟随（同海况页，见那边的说明） */
-            const cs = global.CurrentCage.site();
-            if (cs) {
-              if (cs !== self.site) { self.site = cs; self.load(); }
-            }
-          })
-        : null;
     },
     beforeUnmount: function () {
+      this.rangeSeq = (this.rangeSeq || 0) + 1;
       if (this.timer) { clearInterval(this.timer); this.timer = null; }
       if (this.unsub) { this.unsub(); this.unsub = null; }
+      if (this.cageUnsub) { this.cageUnsub(); this.cageUnsub = null; }
+      this.loadSeq++;
       if (this.chart) { this.chart.dispose(); this.chart = null; }
     },
     watch: {
       site: function () {
+        this.rangeSeq = (this.rangeSeq || 0) + 1;
         /* 问题六：站点选择写入全局，切换页面后保留 */
         const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = {});
         S.site = this.site;
@@ -1129,13 +1141,13 @@
       /* 问题六：站点选择存全局 __ENV_SESSION__，跨页切换后保留；
          仿真控制状态（per）两页各自独立（问题一：海况↔水质互不影响） */
       const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = { seaPer: null, waterPer: null, site: 'site_01' });
-      return { pageKey: 'water', site: S.site || 'site_01', picked: null, series: null,
-               per: S.waterPer, loadSeq: 0, chart: null, timer: null,
+      return { pageKey: 'water', site: (global.CurrentCage && global.CurrentCage.site()) || S.site || 'site_01', picked: null, series: null,
+               tick: 0, per: S.waterPer, loadSeq: 0, chart: null, timer: null,
                evOpen: false,
                show: { water_temp: true, dissolved_oxygen: true, light_intensity: false,
                        salinity: false },
                /* 问题二：历史区间（真实站点公开数据可自定义时间查看更长远历史） */
-               rangeMode: false, rangeSeries: null, rangeMsg: '',
+               rangeSeq: 0, rangeMode: false, rangeSeries: null, rangeMsg: '',
                rangeStart: '', rangeEnd: '', ranges: {} };
     },
     computed: {
@@ -1190,6 +1202,7 @@
       },
       pauseText: function () { return global.__ENV_HELPERS__.pausedText(this.per); },
       isObs: function () {
+        this.tick;
         const sid = this.site;
         const s = API.sites().filter(function (x) { return x.site_id === sid; })[0];
         return !!(s && s.kind === 'obs');
@@ -1198,24 +1211,41 @@
         if (this.isObs) return '中国近海台站实测（本地入库，不联网）';
         return '仿真生成（仿真演示站点）';
       },
-      /* 水温异常点（问题 2）：黄 ≥25.5（R-TEMP-02 偏高提示），红 ≥28.0（R-TEMP-01 水温上限告警） */
+      /* 点、线、说明和表格均读取当前站点的鱼种温度配置。 */
+      waterThresholdSite: function () {
+        this.tick;
+        return API.sites().find(function (site) { return site.site_id === this.site; }, this) || {};
+      },
+      waterThresholdInfo: function () {
+        const site = this.waterThresholdSite;
+        const value = function (field) { return site[field] == null ? '—' : site[field] + ' ℃'; };
+        return { level: site.temp_evidence || '间接支持',
+          text: '当前站点鱼种：' + (site.species || '—') + '；偏低提示 ≤' + value('temp_warn_low') +
+            '，水温下限告警 ≤' + value('temp_alarm_low') + '；偏高提示 ≥' + value('temp_warn_high') +
+            '，水温上限告警 ≥' + value('temp_alarm_high') +
+            '。滚轮缩放、拖拽底部滑条查看细节。曲线圆点和参考线使用相同站点配置；未配置的阈值显示「—」。溶解氧、盐度、pH、光照暂无界定规则。',
+          source: site.temp_source || '鱼种温度库 · ' + (site.species || '—') };
+      },
       waterDots: function () {
+        this.tick;
         const out = [];
         (this.chartFast || this.fast || []).forEach(function (r) {
           const w = r.water_temp;
           if (w == null) return;
-          let color = null;
-          if (w >= 28.0)      { color = '#991B1B'; }
-          else if (w >= 25.5) { color = '#D97706'; }
+          const hit = API.ruleCheck(r);
+          const color = hit ? (hit.risk_level === 'red' ? '#991B1B' : '#D97706') : null;
           if (color) out.push({ coord: [r.ts, w], value: w, itemStyle: { color: color } });
         });
         return out;
       },
       waterLines: function () {
-        return [
-          { yAxis: 28.0, name: '水温上限 28.0℃', lineStyle: { color: '#991B1B', type: 'dashed', width: 1 } },
-          { yAxis: 25.5, name: '偏高提示 25.5℃', lineStyle: { color: '#D97706', type: 'dashed', width: 1 } }
-        ];
+        this.tick;
+        const site = API.sites().find(function (s) { return s.site_id === this.site; }, this) || {};
+        return [['temp_alarm_high', '水温上限', '#991B1B'], ['temp_warn_high', '偏高提示', '#D97706'],
+                ['temp_alarm_low', '水温下限', '#991B1B'], ['temp_warn_low', '偏低提示', '#D97706']]
+          .filter(function (r) { return site[r[0]] != null; })
+          .map(function (r) { return { yAxis: site[r[0]], name: r[1] + ' ' + site[r[0]] + '℃',
+            lineStyle: { color: r[2], type: 'dashed', width: 1 } }; });
       },
       /* ★ 一条竖线：水温越限 → 出告警（判定规则在 API.ruleCheck，与后端同口径）。
          问题二：基于全量序列判定 —— 模拟异常期间生成的点保留，告警记录不消除。
@@ -1299,7 +1329,7 @@
          「是否在查看其他海域」由计算属性 followCage 自动判断 —— 
          不需要在这里维护状态，也就不会出现状态和事实不一致。
          ⚠️ **不改当前网箱** —— 只在顶栏切换器上改网箱。 */
-      setSite: function (sid) { this.site = sid; },
+      setSite: function (sid) { this._waitingForCage = false; this.site = sid; },
       /* 当前网箱所在海域的 site_id —— 给站点按钮的 ★ 标记用。
          没有 CurrentCage（比如纯前端兜底模式）时返回空串，★ 就不显示。 */
       CurrentCageSite: function () {
@@ -1407,6 +1437,7 @@
       },
       queryRange: function () {
         const self = this;
+        const isCurrent = beginRangeQuery(this);
         const st = Date.parse(this.rangeStart);
         const en = Date.parse(this.rangeEnd);
         if (!st || !en || en <= st) {
@@ -1421,12 +1452,13 @@
         fetch('/api/env/historical?site_id=' + this.site + '&start_ts=' + st + '&end_ts=' + en)
           .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
           .then(function (d) {
+            if (!isCurrent()) return;
             if (d.count > 0) {
               const recs = d.records;
               self.rangeSeries = recs;
               self.rangeMode = true;
               /* 问题二：时序图随所选时间区间一起变化 */
-              self.$nextTick(function () { self.renderChart(); });
+              self.$nextTick(function () { if (isCurrent()) self.renderChart(); });
               self.rangeMsg = '已加载 ' + d.count + ' 条公开历史数据（' +
                 global.__ENV_HELPERS__.fmtTs(recs[0].ts) + ' ~ ' +
                 global.__ENV_HELPERS__.fmtTs(recs[recs.length - 1].ts) + '）';
@@ -1437,6 +1469,7 @@
             }
           })
           .catch(function (e) {
+            if (!isCurrent()) return;
             self.rangeMode = false;
             self.rangeMsg = '历史区间接口不可用（' + e.message + '）；' +
                            '当前可按「自定义分钟数」查看尾部窗口。';
@@ -1444,6 +1477,7 @@
       },
       /* 退出历史区间，回到实时尾部窗口 */
       exitRange: function () {
+        this.rangeSeq = (this.rangeSeq || 0) + 1;
         this.rangeMode = false;
         this.rangeSeries = null;
         this.rangeMsg = '';
@@ -1542,6 +1576,7 @@
       const self = this;
       const H = global.__ENV_HELPERS__;
       this.ensurePer();
+      bindCageSite(this);
       /* 问题二：历史区间输入默认 最近 1 天（ndbc-ranges 不在此请求——未挂载会 404 产生 console error，
          改为查询历史成功后惰性请求，见 queryRange） */
       if (!this.rangeStart) {
@@ -1560,11 +1595,17 @@
       }, 5000);
     },
     beforeUnmount: function () {
+      this.rangeSeq = (this.rangeSeq || 0) + 1;
+      if (this.unsub) { this.unsub(); this.unsub = null; }
+      if (this.cageUnsub) { this.cageUnsub(); this.cageUnsub = null; }
+      this.loadSeq++;
       if (this.timer) { clearInterval(this.timer); this.timer = null; }
       if (this.chart) { this.chart.dispose(); this.chart = null; }
     },
     watch: {
+      tick: function () { this.renderChart(); },
       site: function () {
+        this.rangeSeq = (this.rangeSeq || 0) + 1;
         /* 问题六：站点选择写入全局，切换页面后保留 */
         const S = global.__ENV_SESSION__ || (global.__ENV_SESSION__ = {});
         S.site = this.site;
@@ -1639,7 +1680,7 @@
       '    <div>',
       '      <div class="card">',
       '        <div class="card-title">水质时序（可缩放 / 框选 · 异常点标记）',
-      '          <help-dot :info="{ level: \'间接支持\', text: \'滚轮缩放、拖拽底部滑条框选时间轴查看细节；水温曲线上圆点 = 命中「异常界定指标」的数据点（黄 ≥25.5 偏高提示，红 ≥28.0 水温上限告警）。\' }" :label="\'操作说明\'" />',
+      '          <help-dot :info="waterThresholdInfo" :label="\'操作说明\'" />',
       '        </div>',
       '        <div ref="chartEl" class="chart" :style="{height: Math.max(340, Object.values(show).filter(Boolean).length * 165) + \'px\'}"></div>',
       '      </div>',
@@ -1674,16 +1715,16 @@
       '  <!-- 异常界定指标（水质）：红点 / 告警标记依据 -->',
       '  <div class="card" style="margin-top:12px">',
       '    <div class="card-title">异常界定指标（红点 / 告警标记依据）',
-      '      <help-dot :info="{ level: \'间接支持\', text: \'水温阈值与前端规则 R-TEMP-01 / R-TEMP-02 同口径（大黄鱼高告警线 28.0 ℃、高提示线 25.5 ℃）；不同网箱养不同鱼时，阈值按鱼种温度库自动取值（见管理板块）。溶解氧 / 盐度 / pH / 光照暂未配置界定规则，仅作监测展示。\', source: \'鱼种温度库 · 大黄鱼\' }" :label="\'界定依据说明\'" />',
+      '      <help-dot :info="waterThresholdInfo" :label="\'界定依据说明\'" />',
       '    </div>',
       '    <div class="dt-wrap">',
       '      <table class="dt">',
       '        <thead><tr><th>指标</th><th>单位</th><th>正常参考</th><th>异常界定</th><th>依据</th></tr></thead>',
       '        <tbody>',
       '          <tr>',
-      '            <td class="small"><b>水温</b></td><td class="small">℃</td><td class="small">＜25.5</td>',
-      '            <td class="small"><span class="dot bg-yellow"></span>≥25.5 偏高提示（R-TEMP-02）／ <span class="dot bg-red"></span>≥28.0 水温上限告警（R-TEMP-01）</td>',
-      '            <td class="small">鱼种温度库 · 大黄鱼</td>',
+      '            <td class="small"><b>水温 · {{ waterThresholdSite.species || "—" }}</b></td><td class="small">℃</td><td class="small">{{ waterThresholdSite.temp_opt && waterThresholdSite.temp_opt[0] != null && waterThresholdSite.temp_opt[1] != null ? waterThresholdSite.temp_opt.join("～") : "—" }}</td>',
+      '            <td class="small"><span class="dot bg-yellow"></span>偏低提示 ≤{{ waterThresholdSite.temp_warn_low == null ? "—" : waterThresholdSite.temp_warn_low }}（R-TEMP-04）；偏高提示 ≥{{ waterThresholdSite.temp_warn_high == null ? "—" : waterThresholdSite.temp_warn_high }}（R-TEMP-02）<br><span class="dot bg-red"></span>水温下限告警 ≤{{ waterThresholdSite.temp_alarm_low == null ? "—" : waterThresholdSite.temp_alarm_low }}（R-TEMP-03）；水温上限告警 ≥{{ waterThresholdSite.temp_alarm_high == null ? "—" : waterThresholdSite.temp_alarm_high }}（R-TEMP-01）</td>',
+      '            <td class="small">{{ waterThresholdInfo.source }}</td>',
       '          </tr>',
       '          <tr>',
       '            <td class="small"><b>溶解氧</b></td><td class="small">mg/L</td><td class="small">—</td>',

@@ -26,9 +26,10 @@
       return { online: '在线', offline: '离线', running: '运行中', standby: '待机', fault: '故障' }[v] || v;
     },
     deviceType: function (v) {
-      return { feeder: '投喂设备', light: '补光灯具', sensor: '传感器' }[v] || v;
+      return { feeder: '投喂设备', light: '补光灯具', sensor: '传感器',
+               crane: '网衣绞车' }[v] || v;
     },
-    commandType: function (v) { return { feed: '投喂', light: '补光' }[v] || v; },
+    commandType: function (v) { return { feed: '投喂', light: '补光', crane: '起重' }[v] || v; },
     commandStatus: function (v) {
       return { created: '已创建', sent: '已发出', acknowledged: '已收到回执', success: '成功',
                timeout: '超时', retrying: '重试中', failed: '失败', escalated: '升级报警' }[v] || v;
@@ -42,7 +43,8 @@
     },
     alarmType: function (v) {
       return { tension: '锚泊张力', tilt: '网箱倾斜', net_damage: '网衣破损',
-               deformation: '结构形变', low_battery: '低电量', power_supply: '供电异常' }[v] || v;
+               deformation: '结构形变', low_battery: '低电量', power_supply: '供电异常',
+               command: '指令异常' }[v] || v;
     },
     alarmStatus: function (v) {
       return { active: '活跃', acknowledged: '已确认', recovered: '已恢复' }[v] || v;

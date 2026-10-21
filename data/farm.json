@@ -73,7 +73,99 @@
           "note": "🔴 2026-10-20 队长改（队-1 告警合理性）：原养**许氏平鲉**（最适 8~25℃，红色高温线 26.0℃），但黄海小麦岛 8 月实测水温到 28.8℃ —— **2025-08 有 98% 的时间在红色告警**，等于天天报。把所有候选拿真实水温跑了一遍（高温低温两头都算），**黑鲷最优**：高温红 0.00%（实测最高 28.8 < 告警线 30.0）、低温红 3.92%。黑鲷适应 4.3~34℃、最适 17~25℃，本来就是黄海/渤海的主力养殖种。⚠️ 注意：高温红色线 30.0℃ 在小麦岛**永远不会触发**（实测最高 28.8），这是生理上正确的（黑鲷耐 34℃），不是阈值定错；要看高温红色告警请切 1 号箱。"
         }
       ],
-      "devices": []
+      "devices": [
+        {
+          "device_id": "sensor_temp_02",
+          "device_name_cn": "2 号箱水温传感器",
+          "cage_id": "cage_02",
+          "device_type": "sensor",
+          "metric": "water_temp",
+          "location": "cage_02 · 水下 3 m",
+          "installed": null,
+          "vendor": null,
+          "calibration": null,
+          "provenance": "pending_confirmation",
+          "source_note": "同型配置；厂商、安装与校准记录待李志成或厂家确认（平台不编造）"
+        },
+        {
+          "device_id": "sensor_do_02",
+          "device_name_cn": "2 号箱溶解氧传感器",
+          "cage_id": "cage_02",
+          "device_type": "sensor",
+          "metric": "dissolved_oxygen",
+          "location": "cage_02 · 水下 3 m",
+          "installed": null,
+          "vendor": null,
+          "calibration": null,
+          "provenance": "pending_confirmation",
+          "source_note": "同型配置；厂商、安装与校准记录待李志成或厂家确认（平台不编造）"
+        },
+        {
+          "device_id": "sensor_tilt_02",
+          "device_name_cn": "2 号箱倾角传感器",
+          "cage_id": "cage_02",
+          "device_type": "sensor",
+          "metric": "tilt",
+          "location": "cage_02 · 浮架",
+          "installed": null,
+          "vendor": null,
+          "calibration": null,
+          "provenance": "pending_confirmation",
+          "source_note": "同型配置；厂商、安装与校准记录待李志成或厂家确认（平台不编造）"
+        },
+        {
+          "device_id": "sensor_tension_02",
+          "device_name_cn": "2 号箱锚链张力传感器",
+          "cage_id": "cage_02",
+          "device_type": "sensor",
+          "metric": "anchor_tension",
+          "location": "cage_02 · 锚链",
+          "installed": null,
+          "vendor": null,
+          "calibration": null,
+          "provenance": "pending_confirmation",
+          "source_note": "同型配置；厂商、安装与校准记录待李志成或厂家确认（平台不编造）"
+        },
+        {
+          "device_id": "feeder_02",
+          "device_name_cn": "2 号箱自动投饵机",
+          "cage_id": "cage_02",
+          "device_type": "feeder",
+          "metric": "feed_rate",
+          "location": "cage_02 · 投饵机",
+          "installed": null,
+          "vendor": null,
+          "calibration": null,
+          "provenance": "pending_confirmation",
+          "source_note": "同型配置；厂商、安装与校准记录待李志成或厂家确认（平台不编造）"
+        },
+        {
+          "device_id": "light_02",
+          "device_name_cn": "2 号箱补光灯具",
+          "cage_id": "cage_02",
+          "device_type": "light",
+          "metric": "light_dimming",
+          "location": "cage_02 · 灯具",
+          "installed": null,
+          "vendor": null,
+          "calibration": null,
+          "provenance": "pending_confirmation",
+          "source_note": "同型配置；厂商、安装与校准记录待李志成或厂家确认（平台不编造）"
+        },
+        {
+          "device_id": "crane_02",
+          "device_name_cn": "2 号箱网衣绞车",
+          "cage_id": "cage_02",
+          "device_type": "crane",
+          "metric": "crane_action",
+          "location": "cage_02 · 网衣绞车",
+          "installed": null,
+          "vendor": null,
+          "calibration": null,
+          "provenance": "pending_confirmation",
+          "source_note": "配置依据：中集来福士官网深远海渔业产品页（网衣绞车）；型号、厂商与校准待确认"
+        }
+      ]
     },
     {
       "site_id": "site_04",
@@ -125,7 +217,11 @@
             "cycle_days": 180,
             "institution": "福建省计量科学研究院",
             "cert_no": "FJ-2026-0820-018"
-          }
+          },
+          "cage_id": "cage_01",
+          "device_name_cn": "1 号箱水温传感器",
+          "provenance": "existing_ledger",
+          "source_note": "沿用既有设备台账（2026-10）；本次未重新核实厂商与校准证书"
         },
         {
           "device_id": "sensor_do_01",
@@ -140,7 +236,11 @@
             "institution": "福建省计量科学研究院",
             "cert_no": "FJ-2026-0412-019"
           },
-          "note": "即将到期 —— 页面应提前 30 天提醒"
+          "note": "即将到期 —— 页面应提前 30 天提醒",
+          "cage_id": "cage_01",
+          "device_name_cn": "1 号箱溶解氧传感器",
+          "provenance": "existing_ledger",
+          "source_note": "沿用既有设备台账（2026-10）；本次未重新核实厂商与校准证书"
         },
         {
           "device_id": "sensor_tilt_01",
@@ -155,7 +255,11 @@
             "institution": "深圳市计量质量检测研究院",
             "cert_no": "SZ-2025-1008-233"
           },
-          "note": "⚠️ 已超期 —— 这一条正是页面要主动提醒出来的东西（呼应页面上「经验阈值，未经现场标定」那句）"
+          "note": "⚠️ 已超期 —— 这一条正是页面要主动提醒出来的东西（呼应页面上「经验阈值，未经现场标定」那句）",
+          "cage_id": "cage_01",
+          "device_name_cn": "1 号箱倾角传感器",
+          "provenance": "existing_ledger",
+          "source_note": "沿用既有设备台账（2026-10）；本次未重新核实厂商与校准证书"
         },
         {
           "device_id": "sensor_tension_01",
@@ -170,7 +274,11 @@
             "institution": "深圳市计量质量检测研究院",
             "cert_no": "SZ-2025-1008-234"
           },
-          "note": "⚠️ 已超期。倾角阈值 5°/15° 的依据来自规范，但传感器本身未按期标定 —— 两者要分开讲，不能混为一谈"
+          "note": "⚠️ 已超期。倾角阈值 5°/15° 的依据来自规范，但传感器本身未按期标定 —— 两者要分开讲，不能混为一谈",
+          "cage_id": "cage_01",
+          "device_name_cn": "1 号箱锚链张力传感器",
+          "provenance": "existing_ledger",
+          "source_note": "沿用既有设备台账（2026-10）；本次未重新核实厂商与校准证书"
         },
         {
           "device_id": "feeder_01",
@@ -184,7 +292,11 @@
             "cycle_days": 365,
             "institution": "厂家年度检定",
             "cert_no": "HX-2026-0402-07"
-          }
+          },
+          "cage_id": "cage_01",
+          "device_name_cn": "1 号箱自动投饵机",
+          "provenance": "existing_ledger",
+          "source_note": "沿用既有设备台账（2026-10）；本次未重新核实厂商与校准证书"
         },
         {
           "device_id": "light_01",
@@ -199,7 +311,24 @@
             "institution": null,
             "cert_no": null
           },
-          "note": "灯具为开关/调光器件，不做计量标定 —— 页面上显示「不适用」而不是「未标定」（cycle_days 置 null 即判定为不适用）"
+          "note": "灯具为开关/调光器件，不做计量标定 —— 页面上显示「不适用」而不是「未标定」（cycle_days 置 null 即判定为不适用）",
+          "cage_id": "cage_01",
+          "device_name_cn": "1 号箱补光灯具",
+          "provenance": "existing_ledger",
+          "source_note": "沿用既有设备台账（2026-10）；本次未重新核实厂商与校准证书"
+        },
+        {
+          "device_id": "crane_01",
+          "device_name_cn": "1 号箱网衣绞车",
+          "cage_id": "cage_01",
+          "device_type": "crane",
+          "metric": "crane_action",
+          "location": "cage_01 · 网衣绞车",
+          "installed": null,
+          "vendor": null,
+          "calibration": null,
+          "provenance": "pending_confirmation",
+          "source_note": "配置依据：中集来福士官网深远海渔业产品页（网衣绞车）；型号、厂商与校准待确认"
         }
       ]
     },
@@ -276,5 +405,11 @@
       "count": -5,
       "note": "低温应激"
     }
+  ],
+  "_设备口径": [
+    "设备台账按网箱分：cage_01 在 site_04，cage_02 在 site_03；每箱同型 7 台（水温/溶氧/倾角/锚链张力/投饵/补光/网衣绞车）。",
+    "device_name_cn 是界面显示名；device_id 只在悬停/详情里出现。",
+    "provenance=existing_ledger 的条目沿用既有台账；pending_confirmation 的厂商与校准记录待确认，平台不编造。",
+    "网衣绞车的配置依据是中集来福士官网深海渔业产品页；具体型号、厂商、数量与校准未确认。"
   ]
 }

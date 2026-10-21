@@ -75,16 +75,6 @@ import env as envapi                                         # noqa: E402
 FARM = farmmod.Farm()
 
 
-def _CAGE1_VOL_M3():
-    """1 号箱的有效养殖水体（m³）——从 farm.json 读，不写死。
-
-    2026-10-16 会上定：网箱改**桁架式**，有效水体 = 长 × 宽 × 养殖水深。
-    原来这里写死 285，那是**底面积**不是体积（清单第 4 条冲突指出的）。
-    """
-    c = FARM.cage("cage_01") or {}
-    v = (c.get("spec") or {}).get("effective_volume_m3")
-    return v if isinstance(v, (int, float)) and v > 0 else 2400
-
 # ----------------------------------------------------------------------
 # 路径
 # ----------------------------------------------------------------------
@@ -123,8 +113,6 @@ def sync_sites_from_farm():
     """
     global SITES
     for s in SITES:
-        if s.get("kind") != "farm":
-            continue
         cages = [c for c in FARM.all_cages() if c["site_id"] == s["site_id"]]
         if not cages:
             continue
@@ -487,15 +475,15 @@ def fish_series(minutes=60, cage_id=None):
         lwr = {"a": a, "b": b, "source": "参数库缺失，用大黄鱼默认值", "url": ""}
     # 主网箱的生长计划：当前体重以计划曲线为准，不再恒为初始规格
     # （否则已养 181 天体重还是 420g，生长页会"预测"出 2040 年上市）
-    cage = FARM.cage(site.get("cage_id", "cage_01"))
+    cage = _cage
     sim = fish_sim_state()
     gen, mode = sim["gen_status"], sim["sim_mode"]
     # 视觉链路不可用：生成器停止 / 摄像头离线 → 全部指标置空
     offline = gen == "stopped" or mode == "camera_off"
     # 暂停：数据冻结在计划值上，不再产生新波动
     frozen = gen == "paused"
-    _stock = (_cage.get("stocking") or {})
-    base_count = _stock.get("init_count") or site.get("stock_init_count", 1200)
+    base_count = FARM.stock_of(cage_id or "cage_01")
+    volume = (_cage.get("spec") or {}).get("effective_volume_m3")
     count = base_count
     out = []
     for i in range(n):
@@ -503,7 +491,7 @@ def fish_series(minutes=60, cage_id=None):
         if offline:
             # 离线给 null、质量 stale，不给上一个值（通用规范 4.2 硬纪律）
             out.append({
-                "ts": ts, "site_id": "site_01", "source": "simulated",
+                "ts": ts, "site_id": site["site_id"], "cage_id": cage_id or "cage_01", "source": "simulated",
                 "quality": "stale", "fish_count": None, "fish_density": None,
                 "avg_length_cm": None, "avg_weight_g": None,
                 "total_biomass_kg": None, "feeding_intensity": None,
@@ -513,7 +501,7 @@ def fish_series(minutes=60, cage_id=None):
         if mode == "density_drop":
             count = round(base_count * (1 - 0.35 * i / n))
         elif not frozen:
-            count += round(r.gauss(0, .6))
+            count = max(0, base_count + round(r.gauss(0, .6)))
         pw = planned_weight(cage, ts)
         if pw is None:
             # 生长计划缺失时保留旧兜底，**不编造曲线**
@@ -527,21 +515,16 @@ def fish_series(minutes=60, cage_id=None):
             feed = "none" if r.random() < 0.7 else r.choice(["mid", "strong"])
         else:
             feed = "weak" if r.random() < .15 else r.choice(["mid", "strong"])
-        # 聚集主要反映在热力图；总密度小幅上浮
-        dens_scale = 1.08 if mode == "cluster" else 1.0
+        # 聚集改变空间分布，不凭空改变整箱尾数或平均密度。
         quality = "suspect" if mode in ("feeding_abnormal", "density_drop") else "good"
         out.append({
             "ts": ts,
             "site_id": site["site_id"],
+            "cage_id": cage_id or "cage_01",
             "source": "simulated",
             "quality": quality,
             "fish_count": count,
-            # 🔴 2026-10-18 队长改：原来写死 count / 285 —— 285 是**底面积**不是体积。
-            #    10-16 会上定网箱改桁架式，有效水体按 长×宽×养殖水深 真算：
-            #    1 号箱 20×20×6 = 2400 m³ → 1143 尾 ÷ 2400 ≈ 0.48 尾/m³
-            #    （旧口径 1143÷285 ≈ 4.0，正是老师说的「4.2 → 约 0.5」）。
-            #    数值从 farm.json 读，改网箱尺寸时只改数据一处。
-            "fish_density": round(count / _CAGE1_VOL_M3() * dens_scale, 1),
+            "fish_density": round(count / volume, 1) if volume and volume > 0 else None,
             # 由体重反推体长：W = a·L^b  →  L = (W/a)^(1/b)
             # a、b 来自鱼种参数库（带文献出处），不再硬编码
             "avg_length_cm": round((avg_w / a) ** (1.0 / b), 1),
@@ -799,19 +782,29 @@ def struct_series(minutes=60, storm=False, cage_id="cage_01"):
     return out
 
 
-def feed_decision():
-    """投喂决策（裁定 1：投喂量归智能算）"""
-    fish = fish_series(5)
+def feed_decision(cage_id="cage_01"):
+    """投喂决策（裁定 1：投喂量归智能算）。按网箱取数，不串箱。"""
+    cage = FARM.cage(cage_id) or FARM.cage("cage_01") or {}
+    site_id = cage.get("site_id") or "site_01"
+    fish = fish_series(5, cage.get("cage_id") or cage_id)
     last = fish[-1]
-    water = env_series("site_01", 5)["fast"][-1]["water_temp"]
+    water = env_series(site_id, 5)["fast"][-1].get("water_temp")
     h = datetime.now().hour
     intensity = "strong" if (5 <= h <= 9 or 16 <= h <= 19) else ("mid" if 10 <= h <= 15 else "weak")
     w = {"none": 0, "weak": 0.45, "mid": 0.75, "strong": 1}[intensity]
     cn = {"none": "无", "weak": "弱", "mid": "中", "strong": "强"}[intensity]
     per_day = last["total_biomass_kg"] * 0.012
     times = 4
+    if water is None:
+        water_note = "水温 —（暂无观测）"
+    elif 15 <= water <= 25:
+        water_note = "水温 %s ℃ 处于适宜摄食区间（15–25 ℃）" % water
+    else:
+        water_note = "水温 %s ℃ 不在适宜摄食区间（15–25 ℃），按经验系数折算，建议人工复核" % water
     return {
         "ts": last["ts"],
+        "cage_id": cage.get("cage_id") or cage_id,
+        "site_id": site_id,
         "biomass_kg": last["total_biomass_kg"],
         "feeding_intensity": intensity,
         "feeding_intensity_cn": cn,
@@ -827,7 +820,7 @@ def feed_decision():
         "basis": [
             "依据 1：生物量 %s kg × 日投饲率 1.2%% = %.1f kg/日" % (last["total_biomass_kg"], per_day),
             "依据 2：当前时段（%d 时）摄食强度「%s」→ 折算系数 %s" % (h, cn, w),
-            "依据 3：水温 %s ℃ 处于适宜摄食区间（15–25 ℃）" % water,
+            "依据 3：%s" % water_note,
             "分 %d 次投喂，单次上限 %.1f kg" % (times, per_day / times),
         ],
         "mode": "manual",
@@ -837,25 +830,60 @@ def feed_decision():
 # ======================================================================
 # 设备 / 指令状态机（接口文档 6.3 / 6.4 / 7.6）
 # ======================================================================
+# 什么设备能接什么指令 —— 投喂机不吃补光命令，传感器不接受控制指令。
+COMMAND_TYPE_BY_DEVICE = {"feeder": "feed", "light": "light", "crane": "crane"}
+
+
+def command_target(device_id, command_type, cage_id=None):
+    """校验指令目标并返回设备台账记录（带 cage_id）。非法时抛 ValueError。"""
+    dev = FARM.device(device_id)
+    if not dev:
+        raise LookupError("设备号不存在：%s" % device_id)
+    expected = COMMAND_TYPE_BY_DEVICE.get(dev.get("device_type"))
+    if expected != command_type:
+        raise ValueError("设备 %s 不接受「%s」指令" % (device_id, command_type))
+    if cage_id and cage_id != dev.get("cage_id"):
+        raise ValueError("设备 %s 不属于 %s，不能跨箱下发" % (device_id, cage_id))
+    return dev
+
+
 class Platform(object):
     def __init__(self):
         self.lock = threading.Lock()
-        self.devices = [
-            {"device_id": "feeder_01", "device_type": "feeder", "device_online": True,
-             "device_state": "standby", "device_params": {"feed_remain_kg": 62.5, "feed_remain_pct": 62.5},
-             "site_id": "site_01"},
-            {"device_id": "light_01", "device_type": "light", "device_online": True,
-             "device_state": "standby", "device_params": {"light_dimming_pct": 0},
-             "site_id": "site_01"},
-            {"device_id": "tension_01", "device_type": "sensor", "device_online": True,
-             "device_state": "running", "device_params": {}, "site_id": "site_01"},
-            {"device_id": "pv_01", "device_type": "sensor", "device_online": True,
-             "device_state": "running", "device_params": {}, "site_id": "site_01"},
-        ]
+        self.devices = self._build_devices()
         self.commands = []
         self._seq = 0
         self.alarms = self._seed_alarms()
         self._seed_commands()      # 预置几条真实历史命令（投喂记录从它派生）
+
+    def _build_devices(self):
+        """设备运行状态：按正式台账生成，两箱各一套，不串箱。
+
+        ⚠️ 这是**平台模拟器的运行状态**，不是现场实测：
+           online / standby 由模拟器给出；厂商、校准与安装信息只在
+           data/farm.json 台账里，标了 pending_confirmation 的就是未确认。
+        """
+        out = []
+        for d in FARM.devices():
+            dtype = d.get("device_type")
+            cid = d.get("cage_id")
+            params = {}
+            if dtype == "feeder":
+                pct = 62.5 if cid == "cage_01" else 45
+                params = {"feed_remain_kg": pct, "feed_remain_pct": pct}
+            elif dtype == "light":
+                params = {"light_dimming_pct": 0 if cid == "cage_01" else 30}
+            out.append({
+                "device_id": d["device_id"],
+                "device_name_cn": d.get("device_name_cn"),
+                "device_type": dtype,
+                "cage_id": cid,
+                "site_id": d.get("site_id"),
+                "device_online": True,
+                "device_state": "standby" if dtype in ("feeder", "light", "crane") else "running",
+                "device_params": params,
+            })
+        return out
 
 
     def _seed_alarms(self):
@@ -915,21 +943,24 @@ class Platform(object):
                     "stopped_at": now, "reason": reason}
         raise ValueError("命令不存在：%s" % command_id)
 
-    def send_command(self, device_id, command_type, params, inject=None):
+    def send_command(self, device_id, command_type, params, inject=None, cage_id=None):
         with self.lock:
             self._seq += 1
             ymd = datetime.now().strftime("%Y%m%d")
+            now = int(time.time() * 1000)
             cmd = {
                 "command_id": "cmd_%s_%04d" % (ymd, self._seq),
                 "device_id": device_id,
+                "cage_id": cage_id,
                 "command_type": command_type,
                 "params": params or {},
                 "timeout_ms": 5000,      # 裁定 8
                 "max_retry": 3,          # 裁定 8
                 "command_status": "created",
                 "retry_count": 0,
-                "state_changed_ts": int(time.time() * 1000),
-                "ts": int(time.time() * 1000),
+                "state_changed_ts": now,
+                "ts": now,
+                "created_ts": now,
                 "fail_reason": None,
                 "receipt_result": None,
                 "history": [],
@@ -955,8 +986,8 @@ class Platform(object):
            这个线程睡醒照样把命令推到 success，**"手动停止"变成一句空话**。
            现在每一步之前都检查一次，被停过就立刻收手。
         """
-        if inject in ("offline", "timeout"):
-            steps = ["created", "sent"]      # 发出去了，但等不到回执
+        if inject in ("offline", "timeout", "fail"):
+            steps = ["created", "sent"]      # 发出去了，但等不到回执 / 执行失败
         else:
             steps = ["created", "sent", "acknowledged", "success"]
 
@@ -998,6 +1029,11 @@ class Platform(object):
             cmd["fail_reason"] = "设备离线，命令未能送达"
             self._set(cmd, "failed")
             self._raise_command_alarm(cmd)
+        elif inject == "fail":
+            time.sleep(1.2)
+            cmd["fail_reason"] = "设备回执执行失败"
+            self._set(cmd, "failed")
+            self._raise_command_alarm(cmd)
 
     def _set(self, cmd, status):
         with self.lock:
@@ -1012,7 +1048,8 @@ class Platform(object):
             n = len(self.alarms) + 1
             self.alarms.insert(0, {
                 "alarm_event_id": "ALM-%04d" % n,
-                "alarm_type": "power_supply" if cmd["command_type"] == "light" else "tension",
+                "cage_id": cmd.get("cage_id"),
+                "alarm_type": "command",
                 "risk_level": "red",
                 "alarm_status": "active",
                 "alarm_ts": now,
@@ -1024,13 +1061,14 @@ class Platform(object):
                 "rule_condition": "command_status == failed 且 重试耗尽",
                 "combine_condition": None,
                 "trigger_snapshot": {"command_id": cmd["command_id"], "device_id": cmd["device_id"],
+                                     "cage_id": cmd.get("cage_id"),
                                      "retry_count": cmd["retry_count"], "ts": now},
                 "handling_advice": "检查设备与链路；确认设备是否真的没动",
                 "handle_status": "pending",
                 "confirm_status": "unconfirmed",
             })
 
-    def feed_records(self):
+    def feed_records(self, cage_id=None):
         """投喂记录 —— **从真实命令派生，不再凭空生成**。
 
         🔴 2026-10-07 改（组员反馈「投喂要能手动停止」时暴露的）：
@@ -1039,17 +1077,21 @@ class Platform(object):
            因为那些命令号**后端根本没有**。这就是"编数据"埋的雷：
            静态看一眼没事，一交互就穿帮。
 
-           现在改成从 self.commands 里筛（设备=feeder_01 且类型=feed），
+           现在改成从 self.commands 里筛（类型=feed），
            每一条都是真命令，都有真实状态机历史，都能被停止。
            历史之所以不为空，是因为启动时预置了几条**真实存在**的命令（见 _seed_commands）。
         """
         out = []
         for c in self.commands:
-            if c.get("device_id") != "feeder_01" or c.get("command_type") != "feed":
+            if c.get("command_type") != "feed":
+                continue
+            if cage_id and c.get("cage_id") != cage_id:
                 continue
             st = c.get("command_status")
             out.append({
                 "ts": c.get("created_ts") or (c.get("history") or [{}])[0].get("ts"),
+                "cage_id": c.get("cage_id"),
+                "device_id": c.get("device_id"),
                 "amount_kg": (c.get("params") or {}).get("amount_kg"),
                 "trigger_by": (c.get("params") or {}).get("trigger_by", "manual"),
                 "task_status": "done" if st in ("success", "failed", "escalated", "cancelled") else "running",
@@ -1078,7 +1120,7 @@ class Platform(object):
             ymd = datetime.fromtimestamp(ts / 1000).strftime("%Y%m%d")
             self.commands.append({
                 "command_id": "cmd_%s_%04d" % (ymd, self._seq),
-                "device_id": "feeder_01", "command_type": "feed",
+                "device_id": "feeder_01", "cage_id": "cage_01", "command_type": "feed",
                 "params": {"amount_kg": kg, "duration_s": 60, "trigger_by": trigger},
                 "timeout_ms": 5000, "max_retry": 3,
                 "command_status": st, "retry_count": 0, "fail_reason": None,
@@ -1100,16 +1142,20 @@ class Platform(object):
         if not row or row.get("water_temp") is None:
             return None
         t = row["water_temp"]
-        if t >= 28.0:
-            return {"alarm_type": "tilt", "risk_level": "red", "trigger_field": "water_temp",
-                    "trigger_value": t, "trigger_threshold": 28.0,
-                    "rule_id": "R-TEMP-01", "rule_name": "水温上限告警",
-                    "rule_condition": "water_temp >= 28.0（大黄鱼高告警线，见鱼种温度库）"}
-        if t >= 25.5:
-            return {"alarm_type": "tilt", "risk_level": "yellow", "trigger_field": "water_temp",
-                    "trigger_value": t, "trigger_threshold": 25.5,
-                    "rule_id": "R-TEMP-02", "rule_name": "水温偏高提示",
-                    "rule_condition": "water_temp >= 25.5（大黄鱼高提示线，见鱼种温度库）"}
+        site = next((s for s in SITES if s["site_id"] == row.get("site_id")), SITES[0])
+        thresholds = temp_of(site.get("species")) or temp_of((FARM.cage("cage_01") or {}).get("species")) or {}
+        rules = (("temp_alarm_high", "red", "01", "水温上限告警", ">="),
+                 ("temp_alarm_low", "red", "03", "水温下限告警", "<="),
+                 ("temp_warn_high", "yellow", "02", "水温偏高提示", ">="),
+                 ("temp_warn_low", "yellow", "04", "水温偏低提示", "<="))
+        for field, level, suffix, name, op in rules:
+            limit = thresholds.get(field)
+            if limit is not None and (t >= limit if op == ">=" else t <= limit):
+                return {"alarm_type": "water_temp", "risk_level": level, "trigger_field": "water_temp",
+                        "trigger_value": t, "trigger_threshold": limit,
+                        "site_id": site["site_id"], "cage_id": site.get("cage_id"),
+                        "rule_id": "R-TEMP-" + suffix, "rule_name": name,
+                        "rule_condition": "water_temp %s %s（鱼种温度库）" % (op, limit)}
         return None
 
 
@@ -1295,11 +1341,24 @@ class Handler(BaseHTTPRequestHandler):
             })
 
         if p == "/api/farm/devices":
-            devs = FARM.devices()
+            cid = one("cage_id", "")
+            devs = FARM.devices(cid or None)
+            # 台账（厂商/校准/位置/中文名）+ 运行状态（模拟器）按 device_id 合并。
+            # 没有运行状态的设备**不补假状态**，页面显示「状态未接入」。
+            status = {d["device_id"]: d for d in PLATFORM.devices}
+            for d in devs:
+                s = status.get(d["device_id"])
+                if s:
+                    d["device_online"] = s.get("device_online")
+                    d["device_state"] = s.get("device_state")
+                    d["device_params"] = s.get("device_params") or {}
             return self._json({
                 "count": len(devs),
+                "cage_id": cid or None,
                 "devices": devs,
                 "summary": FARM.summary(),
+                "status_source": "simulated",
+                "status_note": "设备运行状态由平台模拟器生成；provenance=pending_confirmation 的厂商与校准记录尚未确认",
             })
 
         # NDBC 直连：状态查询 + 显式拉取
@@ -1387,16 +1446,24 @@ class Handler(BaseHTTPRequestHandler):
                 minutes, one("storm", "0") in ("1", "true"), cage_id))
 
         if p == "/api/feed/decision":
-            return self._json(feed_decision())
+            cid = one("cage_id", "cage_01")
+            if cid not in ("cage_01", "cage_02") or not FARM.cage(cid):
+                return self._err(404, "网箱不存在")
+            return self._json(feed_decision(cid))
 
         if p == "/api/feed/records":
-            return self._json(PLATFORM.feed_records())
+            cid = one("cage_id", "")
+            return self._json(PLATFORM.feed_records(cid or None))
 
         if p == "/api/devices":
-            return self._json(PLATFORM.devices)
+            cid = one("cage_id", "")
+            return self._json([d for d in PLATFORM.devices
+                               if not cid or d.get("cage_id") == cid])
 
         if p == "/api/commands":
-            return self._json(PLATFORM.commands)
+            cid = one("cage_id", "")
+            return self._json([c for c in PLATFORM.commands
+                               if not cid or c.get("cage_id") == cid])
 
         m = re.match(r"^/api/commands/([^/]+)$", p)
         if m:
@@ -1524,9 +1591,14 @@ class Handler(BaseHTTPRequestHandler):
                 ctype = body.get("command_type")
                 if not did or not ctype:
                     return self._err(400, "参数错误：缺少 device_id 或 command_type")
-                if did not in [d["device_id"] for d in PLATFORM.devices]:
-                    return self._err(404, "设备号不存在：%s" % did)
-                cmd = PLATFORM.send_command(did, ctype, body.get("params"), body.get("inject"))
+                try:
+                    dev = command_target(did, ctype, body.get("cage_id"))
+                except LookupError as e:
+                    return self._err(404, str(e))
+                except ValueError as e:
+                    return self._err(400, str(e))
+                cmd = PLATFORM.send_command(did, ctype, body.get("params"),
+                                            body.get("inject"), dev.get("cage_id"))
                 return self._json(cmd)
 
             m = re.match(r"^/api/alarms/([\w\-]+)/(confirm|handle)$", p)

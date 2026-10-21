@@ -80,12 +80,14 @@
     catch (e) { /* 无会话存储时仅当前页面保持状态 */ }
   }
   function selectedCageId() {
+    if (global.CurrentCage && global.CurrentCage.get) return global.CurrentCage.get();
     try { return global.sessionStorage.getItem('struct-cage-id') === 'cage_02' ? 'cage_02' : 'cage_01'; }
     catch (e) { return 'cage_01'; }
   }
   function selectCage(id) {
     if (id !== 'cage_01' && id !== 'cage_02' || this.cageId === id) return;
     this.cageId = id;
+    if (global.CurrentCage && global.CurrentCage.set) global.CurrentCage.set(id);
     try { global.sessionStorage.setItem('struct-cage-id', id); } catch (e) { /* 当前页面仍可切换 */ }
     if (this.series) this.series = [];
     if (this.netHistory) this.netHistory = [];
@@ -94,12 +96,41 @@
     if (this.syncCageSpec) this.syncCageSpec();
     if (this.load) this.load();
   }
+  function bindCurrentCage(page) {
+    const current = global.CurrentCage;
+    if (!current || !current.subscribe) return;
+    page.unsubCage = current.subscribe(function (id) { selectCage.call(page, id); });
+    selectCage.call(page, current.get());
+  }
+  function unbindCurrentCage(page) {
+    if (page.unsubCage) { page.unsubCage(); page.unsubCage = null; }
+    if (Number.isFinite(page.requestId)) page.requestId++;
+  }
+  function cageSiteLabel() {
+    this.tick;
+    const farm = (global.API && global.API.farm && global.API.farm()) || {};
+    const cage = (farm.cages || []).find(function (item) { return item.cage_id === this.cageId; }, this);
+    const site = cage && (farm.sites || []).find(function (item) { return item.site_id === cage.site_id; });
+    return (cage && cage.site_name) || (site && site.site_name) || '海域待配置';
+  }
+  function cageEnvironment(page, storm) {
+    if (storm) return API.env('site_01', page.minutes, { storm: true });
+    const farm = API.farm() || {};
+    const cage = (farm.cages || []).find(function (item) { return item.cage_id === page.cageId; });
+    const current = global.CurrentCage;
+    const site = (cage && cage.site_id) || (current && current.get() === page.cageId && current.site && current.site());
+    return site ? API.env(site, page.minutes, { storm: false }) : { fast: [] };
+  }
   function cageSwitchMarkup() {
     return '<div class="struct-cage-switch" role="group" aria-label="养殖网箱切换">' +
-      '<span class="struct-switch-label">模拟养殖站点 · 当前网箱</span>' +
+      /* 🔴 2026-10-20 队长修：这里原来写死「模拟养殖站点」。
+       但 10-16 会上定 site_01 已改名「仿真演示站点」，两个养殖网箱也迁到了
+       site_04 嵊山 / site_03 小麦岛 —— 页面还显示旧名，和「生产管理·网箱与站点」
+       以及顶栏切换器对不上。改成显示该网箱的**实际所在海域**。 */
+'<span class="struct-switch-label">{{ cageSiteLabel }} · 当前网箱</span>' +
       '<button type="button" :class="{primary:cageId === \'cage_01\'}" :aria-pressed="cageId === \'cage_01\'" @click="selectCage(\'cage_01\')">1 号网箱</button>' +
       '<button type="button" :class="{primary:cageId === \'cage_02\'}" :aria-pressed="cageId === \'cage_02\'" @click="selectCage(\'cage_02\')">2 号网箱</button>' +
-      '<span class="small muted">两箱共用站点海况，结构数据分别展示</span></div>';
+      '<span class="small muted">当前网箱所在海域海况，结构数据分别展示</span></div>';
   }
   // 以下数组是逐测点的前端接入格式；只有数组存在时才计算已上报测点的最大值。
   // mooring_lines: [{chain_id, anchor_id, anchor_tension, design_tension}]
@@ -349,283 +380,11 @@
     ].join('\n');
   }
 
-  function mountCageModel(canvas) {
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return { setSpec: function () {}, dispose: function () {} };
-    const view = { yaw: 0.65, pitch: 0.46, zoom: 1, mooring: false,
-                   length: 5, breadth: 2, depth: 1.65, variant: 'cage_01' };
-    const reducedMotion = global.matchMedia && global.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    let width = 0, height = 0, raf = 0, previous = 0, dragging = false, lastX = 0, lastY = 0;
-    let stillUntil = 0, specKey = '', cy = 1, sy = 0, cp = 1, sp = 0;
-
-    function setSpec(spec, cageId) {
-      const length = validNumber(spec && spec.length_m);
-      const breadth = validNumber(spec && spec.width_m);
-      const depth = validNumber(spec && spec.depth_m);
-      const key = [cageId, spec && spec.shape, length, breadth, depth].join(':');
-      if (key === specKey) return;
-      specKey = key;
-      view.variant = cageId === 'cage_02' ? 'cage_02' : 'cage_01';
-      // 旧配置仍是圆形周长，不能把它换算成桁架式网箱的长和宽。
-      if (spec && spec.shape === '桁架式' && length > 0 && breadth > 0 && depth > 0) {
-        view.breadth = Math.max(1.7, Math.min(3.4, 5 * breadth / length));
-        view.depth = Math.max(1.25, Math.min(2.6, 5 * depth / length));
-      } else {
-        // 两箱的桁架比例仅作概念区分；farm.json 目前仍是旧圆形规格。
-        view.breadth = view.variant === 'cage_02' ? 2.55 : 2;
-        view.depth = view.variant === 'cage_02' ? 1.48 : 1.65;
-      }
-    }
-    function resize() {
-      width = canvas.clientWidth || 480;
-      height = canvas.clientHeight || 320;
-      const ratio = Math.min(global.devicePixelRatio || 1, 2);
-      canvas.width = Math.round(width * ratio);
-      canvas.height = Math.round(height * ratio);
-      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-    }
-    function project(p) {
-      const x = p[0] * cy - p[2] * sy;
-      const z = p[0] * sy + p[2] * cy;
-      const y = p[1] + view.depth * 0.46;
-      const raised = y * cp - z * sp;
-      const forward = y * sp + z * cp;
-      const distance = 9.2 / view.zoom - forward;
-      const scale = Math.min(width, height) * 1.4 / distance;
-      return { x: width * 0.5 + x * scale, y: height * 0.46 - raised * scale, z: distance };
-    }
-    function trace(points) {
-      points.forEach(function (p, i) {
-        const q = project(p);
-        if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y);
-      });
-    }
-    function line(points, color, weight) {
-      ctx.beginPath(); trace(points); ctx.strokeStyle = color; ctx.lineWidth = weight; ctx.stroke();
-    }
-    function surface(points, fill) {
-      ctx.beginPath(); trace(points); ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
-    }
-    function drawEnvironment() {
-      const backdrop = ctx.createLinearGradient(0, 0, 0, height);
-      backdrop.addColorStop(0, '#becdd1');
-      backdrop.addColorStop(0.38, '#7798a1');
-      backdrop.addColorStop(1, '#183b4a');
-      ctx.fillStyle = backdrop; ctx.fillRect(0, 0, width, height);
-      const floor = -view.depth - 0.62;
-      surface([[-5, floor, -5], [5, floor, -5], [5, floor, 5], [-5, floor, 5]],
-              'rgba(19,47,58,.36)');
-      for (let d = -4; d <= 4; d += 1) {
-        line([[d, floor + 0.01, -4], [d, floor + 0.01, 4]], 'rgba(207,228,226,.13)', 1);
-        line([[-4, floor + 0.01, d], [4, floor + 0.01, d]], 'rgba(207,228,226,.13)', 1);
-      }
-      surface([[-5, 0, -5], [5, 0, -5], [5, 0, 5], [-5, 0, 5]],
-              'rgba(175,219,221,.11)');
-      for (let d = -4; d <= 4; d += 1) {
-        line([[d, 0, -4], [d, 0, 4]], 'rgba(238,248,245,.11)', 1);
-        line([[-4, 0, d], [4, 0, d]], 'rgba(238,248,245,.11)', 1);
-      }
-    }
-    function mix(a, b, t) {
-      return a.map(function (value, i) { return value + (b[i] - value) * t; });
-    }
-    function drawTube(a, b, kind) {
-      const pa = project(a), pb = project(b);
-      const factor = 8 / ((pa.z + pb.z) / 2);
-      if (kind === 'netMesh') {
-        line([a, b], 'rgba(189,226,220,.44)', Math.max(0.55, factor * 0.75));
-        return;
-      }
-      const size = (kind === 'floatColumn' ? 12 : kind === 'float' ? 10 :
-                    kind === 'main' ? 5.5 :
-                    kind === 'brace' ? 3.2 : kind === 'chain' ? 2.8 : 2) * factor;
-      ctx.lineCap = 'round';
-      line([a, b], kind === 'chain' ? '#4b3e32' : '#1a3038', size + 2);
-      line([a, b], kind === 'float' || kind === 'floatColumn' ? '#506c77' :
-           kind === 'chain' ? '#c8a970' : kind === 'netEdge' ? '#adc8c3' :
-           kind === 'netTie' ? '#c2d1cb' : '#637d85', size);
-      if (kind !== 'chain' && kind !== 'netEdge') {
-        line([a, b], 'rgba(204,222,221,.72)', Math.max(0.8, size * 0.18));
-      }
-    }
-    function draw() {
-      if (!width || !height) resize();
-      cy = Math.cos(view.yaw); sy = Math.sin(view.yaw);
-      cp = Math.cos(view.pitch); sp = Math.sin(view.pitch);
-      drawEnvironment();
-      const halfL = view.length / 2, halfB = view.breadth / 2;
-      const innerL = halfL - 0.35, innerB = halfB - 0.32;
-      const top = 0.34, lower = -0.24, bottom = -view.depth;
-      const outer = [[-halfL, -halfB], [halfL, -halfB], [halfL, halfB], [-halfL, halfB]];
-      const inner = [[-innerL, -innerB], [innerL, -innerB], [innerL, innerB], [-innerL, innerB]];
-      const parts = [];
-      function member(a, b, kind) {
-        parts.push({ z: (project(a).z + project(b).z) / 2,
-          draw: function () { drawTube(a, b, kind); } });
-      }
-      function panel(corners, fill) {
-        const z = corners.reduce(function (sum, p) { return sum + project(p).z; }, 0) / corners.length;
-        parts.push({ z: z, draw: function () { surface(corners, fill); } });
-      }
-      function mesh(corners, across, down) {
-        panel(corners, 'rgba(111,174,177,.13)');
-        for (let i = 0; i <= across; i++) {
-          const t = i / across;
-          member(mix(corners[0], corners[1], t), mix(corners[3], corners[2], t),
-                 i === 0 || i === across ? 'netEdge' : 'netMesh');
-        }
-        for (let j = 0; j <= down; j++) {
-          const t = j / down;
-          member(mix(corners[0], corners[3], t), mix(corners[1], corners[2], t),
-                 j === 0 || j === down ? 'netEdge' : 'netMesh');
-        }
-      }
-      // 网衣挂在内侧框架上，四个侧面各成一片，底面封闭。
-      for (let side = 0; side < 4; side++) {
-        const a = inner[side], b = inner[(side + 1) % 4];
-        mesh([[a[0], lower, a[1]], [b[0], lower, b[1]],
-              [b[0], bottom, b[1]], [a[0], bottom, a[1]]], side % 2 ? 7 : 11, 9);
-      }
-      mesh(inner.map(function (p) { return [p[0], bottom, p[1]]; }), 11, 7);
-
-      // 上下弦、立杆、斜撑构成连续的空间钢桁架，不再使用圆形浮圈算法。
-      for (let side = 0; side < 4; side++) {
-        const a = outer[side], b = outer[(side + 1) % 4];
-        const ia = inner[side], ib = inner[(side + 1) % 4];
-        const bays = side % 2 ? (view.variant === 'cage_02' ? 4 : 3) :
-          (view.variant === 'cage_02' ? 6 : 5);
-        panel([[a[0], top, a[1]], [b[0], top, b[1]],
-               [ib[0], top, ib[1]], [ia[0], top, ia[1]]], 'rgba(54,78,87,.82)');
-        for (let bay = 0; bay < bays; bay++) {
-          const p = [mix(a, b, bay / bays), mix(a, b, (bay + 1) / bays)];
-          const x = p[0], y = p[1];
-          const netAtBay = mix(ia, ib, bay / bays);
-          member([x[0], top, x[1]], [y[0], top, y[1]], 'main');
-          member([x[0], lower, x[1]], [y[0], lower, y[1]], 'main');
-          member([x[0], bottom, x[1]], [y[0], bottom, y[1]], 'brace');
-          member([x[0], top, x[1]], [x[0], bottom, x[1]], 'main');
-          member([x[0], top, x[1]], [y[0], lower, y[1]], 'brace');
-          if (bay % 2 === 0) member([x[0], lower, x[1]], [y[0], bottom, y[1]], 'brace');
-          // 工作通道外缘的护栏，以及网衣边纲与内框之间的连接线。
-          member([x[0], top, x[1]], [x[0], top + 0.34, x[1]], 'rail');
-          member([x[0], top + 0.34, x[1]], [y[0], top + 0.34, y[1]], 'rail');
-          member([x[0], lower, x[1]],
-                 [netAtBay[0], lower - 0.05, netAtBay[1]], 'netTie');
-        }
-        member([b[0], top, b[1]], [b[0], bottom, b[1]], 'main');
-        member([b[0], top, b[1]], [b[0], top + 0.34, b[1]], 'rail');
-        member([ia[0], top, ia[1]], [ib[0], top, ib[1]], 'main');
-        member([a[0], top, a[1]], [ia[0], top, ia[1]], 'brace');
-      }
-      // 两侧浮力构件和立柱只表达构造，不代表真实浮力参数。
-      [-halfB, halfB].forEach(function (z) {
-        member([-halfL, 0.08, z], [halfL, 0.08, z], 'float');
-        [-halfL, -halfL / 3, halfL / 3, halfL].forEach(function (x) {
-          member([x, top, z], [x, -0.64, z], 'floatColumn');
-        });
-      });
-      // 四角导缆点 → 悬垂段 → 海床着地点 → 铺底段 → 锚；曲线只是几何示意。
-      outer.forEach(function (corner, index) {
-        const sx = Math.sign(corner[0]), sz = Math.sign(corner[1]);
-        const floor = bottom - 0.6;
-        const fairlead = [corner[0], lower, corner[1]];
-        const touchdown = [corner[0] + sx * 1.0, floor, corner[1] + sz * 0.64];
-        const anchor = [corner[0] + sx * 1.42, floor, corner[1] + sz * 0.91];
-        let previousPoint = fairlead;
-        for (let i = 1; i <= 14; i++) {
-          const t = i / 14;
-          const horizontal = mix([fairlead[0], fairlead[2]],
-                                 [touchdown[0], touchdown[2]], t);
-          const nextPoint = [horizontal[0], floor + (fairlead[1] - floor) * (1 - t) * (1 - t),
-                             horizontal[1]];
-          member(previousPoint, nextPoint, 'chain');
-          previousPoint = nextPoint;
-        }
-        member(touchdown, anchor, 'chain');
-        parts.push({ z: project(fairlead).z, draw: function () {
-          const q = project(fairlead);
-          ctx.beginPath(); ctx.arc(q.x, q.y, 3.2, 0, Math.PI * 2);
-          ctx.fillStyle = '#e8c887'; ctx.fill();
-          ctx.strokeStyle = '#293943'; ctx.lineWidth = 1.2; ctx.stroke();
-        } });
-        parts.push({ z: project(anchor).z, draw: function () {
-          const q = project(anchor);
-          ctx.fillStyle = '#2b4148';
-          ctx.beginPath();
-          ctx.moveTo(q.x - 8, q.y + 2); ctx.lineTo(q.x + 8, q.y + 2);
-          ctx.lineTo(q.x + 4, q.y - 5); ctx.lineTo(q.x - 4, q.y - 5);
-          ctx.closePath(); ctx.fill();
-          ctx.strokeStyle = '#b6c8c5'; ctx.lineWidth = 1; ctx.stroke();
-          if (view.mooring) {
-            ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = '#f0f8f5';
-            ctx.shadowColor = '#102b35'; ctx.shadowBlur = 3;
-            ctx.fillText('锚 ' + (index + 1), q.x + 7, q.y - 7);
-            ctx.shadowBlur = 0;
-          }
-        } });
-      });
-      parts.sort(function (a, b) { return b.z - a.z; });
-      parts.forEach(function (part) { part.draw(); });
-    }
-    function frame(now) {
-      const elapsed = previous ? Math.min(50, now - previous) : 0;
-      previous = now;
-      if (!dragging && !reducedMotion && now > stillUntil) view.yaw += elapsed * 0.00012;
-      draw();
-      raf = global.requestAnimationFrame(frame);
-    }
-    function onDown(event) {
-      dragging = true; lastX = event.clientX; lastY = event.clientY;
-      canvas.setPointerCapture(event.pointerId);
-    }
-    function onMove(event) {
-      if (!dragging) return;
-      view.yaw += (event.clientX - lastX) * 0.008;
-      view.pitch = Math.max(0.12, Math.min(1.05, view.pitch + (event.clientY - lastY) * 0.005));
-      lastX = event.clientX; lastY = event.clientY;
-      stillUntil = global.performance.now() + 12000;
-    }
-    function onUp() { dragging = false; }
-    function onWheel(event) {
-      event.preventDefault();
-      view.zoom = Math.max(0.68, Math.min(1.36, view.zoom - event.deltaY * 0.0007));
-      stillUntil = global.performance.now() + 12000;
-    }
-    canvas.addEventListener('pointerdown', onDown);
-    canvas.addEventListener('pointermove', onMove);
-    canvas.addEventListener('pointerup', onUp);
-    canvas.addEventListener('pointercancel', onUp);
-    canvas.addEventListener('wheel', onWheel, { passive: false });
-    const observer = global.ResizeObserver ? new global.ResizeObserver(resize) : null;
-    if (observer) observer.observe(canvas); else global.addEventListener('resize', resize);
-    resize();
-    raf = global.requestAnimationFrame(frame);
-    return {
-      setSpec: setSpec,
-      setMooringView: function (enabled) {
-        view.mooring = !!enabled;
-        view.zoom = enabled ? 0.6 : 1;
-        view.pitch = enabled ? 1.02 : 0.46;
-        stillUntil = global.performance.now() + 12000;
-      },
-      dispose: function () {
-        global.cancelAnimationFrame(raf);
-        if (observer) observer.disconnect(); else global.removeEventListener('resize', resize);
-        canvas.removeEventListener('pointerdown', onDown);
-        canvas.removeEventListener('pointermove', onMove);
-        canvas.removeEventListener('pointerup', onUp);
-        canvas.removeEventListener('pointercancel', onUp);
-        canvas.removeEventListener('wheel', onWheel);
-      }
-    };
-  }
-  // 供队长在总览首页、鱼类热力图复用同一套几何；只需传入 canvas。
-  global.StructTrussCage = { mount: mountCageModel };
-
   PAGES['/struct/alarm'] = {
-    data: function () { return { minutes: 60, series: [], netHistory: [], envSeries: [],
+    data: function () { return { tick: 0, minutes: 60, series: [], netHistory: [], envSeries: [],
       stormDemo: stormDemoActive(), picked: null, cageId: selectedCageId(), requestId: 0 }; },
     computed: {
+      cageSiteLabel: cageSiteLabel,
       last: function () { return this.series.length ? this.series[this.series.length - 1] : {}; },
       envLast: function () { return this.envSeries.length ? this.envSeries[this.envSeries.length - 1] : {}; },
       netValue: function () { return netDisplayValue(this.last); },
@@ -798,7 +557,7 @@
             self.netHistory = Array.isArray(d) ? d : [];
           });
         }
-        API.resolve(API.env('site_01', this.minutes, { storm: this.stormDemo }), function (d) {
+        API.resolve(cageEnvironment(this, this.stormDemo), function (d) {
           if (requestId !== self.requestId) return;
           self.envSeries = d && Array.isArray(d.fast) ? d.fast : [];
         });
@@ -818,11 +577,12 @@
       pick: function (e) { this.picked = e.hit || e; }
     },
     mounted: function () {
+      bindCurrentCage(this);
       /* API.bind：数据变化重算 + 定时刷新曲线 */
       this.unsub = API.bind(this, this.load);
       this.load();
     },
-    beforeUnmount: function () { if (this.unsub) { this.unsub(); this.unsub = null; } },
+    beforeUnmount: function () { unbindCurrentCage(this); if (this.unsub) { this.unsub(); this.unsub = null; } },
     watch: { minutes: function () { this.picked = null; this.load(); } },
     template: [
       '<div class="struct-page">',
@@ -831,6 +591,7 @@
       '    />',
       cageSwitchMarkup(),
       '  <div class="hint" style="margin-bottom:12px"><button type="button" @click="toggleStormDemo">{{ stormDemo ? \'恢复平常\' : \'演示大风大浪\' }}</button><span class="small" style="margin-left:10px">仅切换本地模拟器数据；下方预警由返回的浪高、逐链张力和倾角重新计算。</span></div>',
+      '  <div v-if="stormDemo" class="hint" style="margin-bottom:12px">大风大浪模拟演示中：海况来自仿真演示站点，不代表当前网箱所在海域的真实观测。</div>',
       '',
       '  <div class="grid-stats">',
       '    <stat-card class="is-primary is-status" name="当前最高预警等级" unit="" :value="worst.text" />',
@@ -843,7 +604,7 @@
       '  <div class="small muted" style="margin-top:8px">{{ netRuleText }}。该线按历史数据识别拉力升高，不代表网衣材料极限或破损结论。</div>',
       '',
       '  <div class="card" style="margin-top:12px">',
-      '    <div class="card-title">当前海况</div>',
+      '    <div class="card-title">{{ stormDemo ? \'仿真演示站点海况\' : \'当前网箱所在海域海况\' }}</div>',
       '    <div class="grid-stats">',
       '      <stat-card name="浪高" field="wave_height" unit="m" :value="envLast.wave_height" :quality="envLast.quality" :ts="envLast.ts" />',
       '      <stat-card name="风速" field="wind_speed" unit="m/s" :value="envLast.wind_speed" :quality="envLast.quality" :ts="envLast.ts" />',
@@ -899,11 +660,12 @@
   };
 
   PAGES['/struct/overview'] = {
-    data: function () { return { minutes: 60, series: [], netHistory: [], envSeries: [], cage: null,
+    data: function () { return { tick: 0, minutes: 60, series: [], netHistory: [], envSeries: [], cage: null,
       cageId: selectedCageId(), requestId: 0,
       mooringView: false, trussModelInfo: TRUSS_MODEL_INFO,
       mooringModelInfo: MOORING_MODEL_INFO, unsub: null, unsubFarm: null }; },
     computed: {
+      cageSiteLabel: cageSiteLabel,
       last: function () { return this.series.length ? this.series[this.series.length - 1] : {}; },
       envLast: function () { return this.envSeries.length ? this.envSeries[this.envSeries.length - 1] : {}; },
       scenarioActive: function () { return this.last.sim_scenario === 'storm'; },
@@ -986,10 +748,9 @@
         const farm = API.farm();
         const cages = farm && Array.isArray(farm.cages) ? farm.cages : [];
         const cage = cages.find(function (item) { return item.cage_id === this.cageId; }, this);
-        if (!cage) return;
-        if (this.cage !== cage) this.cage = cage;
+        if (this.cage !== cage) this.cage = cage || null;
         const canvas = this.$refs.cageCanvas;
-        if (canvas && canvas.__structViewer) canvas.__structViewer.setSpec(cage.spec, this.cageId);
+        if (canvas && canvas.__structViewer) canvas.__structViewer.setSpec(cage && cage.spec, this.cageId);
       },
       load: function () {
         const self = this;
@@ -998,7 +759,7 @@
           if (requestId !== self.requestId) return;
           self.series = Array.isArray(d) ? d : [];
         });
-        API.resolve(API.env('site_01', this.minutes, { storm: stormDemoActive() }), function (d) {
+        API.resolve(cageEnvironment(this, stormDemoActive()), function (d) {
           if (requestId !== self.requestId) return;
           self.envSeries = d && Array.isArray(d.fast) ? d.fast : [];
         });
@@ -1011,15 +772,16 @@
       }
     },
     mounted: function () {
+      bindCurrentCage(this);
       const canvas = this.$refs.cageCanvas;
-      if (canvas) canvas.__structViewer = mountCageModel(canvas);
+      if (canvas) canvas.__structViewer = global.StructTrussCage.mount(canvas);
       this.unsub = API.bind(this, this.load);
       const self = this;
       this.unsubFarm = API.subscribe(function () { self.syncCageSpec(); });
       this.syncCageSpec();
       this.load();
     },
-    beforeUnmount: function () {
+    beforeUnmount: function () { unbindCurrentCage(this);
       if (this.unsub) { this.unsub(); this.unsub = null; }
       if (this.unsubFarm) { this.unsubFarm(); this.unsubFarm = null; }
       const canvas = this.$refs.cageCanvas;
@@ -1032,7 +794,7 @@
       '    desc="汇总锚链、网衣和姿态的代表性状态与趋势；海况数据请查看灾害分级预警页。"',
       '    />',
       cageSwitchMarkup(),
-      '  <div v-if="scenarioActive" class="hint" style="margin-bottom:12px;background:#FFF7ED;border-color:#FDBA74">大风大浪模拟演示中：红色预警来自模拟数据。<a href="#/struct/alarm">到预警页恢复平常</a></div>',
+      '  <div v-if="scenarioActive" class="hint" style="margin-bottom:12px;background:#FFF7ED;border-color:#FDBA74">大风大浪模拟演示中：海况来自仿真演示站点，红色预警来自模拟数据，不代表当前海域真实观测。<a href="#/struct/alarm">到预警页恢复平常</a></div>',
       '',
       '  <div class="grid-stats">',
       '    <stat-card class="is-primary is-status" name="当前风险等级" field="risk_level" unit="" :value="riskText" :ts="last.ts" />',
@@ -1136,9 +898,10 @@
   }
 
   PAGES['/struct/detail'] = {
-    data: function () { return { section: 'anchor', minutes: 60, series: [], demoBaseTs: Date.now(),
+    data: function () { return { tick: 0, section: 'anchor', minutes: 60, series: [], demoBaseTs: Date.now(),
       cageId: selectedCageId(), requestId: 0, unsub: null }; },
     computed: {
+      cageSiteLabel: cageSiteLabel,
       last: function () { return this.series.length ? this.series[this.series.length - 1] : {}; },
       anchorLines: function () { return displayMooringLines(this.last); },
       anchorValue: function () { return anchorDisplayValue(this.last); },
@@ -1323,8 +1086,8 @@
         });
       }
     },
-    mounted: function () { this.unsub = API.bind(this, this.load); this.load(); },
-    beforeUnmount: function () { if (this.unsub) { this.unsub(); this.unsub = null; } },
+    mounted: function () { bindCurrentCage(this); this.unsub = API.bind(this, this.load); this.load(); },
+    beforeUnmount: function () { unbindCurrentCage(this); if (this.unsub) { this.unsub(); this.unsub = null; } },
     watch: { minutes: function () { this.load(); } },
     template: [
       '<div class="struct-page">',
@@ -1465,6 +1228,7 @@
   PAGES['/struct/rules'] = {
     data: function () { return { tick: 0, cageId: selectedCageId(), unsub: null }; },
     computed: {
+      cageSiteLabel: cageSiteLabel,
       fishRules: function () {
         this.tick;
         const farm = API.farm();
@@ -1505,10 +1269,11 @@
     },
     methods: { selectCage: selectCage },
     mounted: function () {
+      bindCurrentCage(this);
       const self = this;
       this.unsub = API.subscribe(function () { self.tick += 1; });
     },
-    beforeUnmount: function () { if (this.unsub) { this.unsub(); this.unsub = null; } },
+    beforeUnmount: function () { unbindCurrentCage(this); if (this.unsub) { this.unsub(); this.unsub = null; } },
     template: [
       '<div class="struct-page">',
       '  <page-head title="结构安全 · 规则配置" desc="查看规则的触发条件、等级与依据；当前为只读说明，试运行规则需现场标定。" />',

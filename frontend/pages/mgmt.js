@@ -311,7 +311,7 @@
     },
     computed: {
       d: function () { this.tick; return API.farmDevices(); },
-      devices: function () { const x = this.d; const rank = { overdue: 0, never: 1, soon: 2, ok: 3, na: 4 }; return ((x && x.devices) || []).slice().sort(function (a, b) { return (rank[a.cal_status.state] ?? 5) - (rank[b.cal_status.state] ?? 5); }); },
+      devices: function () { const x = this.d; const rank = { overdue: 0, never: 1, soon: 2, ok: 3, na: 4, unconfirmed: 0 }; return ((x && x.devices) || []).slice().sort(function (a, b) { return (rank[a.cal_status.state] ?? 5) - (rank[b.cal_status.state] ?? 5); }); },
       s: function () { const x = this.d; return (x && x.summary) || {}; }
     },
     methods: {
@@ -321,17 +321,19 @@
           soon:    { bg: '#FFFBEB', br: '#FDE68A', fg: '#92400E' },
           never:   { bg: '#FEF2F2', br: '#FECACA', fg: '#991B1B' },
           ok:      { bg: '#F0FDF4', br: '#86EFAC', fg: '#166534' },
-          na:      { bg: '#F3F4F6', br: '#E5E7EB', fg: '#6B7280' }
+          na:      { bg: '#F3F4F6', br: '#E5E7EB', fg: '#6B7280' },
+          unconfirmed: { bg: '#FFFBEB', br: '#FDE68A', fg: '#92400E' }
         }[st] || { bg: '#F3F4F6', br: '#E5E7EB', fg: '#6B7280' };
       },
       typeCn: function (t) {
-        return { sensor: '传感器', feeder: '投饵机', light: '灯具' }[t] || t;
+        return { sensor: '传感器', feeder: '投饵机', light: '灯具', crane: '网衣绞车' }[t] || t;
       },
       metricCn: function (m) {
         return { water_temp: '水温', dissolved_oxygen: '溶解氧', tilt: '倾角',
-                 anchor_tension: '锚泊张力', feed_rate: '投饵量', light_dimming: '调光' }[m] || m;
+                 anchor_tension: '锚泊张力', feed_rate: '投饵量', light_dimming: '调光',
+                 crane_action: '起重动作' }[m] || m;
       },
-      start: function (dev) { this.editing = dev.device_id; this.inst = dev.calibration.institution || ''; this.cert = ''; this.msg = ''; },
+      start: function (dev) { this.editing = dev.device_id; this.inst = (dev.calibration || {}).institution || ''; this.cert = ''; this.msg = ''; },
       cancel: function () { this.editing = null; },
       save: function (dev) {
         const self = this;
@@ -369,6 +371,7 @@
       '      <stat-card class="is-primary is-critical" :digits="0" name="已超期" field="overdue" unit="台" :value="s.cal_overdue" />',
       '      <stat-card :digits="0" name="即将到期" field="soon" unit="台" :value="s.cal_soon" />',
       '      <stat-card :digits="0" name="标定有效" field="ok" unit="台" :value="s.cal_ok" />',
+      '      <stat-card :digits="0" name="待确认出处" field="unconfirmed" unit="台" :value="s.cal_unconfirmed" />',
       '      <stat-card :digits="0" name="设备总数" field="devices" unit="台" :value="s.device_count" />',
       '    </div>',
       '',
@@ -385,21 +388,21 @@
       '            <th>上次标定</th><th>周期</th><th>下次到期</th><th>状态</th><th>标定机构 / 证书号</th><th></th></tr></thead>',
       '          <tbody>',
       '            <tr v-for="dev in devices" :key="dev.device_id">',
-      '              <td class="mono small">{{ dev.device_id }}</td>',
+      '              <td class="mono small">{{ dev.device_name_cn || dev.device_id }}<br><span class="muted">{{ dev.device_id }}</span></td>',
       '              <td class="small">{{ typeCn(dev.device_type) }} · {{ metricCn(dev.metric) }}</td>',
       '              <td class="small">{{ dev.location }}</td>',
-      '              <td class="mono small">{{ dev.installed }}</td>',
-      '              <td class="mono small">{{ dev.calibration.last || \'—\' }}</td>',
-      '              <td class="small">{{ dev.calibration.cycle_days ? dev.calibration.cycle_days + \' 天\' : \'—\' }}</td>',
+      '              <td class="mono small">{{ dev.installed || \'—\' }}</td>',
+      '              <td class="mono small">{{ dev.calibration ? (dev.calibration.last || \'—\') : \'—\' }}</td>',
+      '              <td class="small">{{ dev.calibration && dev.calibration.cycle_days ? dev.calibration.cycle_days + \' 天\' : \'—\' }}</td>',
       '              <td class="mono small">{{ dev.cal_status.due || \'—\' }}</td>',
       '              <td><span class="hd-badge"',
       '                    :style="{ background: stColor(dev.cal_status.state).bg, borderColor: stColor(dev.cal_status.state).br, color: stColor(dev.cal_status.state).fg }">',
       ' {{ dev.cal_status.label }}</span></td>',
-      '              <td class="small">{{ dev.calibration.institution || \'—\' }}<br>',
-      '                <span class="mono muted">{{ dev.calibration.cert_no || \'\' }}</span></td>',
+      '              <td class="small">{{ dev.calibration ? (dev.calibration.institution || \'—\') : \'—\' }}<br>',
+      '                <span class="mono muted">{{ dev.calibration ? (dev.calibration.cert_no || \'\') : \'\' }}</span></td>',
       '              <td style="white-space:nowrap">',
       '                <template v-if="editing !== dev.device_id">',
-      '                  <button v-if="dev.calibration.cycle_days" @click="start(dev)">记标定</button>',
+      '                  <button v-if="dev.calibration && dev.calibration.cycle_days" @click="start(dev)">记标定</button>',
       '                </template>',
       '                <template v-else>',
       '                  <input type="text" v-model="inst" placeholder="标定机构" style="width:150px">',
@@ -458,7 +461,8 @@
       lvCls: function (l) { return 'bg-' + (l || 'blue'); },
       typeCn: function (t) {
         return { tension: '锚泊张力', tilt: '网箱倾斜', net_damage: '网衣破损',
-                 deformation: '结构形变', low_battery: '低电量', power_supply: '供电异常' }[t] || t;
+                 deformation: '结构形变', low_battery: '低电量', power_supply: '供电异常',
+                 command: '指令异常' }[t] || t;
       },
       stCn: function (s) { return { active: '活跃', acknowledged: '已确认', recovered: '已恢复' }[s] || s; },
       hdCn: function (s) { return { pending: '待处置', handling: '处置中', handled: '已处置', failed: '处置失败' }[s] || s; },

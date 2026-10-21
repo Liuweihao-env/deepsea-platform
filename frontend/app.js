@@ -179,17 +179,32 @@
         return String(a.cage_id) < String(b.cage_id) ? -1 : 1;
       });
     }
-    function get() { return id; }
+    function get() {
+      const list = cages();
+      if (list.length && !list.some(function (c) { return c.cage_id === id; })) {
+        id = list[0].cage_id;
+        try {
+          window.localStorage.setItem(KEY, id);
+          window.localStorage.setItem('deepsea_cage', id);
+          window.__currentCage = id;
+          window.dispatchEvent(new CustomEvent('cagechange', { detail: { cage: id } }));
+        } catch (e) { /* 存储不可用时仍返回有效网箱 */ }
+        subs.slice().forEach(function (f) { try { f(id); } catch (e) { /* 不影响其余订阅者 */ } });
+      }
+      return id;
+    }
     function cage() {
       const list = cages();
-      for (let i = 0; i < list.length; i++) if (list[i].cage_id === id) return list[i];
+      const current = get();
+      for (let i = 0; i < list.length; i++) if (list[i].cage_id === current) return list[i];
       return null;
     }
     function site() { const c = cage(); return c ? c.site_id : null; }
     function siteName() { const c = cage(); return c ? (c.site_name || '') : ''; }
 
     function set(v) {
-      if (!v || v === id) return;
+      const list = cages();
+      if (!v || (list.length && !list.some(function (c) { return c.cage_id === v; })) || v === id) return;
       id = v;
       try { if (window.localStorage) window.localStorage.setItem(KEY, id); } catch (e) { /* 忽略 */ }
       for (let i = 0; i < subs.length; i++) {
@@ -225,6 +240,12 @@
              cages: cages, subscribe: subscribe };
   })();
   window.CurrentCage = CurrentCage;
+  /* 刷新后即同步旧页面读取的键，避免两种存储各指向一个网箱。 */
+  try {
+    window.__currentCage = CurrentCage.get();
+    window.localStorage.setItem('deepsea.currentCage', CurrentCage.get());
+    window.localStorage.setItem('deepsea_cage', CurrentCage.get());
+  } catch (e) { /* 隐私模式下继续使用内存状态 */ }
 
   /* ---------- 板块入口的告警小红点（老师意见 2026-10-09 第 2 条）----------
    老师原话：「挂鱼类/环境/结构安全/智能四入口；有未解除告警就亮（**不分等级**）；
@@ -379,10 +400,15 @@ const TABS = [
          红点跟着**告警的实际状态**走：告警解除（recovered）了，点自动灭；
          点进去是**不会消**的（老师要求）。 */
       this.unsub = (window.API && window.API.subscribe)
-        ? window.API.subscribe(function () { self.tick++; })
+        ? window.API.subscribe(function () { self.tick++; self.curCageId = CurrentCage.get(); })
         : null;
+      this.cageUnsub = CurrentCage.subscribe(function (id) { self.curCageId = id; });
       Router.start();
       window.addEventListener('error', function (e) { self.err = e.message; });
+    },
+    beforeUnmount: function () {
+      if (this.unsub) this.unsub();
+      if (this.cageUnsub) this.cageUnsub();
     },
     template: [
       '<div class="shell">',
@@ -435,6 +461,11 @@ const TABS = [
       '        <component :is="page" :key="path"></component>',
       '      </div>',
       '    </div>',
+      '  </div>',
+      '  <div class="project-signature" aria-label="中国海洋大学水产学院 · 世界小中海大队">',
+      '    <img class="signature-university" src="assets/ouc-emblem.png" alt="中国海洋大学校徽" />',
+      '    <img class="signature-college" src="assets/ouc-fisheries-official-mark.png" alt="中国海洋大学水产学院官方组合标" />',
+      '    <span>世界小中海大队</span>',
       '  </div>',
       '</div>'
     ].join('\n')

@@ -4,10 +4,8 @@
  * 供总览页、鱼类板块接入。无需第三方库；离线可用。
  *
  * 接入方式：
- * 1. 把本文件放到项目中，由队长在 frontend/index.html 的 pages/struct.js
- *    之后（如已加载该文件）、app.js 之前加载：
+ * 1. 在 frontend/index.html 的 pages/struct.js、pages/fish.js、app.js 之前加载：
  *    <script src="vendor/struct-truss-cage-standalone.js"></script>
- *    也可把本文件内容放进各自负责的页面文件（不要重复加载）。
  * 2. 页面中放一个 <canvas ref="cageCanvas"></canvas>。
  * 3. Vue mounted 中：
  *      this.cageViewer = window.StructTrussCage.mount(this.$refs.cageCanvas);
@@ -18,8 +16,7 @@
  *      if (this.cageViewer) this.cageViewer.dispose();
  *    查看系泊全貌：this.cageViewer.setMooringView(true);
  *
- * 提醒：现有 farm.json 的两箱规格仍记为圆形，不能直接据此计算桁架长宽；
- * 默认模型是结构概念示意，比例、锚位和设计载荷都不是现场施工数据。
+ * 提醒：外廓比例采用台账桁架长宽深；构件、锚位和设计载荷仍为结构概念示意。
  */
 (function (global) {
   'use strict';
@@ -27,6 +24,25 @@
     if (value === null || value === undefined || value === '') return null;
     const n = Number(value);
     return Number.isFinite(n) ? n : null;
+  }
+  function geometry(spec, cageId) {
+    const length = validNumber(spec && spec.length_m);
+    const breadth = validNumber(spec && spec.width_m);
+    const depth = validNumber(spec && spec.depth_m);
+    const confirmed = spec && spec.shape === '桁架式' && length > 0 && breadth > 0 && depth > 0;
+    const second = cageId === 'cage_02';
+    return { length: 5, breadth: confirmed ? 5 * breadth / length : second ? 2.55 : 2,
+      depth: confirmed ? 5 * depth / length : second ? 1.48 : 1.65 };
+  }
+  // 接口 X/Y 为水平坐标、Z 为向下水深；映射到同一内侧网衣，不改变状态颜色。
+  function mapPoint(point, dims, size) {
+    if (!point || !dims || !['x', 'y', 'z'].every(function (key) {
+      return validNumber(point[key]) !== null && validNumber(dims[key]) > 0;
+    })) return null;
+    function fraction(key) { return Math.max(0, Math.min(1, point[key] / dims[key])); }
+    return [(fraction('x') * 2 - 1) * (size.length / 2 - 0.35),
+      -0.24 - fraction('z') * (size.depth - 0.24),
+      (fraction('y') * 2 - 1) * (size.breadth / 2 - 0.32)];
   }
   if (global.document && !global.document.getElementById('struct-truss-standalone-style')) {
     const style = global.document.createElement('style');
@@ -38,12 +54,23 @@
   }
   function mountCageModel(canvas) {
     const ctx = canvas.getContext('2d');
-    if (!ctx) return { setSpec: function () {}, dispose: function () {} };
+    if (!ctx) return { setSpec: function () {}, setPointCloud: function () {},
+      setMooringView: function () {}, dispose: function () {} };
     const view = { yaw: 0.65, pitch: 0.46, zoom: 1, mooring: false,
                    length: 5, breadth: 2, depth: 1.65, variant: 'cage_01' };
     const reducedMotion = global.matchMedia && global.matchMedia('(prefers-reduced-motion: reduce)').matches;
     let width = 0, height = 0, raf = 0, previous = 0, dragging = false, lastX = 0, lastY = 0;
     let stillUntil = 0, specKey = '', cy = 1, sy = 0, cp = 1, sp = 0;
+    let cloud = [], cloudData = null;
+
+    function setPointCloud(data) {
+      cloudData = data;
+      cloud = data && Array.isArray(data.points) ? data.points.map(function (point, index) {
+        const target = mapPoint(point, data.dims, view);
+        return target ? { target: target, position: cloud[index] ? cloud[index].position : target.slice(),
+          state: point.s } : null;
+      }).filter(Boolean) : [];
+    }
 
     function setSpec(spec, cageId) {
       const length = validNumber(spec && spec.length_m);
@@ -53,15 +80,9 @@
       if (key === specKey) return;
       specKey = key;
       view.variant = cageId === 'cage_02' ? 'cage_02' : 'cage_01';
-      // 旧配置仍是圆形周长，不能把它换算成桁架式网箱的长和宽。
-      if (spec && spec.shape === '桁架式' && length > 0 && breadth > 0 && depth > 0) {
-        view.breadth = Math.max(1.7, Math.min(3.4, 5 * breadth / length));
-        view.depth = Math.max(1.25, Math.min(2.6, 5 * depth / length));
-      } else {
-        // 两箱的桁架比例仅作概念区分；farm.json 目前仍是旧圆形规格。
-        view.breadth = view.variant === 'cage_02' ? 2.55 : 2;
-        view.depth = view.variant === 'cage_02' ? 1.48 : 1.65;
-      }
+      Object.assign(view, geometry(spec, cageId));
+      cloud = [];
+      setPointCloud(cloudData);
     }
     function resize() {
       width = canvas.clientWidth || 480;
@@ -251,6 +272,17 @@
           }
         } });
       });
+      cloud.forEach(function (point) {
+        point.position.forEach(function (value, i) {
+          point.position[i] += (point.target[i] - value) * 0.08;
+        });
+        const q = project(point.position);
+        parts.push({ z: q.z, draw: function () {
+          ctx.beginPath(); ctx.arc(q.x, q.y, Math.max(1.4, 18 / q.z), 0, Math.PI * 2);
+          ctx.fillStyle = ['#59bfff', '#ff9e38', '#ff4747'][point.state] || '#59bfff';
+          ctx.fill();
+        } });
+      });
       parts.sort(function (a, b) { return b.z - a.z; });
       parts.forEach(function (part) { part.draw(); });
     }
@@ -289,6 +321,7 @@
     raf = global.requestAnimationFrame(frame);
     return {
       setSpec: setSpec,
+      setPointCloud: setPointCloud,
       setMooringView: function (enabled) {
         view.mooring = !!enabled;
         view.zoom = enabled ? 0.6 : 1;
@@ -296,6 +329,7 @@
         stillUntil = global.performance.now() + 12000;
       },
       dispose: function () {
+        cloud = []; cloudData = null;
         global.cancelAnimationFrame(raf);
         if (observer) observer.disconnect(); else global.removeEventListener('resize', resize);
         canvas.removeEventListener('pointerdown', onDown);
@@ -307,6 +341,8 @@
     };
   }
   global.StructTrussCage = {
+    geometry: geometry,
+    mapPoint: mapPoint,
     mount: function (canvas) {
       canvas.classList.add('struct-truss-share-canvas');
       return mountCageModel(canvas);

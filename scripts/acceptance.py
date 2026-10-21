@@ -62,7 +62,7 @@ def raw(base, path, timeout=10):
 
 # ======================================================================
 # 验收第 1 条：页面能打开，不白屏
-#   10-09 必交 13 页 + 2026-10-06 新增的管理板块 4 页 = 17 页
+#   当前菜单的 24 页（历史 13 页清单已扩展）
 # ======================================================================
 PAGES = [
     ("总览大屏",        "/overview"),
@@ -94,6 +94,8 @@ PAGES = [
     ("结构监测详情",    "/struct/detail"),
     ("智能设备状态",    "/ai/devices"),         # PR#1 李志成
     ("智能指令日志",    "/ai/commands"),
+    ("智能机械臂",      "/ai/crane"),
+    ("结构规则配置",    "/struct/rules"),
 ]
 
 
@@ -144,12 +146,10 @@ def check_1(base):
             bad.append("pages/%s(%s)" % (f, e))
 
     # 自动扫出所有注册的路由
-    found = set(re.findall(r"PAGES\['([^']+)'\]\s*=", js_all))
-    # 预期的 13+4 个路由，必须都在
+    registered_js = re.sub(r"/\*.*?\*/", "", js_all, flags=re.S)
+    found = set(re.findall(r"^\s*PAGES\['([^']+)'\]\s*=", registered_js, re.M))
+    # 当前 24 个菜单路由，必须都在（注释里的示例不算注册）
     missing = [n for n, p in PAGES if p not in found]
-
-    # 页面自检：每个注册的路由都要有 template（否则页面打开是白的）
-    no_tpl = [p for p in found if ("PAGES['%s']" % p) in js_all and p not in _routes_with_template(js_all)]
 
     if not bad and not missing:
         rec(1, "%d 个页面的资源与路由齐备" % len(PAGES), PASS,
@@ -180,21 +180,6 @@ def read_pages(base):
     return "\n".join(out)
 
 
-def _routes_with_template(js):
-    """扫出「注册了路由、并且带 template」的页面。
-
-    为什么要查 template：没有 template 的页面点进去就是白屏，
-    而白屏是最容易漏掉的一类问题（路由存在 ≠ 页面能看）。
-    """
-    out = set()
-    for m in re.finditer(r"PAGES\['([^']+)'\]\s*=\s*\{", js):
-        route = m.group(1)
-        tail = js[m.end():m.end() + 4000]
-        if re.search(r"\btemplate\s*:", tail):
-            out.add(route)
-    return out
-
-
 # ======================================================================
 # 验收第 2 条：一条竖线打通
 #   水温（仿真）→ 接口 → 曲线 → 越限 → 告警 → 可追溯
@@ -223,9 +208,11 @@ def check_2(base):
 
     over = [r for r in fast if r.get("water_temp") is not None and r["water_temp"] >= TEMP_ALARM]
 
-    # ③ 水温规则确实定义在系统里（R-TEMP-01 / 阈值按鱼种）
+    # ③ 水温规则确实定义在系统里，使用鱼种库的高低温四线。
     _, mock = raw(base, "/mock.js")
-    rule_ok = ("R-TEMP-01" in mock) and ("water_temp >= 28" in mock)
+    rule_ok = all(token in mock for token in (
+        "temp_alarm_high", "temp_alarm_low", "temp_warn_high", "temp_warn_low",
+        "row.water_temp >= limit", "row.water_temp <= limit", "'R-TEMP-'"))
 
     # ④ 越限页面的曲线卡挂了阈值参考线（图上能看出越限）
     pages = read_pages(base)
@@ -612,36 +599,37 @@ def check_ndbc(base):
             if bad in src:
                 problems.append("nmdis.py 里出现了 %r —— 它是纯本地数据源，不该联网" % bad)
 
-    # 6) 🔴 **真的把网断掉试一次** —— 这是「断网也能演示」唯一算数的证据。
-    #    把 urlopen 换成必抛异常的假函数，再问它要数据：
-    #    仍然出得来 → 证明渲染路径根本不碰网络。
+    # 6) 独立进程通过 Python audit hook 禁止联网，再读取真实本地数据源。
+    #    不替换 urlopen，不伪造数据，不修改系统网络设置和入库文件。
     offline_proof = ""
     try:
-        sys.path.insert(0, os.path.join(ROOT, "backend", "datasource", "public"))
-        import urllib.request as _u
-        import nmdis as _m                                 # noqa: PLC0415
-        orig = _u.urlopen
-
-        def _boom(*a, **k):
-            raise RuntimeError("网络已被切断（模拟断网）")
-
-        _u.urlopen = _boom
-        try:
-            env_off = _m.as_env({"site_id": "site_03", "station_id": "XMD"}, 60)
-        finally:
-            _u.urlopen = orig
+        code = """
+import json, sys
+def deny_network(event, args):
+    if event in ('socket.connect', 'socket.getaddrinfo'):
+        raise RuntimeError('offline acceptance: network denied')
+sys.addaudithook(deny_network)
+sys.path.insert(0, sys.argv[1])
+import nmdis
+print(json.dumps(nmdis.as_env({'site_id': 'site_03', 'station_id': 'XMD'}, 60)))
+"""
+        run = subprocess.run([sys.executable, "-c", code,
+                              os.path.join(ROOT, "backend", "datasource", "public")],
+                             capture_output=True, text=True, encoding="utf-8", timeout=15,
+                             check=True)
+        env_off = json.loads(run.stdout)
         if env_off and env_off.get("fast"):
             last = env_off["fast"][-1]
             ow = env_off.get("observation_window") or {}
-            offline_proof = ("断网模拟下仍取到 %d 个点（水温 %s，观测窗口 %s ~ %s）"
+            offline_proof = ("进程级禁止联网下仍读取 %d 个真实入库点（水温 %s，观测窗口 %s ~ %s）"
                              % (len(env_off["fast"]), last.get("water_temp"),
                                 ow.get("first") or "—", ow.get("last") or "—"))
         else:
-            problems.append("断网模拟下取不到数据 —— 说明渲染路径依赖网络")
+            problems.append("禁止联网下取不到本地台站数据")
     except Exception as e:                                  # noqa: BLE001
-        problems.append("断网模拟测试本身失败：%s" % e)
+        problems.append("进程级离线测试失败：%s" % e)
 
-    if not problems and real_ok and cached:
+    if not problems and real_ok and null_ok and cached:
         rec(8, "中国近海台站 + 断网可演示", PASS,
             "/api/sites 是裸数组（防回归）；%d 个台站有入库数据；观测站点返回中国近海实测数据"
             "（不测的字段给 null 不编）；%s；**%s** —— 现场拔网线不影响演示"
@@ -700,7 +688,7 @@ def check_config(base):
     except Exception as e:                                  # noqa: BLE001
         problems.append("取 /api/sites 失败：%s" % e)
 
-    # ③ 站点数 = 4（1 养殖 + 3 观测），浮标号必须是 42001/46001/51001
+    # ③ 两个养殖网箱；当前真实台站与体积另由第10条交叉核验。
     if len(cages) != 2:
         problems.append("网箱数应为 2，实际 %d" % len(cages))
 
@@ -710,6 +698,16 @@ def check_config(base):
         rec(9, "演示口径配置未被写歪", PASS,
             "cage_01 养大黄鱼、水温告警线 28.0℃、2 个网箱 —— "
             "farm.json 是单一事实来源，写歪会让全平台阈值跟着歪且页面看不出来")
+
+def check_captain(base):
+    from check_captain_data import check_current_cages
+    try:
+        problems, details = check_current_cages(base)
+    except Exception as e:                                  # noqa: BLE001
+        return rec(10, "当前网箱跨页数据契约与主数据一致", FAIL, str(e))
+    rec(10, "当前网箱跨页数据契约与主数据一致", FAIL if problems else PASS,
+        "；".join(problems or details + ["环境/离线/鱼类/结构实际HTTP与前端请求参数一致（浏览器联动另验）"]))
+
 
 # ======================================================================
 def free_port():
@@ -747,10 +745,18 @@ def main():
     print("=" * 68)
     print()
 
-    # 起临时服务
+    # 使用真实 Handler 和服务类；不进入 main 的旧 NDBC 后台刷新，避免验收联网/改缓存。
+    code = """
+import sys
+sys.path.insert(0, sys.argv[1])
+import server
+server.load_species_db()
+server.load_temp_db()
+server.sync_sites_from_farm()
+server.PlatformServer((sys.argv[2], int(sys.argv[3])), server.Handler).serve_forever()
+"""
     proc = subprocess.Popen(
-        [sys.executable, os.path.join(ROOT, "backend", "server.py"),
-         "--port", str(port), "--no-browser"],
+        [sys.executable, "-c", code, os.path.join(ROOT, "backend"), args.host, str(port)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         for _ in range(60):
@@ -776,6 +782,7 @@ def main():
         check_script_encoding()
         check_ndbc(base)
         check_config(base)
+        check_captain(base)
 
     finally:
         proc.terminate()
@@ -800,13 +807,14 @@ def main():
     # ---- 人工清单 ----
     print("  下面这些机器判不了，要你自己看一眼（双击 启动平台.bat 打开平台）：")
     print()
-    print("   [ ] 13 个页面逐个点开，都不白屏、都有内容")
-    print("   [ ] 每页右上角能看到「数据来源标签」（仿真数据 / 公开数据 …）")
+    print("   [ ] %d 个菜单页面逐个点开，都不白屏、都有内容；控制台没有错误" % len(PAGES))
+    print("   [ ] 观测时间保留，页面无已删除的来源标签；右下角署条窄屏不挡操作")
+    print("   [ ] 切换两网箱：顶栏、首页KPI、环境站点、结构模型和鱼类页同步，慢请求不串箱")
     print()
     print("   [ ] 环境·水质 → 点底部操作条的「触发水温骤升（造故障）」")
     print("         · 操作条右侧立刻出现红字：「已触发：水温骤升 —— 当前水温 xx ℃，命中「…」」")
     print("         · 上方「水温」数值卡跟着涨，曲线抬起来")
-    print("         · 页面顶部出现红色告警横幅 → 点「去追溯查询」能反查到规则与触发值")
+    print("         · 页面顶部出现红色告警横幅 → 点「告警中心」展开本行能反查规则与触发值")
     print()
     print("   [ ] 环境·水质 → 点「模拟设备离线（造故障）」")
     print("         · 上方 5 张数值卡应全部显示「—」和「设备离线」（不许显示上一个值）")

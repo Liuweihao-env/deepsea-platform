@@ -106,8 +106,12 @@
                                 cage_id: opts.cageId || 'cage_01' });
   };
   M.heatGrid = function () { return get('/api/heatmap').then(function (d) { return d.grid; }); };
-  M.feedDecision = function () { return get('/api/feed/decision'); };
-  M.feedRecords = function () { return get('/api/feed/records'); };
+  M.feedDecision = function (cageId) {
+    return get('/api/feed/decision', { cage_id: cageId || '' });
+  };
+  M.feedRecords = function (cageId) {
+    return get('/api/feed/records', { cage_id: cageId || '' });
+  };
   M.devices = function () { return M._devices || []; };
   M.commands = function () { return _cmds.slice(); };
   M.alarms = function () { return _alarms.slice(); };
@@ -126,6 +130,7 @@
   M.sendCommand = function (deviceId, type, params, opts) {
     const body = { device_id: deviceId, command_type: type, params: params || {} };
     if (opts && opts.inject) body.inject = opts.inject;
+    if (opts && opts.cageId) body.cage_id = opts.cageId;
     return post('/api/commands', body).then(function (c) { poll(); return c; });
   };
 
@@ -284,7 +289,12 @@
   /* 页面标准接法：一个取消函数管两件事（数据变化 + 定时刷新）。
      用法见上面的注释。 */
   M.bind = function (vm, load) {
-    var s1 = M.subscribe(function () { vm.tick++; });
+    var cageId = global.CurrentCage ? global.CurrentCage.get() + ':' + global.CurrentCage.site() : null;
+    var s1 = M.subscribe(function () {
+      vm.tick++;
+      var next = global.CurrentCage ? global.CurrentCage.get() + ':' + global.CurrentCage.site() : null;
+      if (next !== cageId) { cageId = next; load.call(vm); }
+    });
     var s2 = M.onSeriesRefresh(function () { load.call(vm); });
     return function () { s1(); s2(); };
   };

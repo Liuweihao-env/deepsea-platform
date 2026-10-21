@@ -32,7 +32,7 @@
         台站没有一个在渤海内部。本平台以**渤海海峡的芝罘岛**代表渤海这一格，
         如实标注；水质另取渤海内部监测点。**不假装「渤海里有浮标」。** */
   const SITES = [
-    { site_id: 'site_01', site_name: '模拟养殖站点',   kind: 'farm',   latitude: 26.10, longitude: 119.90, farming_depth_m: 20 },
+    { site_id: 'site_01', site_name: '仿真演示站点',   kind: 'farm',   latitude: 26.10, longitude: 119.90, farming_depth_m: 20 },
     { site_id: 'site_02', site_name: '中国近海观测站点 · 芝罘岛（渤海海峡）', kind: 'obs', station_id: 'ZFD', sea: '渤海海峡', latitude: 37.6, longitude: 121.4, farming_depth_m: 0 },
     { site_id: 'site_03', site_name: '中国近海观测站点 · 小麦岛（黄海）',   kind: 'obs', station_id: 'XMD', sea: '黄海',   latitude: 36.0, longitude: 120.4, farming_depth_m: 0 },
     { site_id: 'site_04', site_name: '中国近海观测站点 · 嵊山（东海）',     kind: 'obs', station_id: 'SSN', sea: '东海',   latitude: 30.8, longitude: 122.8, farming_depth_m: 0 },
@@ -292,6 +292,7 @@
     const cmd = {
       command_id: newCommandId(),
       device_id: deviceId,
+      cage_id: opts.cageId || null,
       command_type: type,
       params: params || {},
       timeout_ms: 5000,
@@ -463,17 +464,24 @@
     /* 「一条竖线」用的判定：水温越限 → 出告警 */
     ruleCheck: function (row) {
       if (!row || row.water_temp == null) return null;
-      if (row.water_temp >= 28.0) {
-        return { alarm_type: 'tilt', risk_level: 'red', trigger_field: 'water_temp',
-                 trigger_value: row.water_temp, trigger_threshold: 28.0,
-                 rule_id: 'R-TEMP-01', rule_name: '水温上限告警',
-                 rule_condition: 'water_temp >= 28.0（大黄鱼高告警线）' };
-      }
-      if (row.water_temp >= 25.5) {
-        return { alarm_type: 'tilt', risk_level: 'yellow', trigger_field: 'water_temp',
-                 trigger_value: row.water_temp, trigger_threshold: 25.5,
-                 rule_id: 'R-TEMP-02', rule_name: '水温偏高提示',
-                 rule_condition: 'water_temp >= 25.5（大黄鱼高提示线）' };
+      const site = API.sites().find(function (s) { return s.site_id === row.site_id; }) || {};
+      /* 纯静态演示缺鱼种库时，仅保留原有仿真站高温演示线。 */
+      const thresholds = site.temp_warn_high == null && site.temp_alarm_high == null && !API.remote
+        ? { temp_alarm_high: 28, temp_warn_high: 25.5 } : site;
+      const rules = [
+        ['temp_alarm_high', 'red', '01', '水温上限告警', '>='],
+        ['temp_alarm_low', 'red', '03', '水温下限告警', '<='],
+        ['temp_warn_high', 'yellow', '02', '水温偏高提示', '>='],
+        ['temp_warn_low', 'yellow', '04', '水温偏低提示', '<=']
+      ];
+      for (const r of rules) {
+        const limit = thresholds[r[0]];
+        if (limit != null && (r[4] === '>=' ? row.water_temp >= limit : row.water_temp <= limit)) {
+          return { alarm_type: 'water_temp', risk_level: r[1], trigger_field: 'water_temp',
+            trigger_value: row.water_temp, trigger_threshold: limit, site_id: row.site_id,
+            cage_id: site.cage_id || null, rule_id: 'R-TEMP-' + r[2], rule_name: r[3],
+            rule_condition: 'water_temp ' + r[4] + ' ' + limit + '（鱼种温度库）' };
+        }
       }
       return null;
     },

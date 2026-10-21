@@ -20,7 +20,7 @@ sandbox.API = {
     return [
       { site_id: 'site_01', site_name: '仿真演示站点', kind: 'farm' },
       { site_id: 'site_02', site_name: '中国近海观测站点 · 芝罘岛（渤海海峡）', kind: 'obs', station_id: 'ZFD' },
-      { site_id: 'site_03', site_name: '中国近海观测站点 · 小麦岛（黄海）', kind: 'obs', station_id: 'XMD' },
+      { site_id: 'site_03', site_name: '中国近海观测站点 · 小麦岛（黄海）', kind: 'obs', station_id: 'XMD', temp_alarm_high: 30, temp_warn_high: 25.5, temp_alarm_low: 4.3, temp_warn_low: 16.5 },
       { site_id: 'site_04', site_name: '中国近海观测站点 · 嵊山（东海）', kind: 'obs', station_id: 'SSN' },
       { site_id: 'site_05', site_name: '中国近海观测站点 · 遮浪（南海）', kind: 'obs', station_id: 'ZLG' }
     ];
@@ -82,7 +82,10 @@ assert(iRaw < iDebug, '水质页顺序：原始数据 → 调试面板');
 section('验收第 2 条关键字（一条竖线，不能删）');
 const all = sea.template + water.template;
 assert(all.indexOf('水温上限') >= 0, '模板含「水温上限」');
-assert(all.indexOf('28.0') >= 0 || all.indexOf('28') >= 0, '模板含 28.0 / 28');
+assert(water.template.indexOf(':info="waterThresholdInfo"') >= 0 &&
+  ['temp_warn_low', 'temp_alarm_low', 'temp_warn_high', 'temp_alarm_high'].every(function (key) {
+    return water.template.indexOf('waterThresholdSite.' + key) >= 0;
+  }), '水温帮助与表格绑定当前站点的四条鱼种温度阈值');
 assert(all.indexOf('#/mgmt/alarm') >= 0, '模板含追溯查询链接（去追溯查询看完整链路）');
 
 section('问题1：调试面板/原始数据所需方法已定义');
@@ -154,8 +157,8 @@ assert(water.watch.fast && water.watch.fast.deep, '水质页数据更新自动�
   const wt = water.computed.waterDots.call({ fast: wf });
   const wc = wt.map(function (d) { return d.itemStyle.color; });
   assert(wc.join(',') === '#D97706,#991B1B', '水温异常点：25.5 黄、28.0 红，空值跳过（实际：' + wc.join(',') + '）');
-  const wl = water.computed.waterLines.call({});
-  assert(wl.length === 2 && wl[0].yAxis === 28.0 && wl[1].yAxis === 25.5, '水温阈值线 28.0 / 25.5');
+  const wl = water.computed.waterLines.call({site:'site_03'});
+  assert(wl.length === 4 && wl[0].yAxis === 30 && wl[2].yAxis === 4.3, '水温四条参考线使用当前站点的鱼种参数，包含低温线');
 }
 assert(sea.template.indexOf('异常界定指标') >= 0, '海况页含异常界定指标表');
 assert(water.template.indexOf('异常界定指标') >= 0, '水质页含异常界定指标表');

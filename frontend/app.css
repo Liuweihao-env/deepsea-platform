@@ -617,6 +617,34 @@ button { min-height: 32px; }
 }
 .hero-cell { padding: 4px 8px; }
 
+/* 署条在骨架底部独占一行，避免覆盖滚动中的图表或操作条。 */
+.project-signature {
+  flex-shrink: 0;
+  align-self: flex-end;
+  margin: 6px 22px 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 14px;
+  border-radius: 6px;
+  background: #24456d;
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.signature-university { width: 34px; height: 34px; object-fit: contain; }
+.signature-college { width: 210px; height: auto; }
+.overview-kpis .stat-card-devices { grid-column: 1 / -1; }
+@media (max-width: 700px) {
+  .project-signature { margin: 5px 10px 8px; gap: 7px; padding: 6px 9px; font-size: 10px; }
+  .signature-university { width: 27px; height: 27px; }
+  .signature-college { width: 155px; }
+  .hero-row-top { grid-template-columns: 1fr; }
+  .hero-row-bottom { grid-template-columns: 1fr; }
+  .hero-tile { flex-wrap: wrap; }
+}
+
 /* 设备卡：分「在线 / 离线」两行，直接列设备名 */
 .stat-card-devices { display: flex; flex-direction: column; gap: 6px; }
 .stat-card-devices .sc-title {

@@ -276,13 +276,9 @@
   PAGES['/fish/heatmap'] = {
     data: function () {
       return {
-        grid: [], picked: null, offline: false,
+        tick: 0, grid: [], picked: null, offline: false,
         view: '2d', offline3d: false, pointCount: 0, lastUpdate: '',
-        three: null, scene3d: null, camera3d: null, renderer3d: null,
-        points3d: null, curPos: null, tgtPos: null, curCol: null,
-        raf: null, poll3d: null,
-        theta: Math.PI * 0.25, phi: Math.PI * 0.38, radius: 17,
-        dragging: false, lastX: 0, lastY: 0
+        poll3d: null, request3d: 0, loadRequest: 0, active: false
       };
     },
     computed: {
@@ -299,189 +295,102 @@
     },
     methods: {
       load: function () {
-        const self = this;
+        const self = this, request = ++this.loadRequest;
+        this.syncCageSpec();
         fishGet('/api/heatmap').then(function (d) {
+          if (!self.active || request !== self.loadRequest) return;
           self.grid = (d && d.grid) || [];
           self.offline = !!(d && d.offline);
-        }).catch(function () { self.grid = []; self.offline = true; });
+        }).catch(function () {
+          if (!self.active || request !== self.loadRequest) return;
+          self.grid = []; self.offline = true;
+        });
       },
       switchView: function (v) {
         if (v === this.view) return;
+        this.destroy3d();
         this.view = v;
         const self = this;
-        if (v === '3d') {
-          this.destroy3d();
-          this.$nextTick(function () {
-            self.ensureThree(function () {
-              self.init3d();
-              self.fetch3d();
-            });
-          });
-        }
+        if (v === '3d') this.$nextTick(function () {
+          if (!self.active || self.view !== '3d') return;
+          self.init3d(); self.fetch3d();
+        });
       },
-      /* three.js 只在切到 3D 时才加载，不改 index.html、不增加其他页面负担 */
-      ensureThree: function (cb) {
-        if (global.THREE) { cb(); return; }
-        const s = document.createElement('script');
-        s.src = (global.__API_BASE__ || '') + '/vendor/three.min.js';
-        s.onload = function () { cb(); };
-        s.onerror = function () { cb(); };
-        document.head.appendChild(s);
+      syncCageSpec: function () {
+        const canvas = this.$refs.cloudCanvas;
+        const viewer = canvas && canvas.__fishViewer;
+        if (!viewer) return;
+        const current = global.CurrentCage;
+        const cageId = current ? current.get() : 'cage_01';
+        const farm = API.farm() || {};
+        const cage = (farm.cages || []).find(function (item) { return item.cage_id === cageId; });
+        viewer.setSpec(cage && cage.spec, cageId);
       },
       init3d: function () {
-        const THREE = global.THREE;
-        const box = this.$refs.box3d;
-        const w = Math.max(300, box.clientWidth), h = 480;
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x0b1626);
-        const camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 200);
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(w, h);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        box.appendChild(renderer.domElement);
-
-        /* 网箱边框 10×10×8（X/Y 平面，Z 为水深） */
-        const center = new THREE.Vector3(5, 5, 4);
-        const edges = new THREE.EdgesGeometry(new THREE.BoxGeometry(10, 10, 8));
-        const cageLine = new THREE.LineSegments(
-          edges, new THREE.LineBasicMaterial({ color: 0x4a7bb8 }));
-        cageLine.position.copy(center);
-        scene.add(cageLine);
-
-        /* 底部网格线，帮助判断位置 */
-        const grid = new THREE.GridHelper(10, 10, 0x27405f, 0x1a2c44);
-        grid.rotation.x = Math.PI / 2;
-        grid.position.set(5, 5, 0.02);
-        scene.add(grid);
-
-        /* 点云：固定 1000 个点，按数据条数设置 drawRange */
-        const MAX = 1000;
-        const geom = new THREE.BufferGeometry();
-        const pos = new Float32Array(MAX * 3);
-        const col = new Float32Array(MAX * 3);
-        for (let i = 0; i < MAX; i++) { pos[i * 3] = 5; pos[i * 3 + 1] = 5; pos[i * 3 + 2] = 4; }
-        geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-        geom.setAttribute('color', new THREE.BufferAttribute(col, 3));
-        const mat = new THREE.PointsMaterial({
-          size: 0.16, vertexColors: true, transparent: true, opacity: 0.9,
-          sizeAttenuation: true, depthWrite: false
-        });
-        const points = new THREE.Points(geom, mat);
-        scene.add(points);
-
-        this.scene3d = scene; this.camera3d = camera; this.renderer3d = renderer;
-        this.points3d = points;
-        this.curPos = pos; this.curCol = col;
-
-        /* 拖拽旋转 / 滚轮缩放（自己实现，不依赖 OrbitControls） */
-        const self = this;
-        this._onDown = function (e) {
-          self.dragging = true; self.lastX = e.clientX; self.lastY = e.clientY;
-        };
-        this._onMove = function (e) {
-          if (!self.dragging) return;
-          const dx = e.clientX - self.lastX, dy = e.clientY - self.lastY;
-          self.lastX = e.clientX; self.lastY = e.clientY;
-          self.theta -= dx * 0.008;
-          self.phi -= dy * 0.008;
-          self.phi = Math.max(0.12, Math.min(Math.PI - 0.12, self.phi));
-        };
-        this._onUp = function () { self.dragging = false; };
-        this._onWheel = function (e) {
-          e.preventDefault();
-          self.radius *= (1 + e.deltaY * 0.0012);
-          self.radius = Math.max(8, Math.min(40, self.radius));
-        };
-        renderer.domElement.addEventListener('mousedown', this._onDown);
-        window.addEventListener('mousemove', this._onMove);
-        window.addEventListener('mouseup', this._onUp);
-        renderer.domElement.addEventListener('wheel', this._onWheel, { passive: false });
-
-        const render = function () {
-          /* 点位向目标平滑过渡（每帧走 8%），鱼群看起来是"游动"而非"跳变" */
-          const tp = self.tgtPos;
-          if (tp) {
-            for (let i = 0; i < pos.length; i++) {
-              pos[i] += (tp[i] - pos[i]) * 0.08;
-            }
-            geom.attributes.position.needsUpdate = true;
-          }
-          const c = new THREE.Vector3(
-            center.x + self.radius * Math.sin(self.phi) * Math.sin(self.theta),
-            center.y + self.radius * Math.cos(self.phi),
-            center.z + self.radius * Math.sin(self.phi) * Math.cos(self.theta));
-          camera.position.copy(c);
-          camera.lookAt(center);
-          renderer.render(scene, camera);
-          self.raf = requestAnimationFrame(render);
-        };
-        render();
+        const canvas = this.$refs.cloudCanvas;
+        if (!canvas || !global.StructTrussCage) { this.offline3d = true; return; }
+        canvas.__fishViewer = global.StructTrussCage.mount(canvas);
+        this.syncCageSpec();
       },
       fetch3d: function () {
+        if (this.poll3d) clearInterval(this.poll3d);
         const self = this;
         const one = function () {
-          if (self.view !== '3d') return;
+          const canvas = self.$refs.cloudCanvas;
+          const viewer = canvas && canvas.__fishViewer;
+          if (!self.active || self.view !== '3d' || !viewer) return;
+          const request = ++self.request3d;
           fishGet('/api/fish/positions3d').then(function (d) {
-            if (d.offline || !d.data) {
+            if (!self.active || request !== self.request3d || canvas.__fishViewer !== viewer) return;
+            if (d.offline || !d.data || !Array.isArray(d.data.points)) {
               self.offline3d = true; self.pointCount = 0;
+              viewer.setPointCloud(null);
               return;
             }
             self.offline3d = false;
-            const pts = d.data.points;
-            self.pointCount = pts.length;
+            self.pointCount = d.data.points.length;
             self.lastUpdate = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-            if (!self.tgtPos) {
-              self.tgtPos = new Float32Array(1000 * 3);
-            }
-            const tp = self.tgtPos;
-            const col = self.curCol;
-            /* 颜色：0 正常=浅蓝、1 摄食活跃=暖橙、2 异常=红 */
-            const CC = [[0.35, 0.75, 1.0], [1.0, 0.62, 0.22], [1.0, 0.28, 0.28]];
-            for (let i = 0; i < 1000; i++) {
-              if (i < pts.length) {
-                const p = pts[i];
-                tp[i * 3] = p.x; tp[i * 3 + 1] = p.y; tp[i * 3 + 2] = p.z;
-                const cc = CC[p.s] || CC[0];
-                col[i * 3] = cc[0]; col[i * 3 + 1] = cc[1]; col[i * 3 + 2] = cc[2];
-              } else {
-                /* 多余点收到中心，drawRange 不画它们 */
-                tp[i * 3] = 5; tp[i * 3 + 1] = 5; tp[i * 3 + 2] = 4;
-                col[i * 3] = 0; col[i * 3 + 1] = 0; col[i * 3 + 2] = 0;
-              }
-            }
-            if (self.points3d) {
-              self.points3d.geometry.setDrawRange(0, pts.length);
-              self.points3d.geometry.attributes.color.needsUpdate = true;
-            }
-          }).catch(function () { self.offline3d = true; });
+            viewer.setPointCloud(d.data);
+          }).catch(function () {
+            if (!self.active || request !== self.request3d || canvas.__fishViewer !== viewer) return;
+            self.offline3d = true; self.pointCount = 0;
+            viewer.setPointCloud(null);
+          });
         };
         one();
-        this.poll3d = setInterval(one, 3000); /* 每 3 秒更新一次 */
+        this.poll3d = setInterval(one, 3000);
       },
       destroy3d: function () {
+        this.request3d++;
         if (this.poll3d) { clearInterval(this.poll3d); this.poll3d = null; }
-        if (this.raf) { cancelAnimationFrame(this.raf); this.raf = null; }
-        if (this.renderer3d) {
-          this.renderer3d.domElement.removeEventListener('mousedown', this._onDown);
-          window.removeEventListener('mousemove', this._onMove);
-          window.removeEventListener('mouseup', this._onUp);
-          this.renderer3d.domElement.removeEventListener('wheel', this._onWheel);
-          this.renderer3d.dispose();
-          if (this.renderer3d.domElement.parentNode) {
-            this.renderer3d.domElement.parentNode.removeChild(this.renderer3d.domElement);
-          }
+        const canvas = this.$refs.cloudCanvas;
+        if (canvas && canvas.__fishViewer) {
+          canvas.__fishViewer.dispose(); canvas.__fishViewer = null;
         }
-        this.scene3d = null; this.camera3d = null; this.renderer3d = null;
-        this.points3d = null; this.tgtPos = null;
+        this.pointCount = 0; this.lastUpdate = '';
       }
     },
     mounted: function () {
-      /* API.bind：数据变化重算 + 定时刷新曲线 */
+      this.active = true;
       this.unsub = API.bind(this, this.load);
+      const self = this;
+      this.unsubFarm = API.subscribe(function () { self.syncCageSpec(); });
+      if (global.CurrentCage) this.unsubCage = global.CurrentCage.subscribe(function () {
+        self.request3d++;
+        self.syncCageSpec();
+        const canvas = self.$refs.cloudCanvas;
+        if (canvas && canvas.__fishViewer) canvas.__fishViewer.setPointCloud(null);
+        self.pointCount = 0; self.lastUpdate = '';
+        if (self.view === '3d') self.fetch3d();
+        self.load();
+      });
       this.load();
     },
     beforeUnmount: function () {
+      this.active = false; this.loadRequest++;
       if (this.unsub) { this.unsub(); this.unsub = null; }
+      if (this.unsubFarm) { this.unsubFarm(); this.unsubFarm = null; }
+      if (this.unsubCage) { this.unsubCage(); this.unsubCage = null; }
       this.destroy3d();
     },
     template: [
@@ -507,19 +416,20 @@
       '      <span class="small muted" style="margin-left:auto">拖拽旋转 · 滚轮缩放</span>',
       '    </div>',
       '',
-      '    <div v-if="offline" class="muted small" style="margin-top:10px">',
+      '    <div v-if="view === \'2d\' && offline" class="muted small" style="margin-top:10px">',
       '      视觉链路不可用（生成器已停止或摄像头离线）—— 密度数据显示「—」，不显示上一个值。',
       '    </div>',
-      '    <div v-else-if="view === \'2d\'">',
+      '    <div v-if="view === \'2d\' && !offline">',
       '      <heat-grid title="鱼群密度分布（颜色表示相对密度）" :grid="grid" unit="尾/m³" :height="430" />',
       '    </div>',
-      '    <div v-else style="position:relative;margin-top:10px">',
-      '      <div ref="box3d" style="width:100%;height:480px;border-radius:6px;overflow:hidden"></div>',
+      '    <div v-if="view === \'3d\'" style="position:relative;margin-top:10px">',
+      '      <canvas ref="cloudCanvas" aria-label="桁架式网箱内鱼群三维点云，可拖拽旋转和滚轮缩放" style="width:100%;height:480px;border-radius:6px"></canvas>',
       '      <div v-if="offline3d" class="card" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(11,22,38,.82)">',
       '        <span class="muted">视觉链路不可用（生成器已停止或摄像头离线）—— 不显示上一个值</span>',
       '      </div>',
       '    </div>',
       '',
+      '    <div v-if="view === \'3d\'" class="small muted" style="margin-top:8px">与结构总览共用桁架模型；点位按接口范围映射到当前网箱，仿真状态颜色保持不变。构件与锚位为概念示意。</div>',
       '    <div class="hint small" style="margin-top:10px">',
       '      <b>两种视角的用途</b>：二维网格用于值班时<b>一眼看密度分布</b>；三维点云用于直观判断',
       '      <b>鱼群在水中的空间聚集</b>（例如上浮、扎堆）。二维红色表示相对高密度，不代表告警；三维点色按仿真场景标注。',
