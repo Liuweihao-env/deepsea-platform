@@ -106,7 +106,7 @@ async function main() {
   vm.runInContext(source(files[3]), context);
   const originalMount = model.mount;
   model.mount = c => { mountCount++; return originalMount(c); };
-  // Homepage CageModel, structure overview, and fish heatmap must all mount that same object.
+  // Legacy CageModel remains compatible; production pages use the one Exhibit scene.
   const component = global.C.CageModel;
   const home = { $refs: { canvas: canvas() }, height: 280, ready: false,
     spec: farm.cages[0].spec, cageId: 'cage_01' };
@@ -137,7 +137,7 @@ async function main() {
   }
   const page = global.PAGES['/fish/heatmap'], data = instance(page, { cloudCanvas: canvas() });
   page.mounted.call(data); data.switchView('3d');
-  assert.equal(mountCount, 3);
+  assert.equal(mountCount, 1, 'domain pages must not create independent model canvases');
   assert.equal(timers.size, 1);
   let request = requests.filter(r => r.url.includes('positions3d')).pop();
   request.reply({ offline: false, data: { dims, points: [{ x: 5, y: 5, z: 4, s: 2 }] } });
@@ -159,6 +159,6 @@ async function main() {
   assert.equal(data.pointCount, 0); assert.equal(timers.size, 0); assert.equal(frames.size, 0);
   assert.equal(subscribers.size, 0); assert.equal(farmSubscribers.size, 0);
   assert.equal(data.$refs.cloudCanvas.listeners.size, 0);
-  console.log('PASS shared cage: true proportions, point bounds/colors, three mount consumers, four-page cage sync, drag, offline/stale responses and disposal');
+  console.log('PASS shared cage: proportions, bounds/colors, no independent domain mounts, cage sync, offline/stale responses and disposal');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

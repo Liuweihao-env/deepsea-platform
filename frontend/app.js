@@ -116,7 +116,7 @@
     _path: '/overview',
     _subs: [],
     norm: function (h) {
-      let p = (h || '').replace(/^#/, '');
+      let p = (h || '').replace(/^#/, '').split('?')[0];
       if (!p) p = '/overview';
       if (p.charAt(0) !== '/') p = '/' + p;
       return p.replace(/\/+$/, '') || '/overview';
@@ -266,8 +266,8 @@ const DOT_BOARDS = ['fish', 'env', 'struct', 'ai'];
 const TABS = [
     { key: 'overview', label: '总览', first: '/overview' },
     { key: 'fish',     label: '鱼类监测', first: '/fish/monitor' , board: 'fish' },
-    { key: 'env',      label: '环境监测', first: '/env/sea' , board: 'env' },
-    { key: 'struct',   label: '结构安全预警', first: '/struct/alarm' , board: 'struct' },
+    { key: 'env',      label: '环境检测', first: '/env/sea' , board: 'env' },
+    { key: 'struct',   label: '结构安全', first: '/struct/alarm' , board: 'struct' },
     { key: 'ai',       label: '智能管控', first: '/ai/feed' , board: 'ai' },
     /* 🔴 2026-10-15 队长删：拆掉「跨板块」（老师第 3 条）。告警/处置已挪进「管理」，
        追溯查询删除，参数配置拆解。侧边菜单里的 MENU 也同步删了那一组。 */
@@ -275,6 +275,7 @@ const TABS = [
        放在最后：它是配置类不是监控类。 */
     { key: 'mgmt',     label: '生产管理', first: '/mgmt/cages' }
   ];
+
 
   const App = {
     data: function () {
@@ -290,7 +291,7 @@ const TABS = [
          所以他的 currentCage / showCage 两个字段不要了。 */
       return { path: '/overview', menu: MENU, tabs: TABS, err: null, tick: 0,
                /* 当前网箱（跟随全局单例；页面里改动都走 pickCage） */
-               curCageId: CurrentCage.get() };
+               curCageId: CurrentCage.get(), catalogOpen: false };
     },
     computed: {
       /* 每个板块「未解除」的告警条数 —— 顶部红点亮不亮看它。
@@ -357,6 +358,7 @@ const TABS = [
             return {
               group: g.group,
               owner: g.owner,
+              queries: [],
               items: g.items.map(function (it) {
                 return { path: it.path, label: it.label, ready: !!reg[it.path] };
               })
@@ -373,10 +375,14 @@ const TABS = [
             '<div class="todo">本页尚未实现。<br><span class="small">10-09 必交的 13 页见「功能冻结清单-10-05.md」1.1 节。</span></div></div>'
         };
       },
+      allPages: function () { return this.menu.reduce(function(out,g){ return out.concat(g.items); },[]); },
+      pageIndex: function () { return this.allPages.findIndex(function(it){ return it.path===this.path; },this); },
+      screenInfo: function () { this.tick; return window.Exhibit.screenState(); },
       pathLabel: function () { return this.path; }
     },
     methods: {
-      pick: function (p) { Router.go(p); },
+      pick: function (p) { this.catalogOpen=false; Router.go(p); },
+      step: function (delta) { if(window.Exhibit.step(delta))return; const index=this.pageIndex+delta; if(this.allPages[index])this.pick(this.allPages[index].path); },
       tabPick: function (t) { Router.go(t.first); },
       /* 切网箱 —— 走全局单例，切完所有页面自动重算 */
       pickCage: function (id) {
@@ -393,8 +399,9 @@ const TABS = [
     mounted: function () {
       const self = this;
       Router.onChange(function (p) {
+        const changed = self.path !== p;
         self.path = p;
-        self.$nextTick(function () { if (self.$refs.content) self.$refs.content.scrollTop = 0; });
+        if (changed) self.$nextTick(function () { if (self.$refs.content) self.$refs.content.scrollTop = 0; window.Exhibit.schedule(); });
       });
       /* 订阅 API 变化 → tick 自增 → boardDots 重算。
          红点跟着**告警的实际状态**走：告警解除（recovered）了，点自动灭；
@@ -404,69 +411,31 @@ const TABS = [
         : null;
       this.cageUnsub = CurrentCage.subscribe(function (id) { self.curCageId = id; });
       Router.start();
+      window.Exhibit.init();
+      this._screenChange=function(){self.tick++;};window.addEventListener('show-screen-change',this._screenChange);
+      this._showKey=function(e){if(e.key==='Escape'){self.catalogOpen=false;return;}if(self.catalogOpen||document.querySelector('.secondary-surface.is-open,.show-confirm')||e.target.closest('input,select,textarea,canvas,[role=dialog]'))return;if(e.key==='ArrowRight'||e.key==='ArrowLeft'){e.preventDefault();self.step(e.key==='ArrowRight'?1:-1);}};window.addEventListener('keydown',this._showKey);
       window.addEventListener('error', function (e) { self.err = e.message; });
     },
     beforeUnmount: function () {
       if (this.unsub) this.unsub();
       if (this.cageUnsub) this.cageUnsub();
+      window.removeEventListener('show-screen-change',this._screenChange);window.removeEventListener('keydown',this._showKey);
     },
     template: [
       '<div class="shell">',
-      '  <!-- ① 顶部横条 56px -->',
       '  <div class="topbar">',
-      '    <div class="brand">深远海养殖与海洋牧场智能管控平台</div>',
-      '    <div class="tabs">',
-      '      <div v-for="t in tabs" :key="t.key" class="tab" ',
-      '           :class="{ active: tabKey === t.key }"',
-      '           role="button" tabindex="0" :aria-pressed="tabKey === t.key"',
-      '           @keydown.enter="tabPick(t)" @keydown.space.prevent="tabPick(t)" @click="tabPick(t)">',
-      '        {{ t.label }}',
-      '        <!-- 板块入口告警角标：iOS/微信那种带数字的红点，',
-      '             数字＝该板块未解除的告警条数；99+ 封顶（微信同款约定）。',
-      '             点进去不消、告警解除才消。 -->',
-      '        <span v-if="t.board && boardDots[t.board]" class="nav-dot"',
-      '              :title="dotText(t.board) + \' 条未解除告警\'">{{ dotText(t.board) }}</span>',
-      '      </div>',
-      '    </div>',
-      '    <div class="spacer"></div>',
-      '    <!-- 全局「当前网箱」切换器（2026-10-16 会上定 第 10 条）：',
-      '         切一次所有页面跟着变。放在顶栏是为了任何页面都能切。',
-      '         右边显示该网箱所在海域，让人知道"这个网箱在哪片海"。 -->',
-      '    <div class="cage-switch" v-if="cageList.length">',
-      '      <span class="cs-label">当前网箱</span>',
-      '      <button v-for="c in cageList" :key="c.cage_id"',
-      '              :class="{ active: c.cage_id === curCageId }"',
-      '              @click="pickCage(c.cage_id)">{{ c.cage_name }}</button>',
-      '      <span class="cs-site" v-if="curCageSite">{{ curCageSite }}</span>',
-      '    </div>',
+      '    <a class="brand" href="#/overview"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 8c4-6 8 6 12 0s8 6 10 0M2 16c4-6 8 6 12 0s8 6 10 0"/></svg><span>深蓝牧场<small>海洋养殖智能管控</small></span></a>',
+      '    <nav class="tabs" aria-label="板块导航"><button v-for="t in tabs" :key="t.key" class="tab" :class="{active:tabKey===t.key}" :aria-pressed="tabKey===t.key" @click="tabPick(t)">{{t.label}}<span v-if="t.board && boardDots[t.board]" class="nav-dot" :title="dotText(t.board)+\'条未解除告警\'">{{dotText(t.board)}}</span></button></nav>',
+      '    <div class="spacer"></div><span class="show-header-note">深远海养殖与海洋牧场</span><button @click="catalogOpen=!catalogOpen">页面目录</button>',
       '  </div>',
-      '',
+      '  <div id="show-scene" data-visible="false"><canvas id="show-model" tabindex="0" aria-label="网箱与设备空间示意，支持拖动旋转"></canvas><div id="show-equipment" aria-label="设备入口"></div></div>',
       '  <div class="body">',
-      '    <!-- ② 左侧菜单 200px -->',
-      '    <div class="sidenav">',
-      '      <template v-for="g in sideGroups" :key="g.group">',
-      '        <div class="group">{{ g.group }}<span v-if="g.owner"> · {{ g.owner }}</span></div>',
-      '        <div v-for="it in g.items" :key="it.path" class="item"',
-      '             :class="{ active: path === it.path }" role="button" tabindex="0" :aria-current="path === it.path ? \'page\' : null"',
-      '             @keydown.enter="pick(it.path)" @keydown.space.prevent="pick(it.path)" @click="pick(it.path)">',
-      ' {{ it.label }}<span v-if="!it.ready" class="small muted"> ·待建</span>',
-      '        </div>',
-      '      </template>',
-      '    </div>',
-      '',
-      '    <!-- ③ 主内容区 -->',
-      '    <div class="main">',
-      '      <div class="content" ref="content" :data-page="path">',
-      '        <div v-if="err" class="hint" style="margin-bottom:12px">页面脚本报错：{{ err }}</div>',
-      '        <component :is="page" :key="path"></component>',
-      '      </div>',
-      '    </div>',
+      '    <nav class="sidenav" aria-label="二级页面"><template v-for="g in sideGroups" :key="g.group"><a v-for="it in g.items" :key="it.path" class="item" :class="{active:path===it.path}" :href="\'#\'+it.path" :aria-current="path===it.path?\'page\':null">{{it.label}}</a></template></nav>',
+      '    <div class="main"><div class="content" ref="content" :data-page="path"><div v-if="err" class="hint">页面脚本报错：{{err}}</div><div class="business-page"><component :is="page" :key="path"></component></div><div class="secondary-host"></div></div></div>',
       '  </div>',
-      '  <div class="project-signature" aria-label="中国海洋大学水产学院 · 世界小中海大队">',
-      '    <img class="signature-university" src="assets/ouc-emblem.png" alt="中国海洋大学校徽" />',
-      '    <img class="signature-college" src="assets/ouc-fisheries-official-mark.png" alt="中国海洋大学水产学院官方组合标" />',
-      '    <span>世界小中海大队</span>',
-      '  </div>',
+      '  <footer class="show-footer"><span>运行数据含仿真 · 历史观测按原始时标</span><div class="show-route-pager"><button @click="step(-1)" :disabled="pageIndex===0 && screenInfo.index===0">上一屏</button><span>{{String(pageIndex+1).padStart(2,\'0\')}} / {{allPages.length}}<template v-if="screenInfo.count>1"> · {{screenInfo.index+1}}/{{screenInfo.count}}</template></span><select :value="path" @change="pick($event.target.value)" aria-label="选择展示页面"><option v-for="it in allPages" :key="it.path" :value="it.path">{{it.label}}</option></select><button @click="step(1)" :disabled="pageIndex===allPages.length-1 && screenInfo.index===screenInfo.count-1">下一屏</button></div><span class="show-footer-end">16:9 比赛展示</span></footer>',
+      '  <div class="project-signature" aria-label="中国海洋大学水产学院 · 世界小中海大队"><img class="signature-university" src="assets/ouc-emblem.png" alt="中国海洋大学校徽"><img class="signature-college" src="assets/ouc-fisheries-official-mark.png" alt="中国海洋大学水产学院官方组合标"><span>世界小中海大队</span></div>',
+      '  <section v-if="catalogOpen" class="show-catalog" aria-label="页面目录"><div class="show-catalog-head"><h2>页面导航</h2><button @click="catalogOpen=false">返回当前页</button></div><div class="show-catalog-grid"><section v-for="g in menu" :key="g.group"><h3>{{g.group}}</h3><a v-for="it in g.items" :key="it.path" :href="\'#\'+it.path" @click="catalogOpen=false">{{it.label}}</a></section></div></section>',
       '</div>'
     ].join('\n')
   };
@@ -485,6 +454,8 @@ const TABS = [
   app.component('time-range', C.TimeRangePicker);
   app.component('command-flow', C.CommandFlow);
   app.component('page-head', C.PageHead);
+  app.component('cage-picker', C.CagePicker);
+  app.component('secondary-page', C.SecondaryPage);
   app.component('help-dot', C.HelpDot);   /* 阈值依据：灰色问号 + 悬停看解释与出处 */
   /* 🔴 2026-10-15 队长加：阈值表从「参数配置」整页拆出来后做成公共组件，
      各板块用 <threshold-table owner="环境" /> 只显示自己那几条。
@@ -496,6 +467,9 @@ const TABS = [
   app.component('video-slot', C.VideoSlot);
   /* 网箱三维模型（桁架式，可拖动旋转）—— 首页横幅下层左 */
   app.component('cage-model', C.CageModel);
+  app.component('scene-slot', C.SceneSlot);
+  app.component('show-screens', C.ShowScreens);
+  app.component('paged-records', C.PagedRecords);
   app.mount('#app');
 
   window.ROUTER = Router;

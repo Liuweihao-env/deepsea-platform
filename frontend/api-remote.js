@@ -115,6 +115,12 @@
   M.devices = function () { return M._devices || []; };
   M.commands = function () { return _cmds.slice(); };
   M.alarms = function () { return _alarms.slice(); };
+  M.confirmAlarm = function (id) {
+    return post('/api/alarms/' + encodeURIComponent(id) + '/confirm', {}).then(function (a) {
+      if (a && a.alarm_event_id) { _alarms = _alarms.map(function (x) { return x.alarm_event_id === id ? a : x; }); M._bump(); }
+      return a;
+    });
+  };
   M.alarm = function (id) {
     for (let i = 0; i < _alarms.length; i++) if (_alarms[i].alarm_event_id === id) return _alarms[i];
     return null;
@@ -201,8 +207,9 @@
 
   M.farm = function () { return M._farm || null; };
   function pullFarm() {
-    get('/api/farm').then(function (d) {
+    return get('/api/farm').then(function (d) {
       if (d && d.cages) { M._farm = d; M._bump(); }
+      return d;
     });
   }
   pullFarm();

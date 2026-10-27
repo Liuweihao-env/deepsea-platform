@@ -21,7 +21,7 @@ function context(stored, loaded = true) {
     removeEventListener:(n,f)=>{listeners[n]=(listeners[n]||[]).filter(x=>x!==f);},
     dispatchEvent:e=>(listeners[e.type]||[]).forEach(f=>f(e)),
     CustomEvent:function(type,options){this.type=type;this.detail=options.detail;},
-    C:{}, PAGES:{},CN:{deviceType:t=>({feeder:'投饵机',light:'补光灯',sensor:'传感器'}[t]||'设备')},
+    C:{}, PAGES:{},Exhibit:{init:()=>{},schedule:()=>{},screenState:()=>({index:0,count:1}),step:()=>false},CN:{deviceType:t=>({feeder:'投饵机',light:'补光灯',sensor:'传感器'}[t]||'设备')},
     Vue:{createApp:app=>{s.App=app;return {config:{globalProperties:{}},component:()=>{},mount:()=>{}};}}
   };
   s.API={farm:()=>loaded?{cages}:null,sites:()=>[{site_id:'site_01',kind:'farm'},{site_id:'site_03',kind:'obs'},{site_id:'site_04',kind:'obs'}],

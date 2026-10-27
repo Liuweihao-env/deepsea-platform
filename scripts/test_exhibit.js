@@ -1,0 +1,21 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('fs'),path=require('path'),vm=require('vm');
+const root=path.resolve(__dirname,'..','frontend');
+let current='cage_01';const pending=[];
+const cages=['cage_01','cage_02'].map((cage_id,i)=>({cage_id,site_id:i?'site_03':'site_04',stocking:{date:new Date(Date.now()-100*86400000).toISOString(),plan_harvest:new Date(Date.now()+100*86400000).toISOString(),init_size_g:100,target_size_g:1000}}));
+const ctx={console,Date,Math,Number,Set,Map,localStorage:{getItem:()=>null},C:{},CurrentCage:{get:()=>current},API:{farm:()=>({cages}),fish:(minutes,id)=>({then:cb=>pending.push({id,cb})}),resolve:(value,cb)=>value&&value.then?value.then(cb):cb(value)}};
+ctx.window=ctx;vm.createContext(ctx);for(const file of ['exhibit.js','pages/fish.js'])vm.runInContext(fs.readFileSync(path.join(root,file),'utf8'),ctx);
+function instance(def){const x=Object.assign({},def.data(),def.methods);for(const [key,fn]of Object.entries(def.computed||{}))Object.defineProperty(x,key,{get:()=>fn.call(x)});return x;}
+const growth=instance(ctx.PAGES['/fish/growth']);growth.farm={cages};growth.live=[{avg_weight_g:550,ts:Date.now()}];
+assert.equal(growth.m.obs,550,'current-cage weight remains available when its environmental site is an observation station');
+growth.live=[{avg_weight_g:null}];assert.equal(growth.m.obs,null,'missing fish weight does not produce a prediction');
+growth.load();current='cage_02';growth.load();
+pending[1].cb([{avg_weight_g:650}]);pending[0].cb([{avg_weight_g:999}]);
+assert.equal(growth.liveLast.avg_weight_g,650,'late previous-cage weights cannot overwrite the current cage');
+ctx.API.speciesTemp=()=>({species:[{species_cn:'测试鱼'}]});ctx.API.species=()=>[{species_cn:'测试鱼',used_source:'原始研究',source:'FishBase',source_ref:'作者 2020',source_url:'https://example.invalid/reference',used_note:'全长口径'}];
+const species=instance(ctx.PAGES['/fish/species']);
+assert.equal(species.rows[0].lwrSource,'原始研究','adopted evidence source takes priority over the fallback database');
+assert.equal(species.rows[0].lwrNote,'全长口径');
+const pager=instance(ctx.C.PagedRecords);pager.items=Array.from({length:13},(_,i)=>i);pager.size=6;
+pager.page=2;assert.equal(pager.rows.join(','),'12');pager.items=[1,2];ctx.C.PagedRecords.watch.pages.call(pager,pager.pages);assert.equal(pager.page,0);assert.equal(pager.rows.join(','),'1,2');
+console.log('PASS exhibition: current-cage growth, late responses, evidence selection and record pagination');

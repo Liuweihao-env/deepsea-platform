@@ -7,6 +7,7 @@
 <!-- 空 favicon：避免浏览器请求 /favicon.ico 报 404（控制台要保持干净） -->
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="exhibit.css">
 <!-- 免构建：库全部落地在本地 vendor/，现场不依赖网络 -->
 <script src="vendor/vue.global.prod.js"></script>
 <script src="vendor/echarts.min.js"></script>
@@ -28,6 +29,10 @@
 <script src="mock.js"></script>
 <script src="api-remote.js"></script>
 <script src="components.js"></script>
+<script src="vendor/exhibit-water.js"></script>
+<script src="vendor/exhibit-equipment.js"></script>
+<script src="vendor/exhibit-cage.js"></script>
+<script src="exhibit.js"></script>
 <!-- 页面按板块分文件，一人一个（见《AI协作指南》）。
      每个文件自己初始化 window.PAGES，所以加载顺序无所谓。
      新增页面文件时，在这里加一行就行 —— 这一行由队长加，组员不用碰。 -->

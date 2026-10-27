@@ -440,7 +440,7 @@
 
         /* 同一 DOM 上只允许一个实例；已存在就先复用，避免重复 init */
         let inst = echarts.getInstanceByDom(el);
-        if (!inst) inst = echarts.init(el);
+        if (!inst) inst = echarts.init(el, 'marine');
         this.chart = inst;
 
         if (this.empty) {
@@ -455,7 +455,7 @@
           return;
         }
 
-        const palette = ['#2F5496', '#C2410C', '#166534', '#92400E', '#6B7280', '#991B1B'];
+        const palette = ['#9bdce6', '#dfc195', '#98c6b0', '#b8a8cf', '#a5bfcc', '#efa19a'];
         /* 双 Y 轴：序列上标 axis: 1 就走右轴。
            为什么必须支持：把「锚泊张力（0–100%）」和「俯仰角（0–3°）」画在同一个 Y 轴上，
            俯仰角会被压成贴底的一条直线，等于没画。骨架规范模板 A 也写明可用双 Y 轴。 */
@@ -511,12 +511,12 @@
           yAxis: needAxis2
             ? [
                 { type: 'value', scale: true, axisLabel: { fontSize: 11 },
-                  splitLine: { lineStyle: { color: '#EEF2F6' } } },
+                  splitLine: { lineStyle: { color: '#294c62' } } },
                 { type: 'value', scale: true, position: 'right', axisLabel: { fontSize: 11 },
                   splitLine: { show: false } }
               ]
             : { type: 'value', scale: true, axisLabel: { fontSize: 11 },
-                splitLine: { lineStyle: { color: '#EEF2F6' } } },
+                splitLine: { lineStyle: { color: '#294c62' } } },
           series: series
         }, true);
 
@@ -621,7 +621,7 @@
         const el = this.$refs.canvas;
         if (!el || !this.alive || !this.grid.length) return;
         let inst = echarts.getInstanceByDom(el);
-        if (!inst) inst = echarts.init(el);
+        if (!inst) inst = echarts.init(el, 'marine');
         this.chart = inst;
 
         const n = this.grid[0].length, m = this.grid.length, unit = this.unit;
@@ -676,13 +676,74 @@
       '</div>'
   };
 
-  /* ---------- 页头：标题 + 来源标签（纪律 4：每页都要有） ---------- */
+  /* 二级内容留在同一业务实例中：查询返回不丢筛选、输入或正在执行的任务。 */
+  C.SecondaryPage = {
+    props: { title: String },
+    data: function () { return { open: false, visited: false, ready: false, scroll: 0 }; },
+    methods: {
+      sync: function () {
+        const query = window.location.hash.split('?')[1] || '';
+        const next = new URLSearchParams(query).get('view') === this.title;
+        const wasOpen = this.open;
+        this.open = next;
+        if (next) this.visited = true;
+        if (next !== wasOpen) this.$nextTick(function () {
+          const content = document.querySelector('.content');
+          if (content) content.scrollTop = next ? 0 : this.scroll;
+          const target = next ? this.$refs.heading : this.$refs.launch;
+          if (target) target.focus({ preventScroll: true });
+        });
+      },
+      enter: function () {
+        const content = document.querySelector('.content');
+        this.scroll = content ? content.scrollTop : 0;
+        const parent = window.location.hash.split('?')[0];
+        window.history.pushState({ secondaryParent: parent }, '', parent + '?view=' + encodeURIComponent(this.title));
+        window.dispatchEvent(new Event('hashchange'));
+      },
+      leave: function () {
+        if (window.history.state && window.history.state.secondaryParent === window.location.hash.split('?')[0]) window.history.back();
+        else window.location.replace(window.location.hash.split('?')[0]);
+      }
+    },
+    mounted: function () {
+      this.ready = true;
+      this.sync();
+      this._secondaryHash = this.sync.bind(this);
+      window.addEventListener('hashchange', this._secondaryHash);
+    },
+    beforeUnmount: function () { window.removeEventListener('hashchange', this._secondaryHash); },
+    template: '<div class="secondary-entry"><button ref="launch" @click="enter">{{ title }} <span aria-hidden="true">→</span></button>' +
+      '<teleport v-if="ready" to=".secondary-host"><section v-if="visited" v-show="open" class="secondary-surface" :class="{ \'is-open\': open }">' +
+      '<button class="secondary-back" @click="leave">返回主页面</button>' +
+      '<h1 ref="heading" tabindex="-1">{{ title }}</h1><cage-picker />' +
+      '<slot /></section></teleport></div>'
+  };
+
+  C.CagePicker = {
+    data: function () { return { tick: 0 }; },
+    computed: {
+      cages: function () { this.tick; return global.CurrentCage ? global.CurrentCage.cages() : []; },
+      current: function () { this.tick; return global.CurrentCage ? global.CurrentCage.get() : ''; }
+    },
+    methods: { pick: function (event) { global.CurrentCage.set(event.target.value); } },
+    mounted: function () {
+      const self = this;
+      this._cageUnsub = global.CurrentCage && global.CurrentCage.subscribe(function () { self.tick++; });
+      this._apiUnsub = global.API && global.API.subscribe(function () { self.tick++; });
+    },
+    beforeUnmount: function () { if (this._cageUnsub) this._cageUnsub(); if (this._apiUnsub) this._apiUnsub(); },
+    template: '<label class="page-cage-picker" v-if="cages.length">当前网箱 <select :value="current" @change="pick">' +
+      '<option v-for="c in cages" :key="c.cage_id" :value="c.cage_id">{{ c.cage_name }}</option></select></label>'
+  };
+
+  /* ---------- 页头：标题、当前网箱与按需查询入口 ---------- */
   C.PageHead = {
     props: { title: String, desc: { type: String, default: '' }, source: { type: String, default: 'simulated' } },
     template:
       '<div class="row" style="justify-content:space-between;align-items:flex-end;margin-bottom:12px">' +
       '  <div>' +
-      '    <h1 style="font-size:22px;line-height:1.4;margin:0 0 4px;font-weight:700;color:#16344F">{{ title }}</h1>' +
+      '    <div class="page-title-row"><h1 style="font-size:22px;line-height:1.4;margin:0 0 4px;font-weight:700;color:#16344F">{{ title }}</h1><cage-picker /></div>' +
       '    <div class="small muted" v-if="desc" v-html="desc"></div>' +
       '  </div>' +
       '</div>'
