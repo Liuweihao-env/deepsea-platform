@@ -12,162 +12,7 @@
   ],
   "version": "1.0",
   "updated": "2026-10-06",
-  "sites": [
-    {
-      "site_id": "site_01",
-      "site_name": "仿真演示站点",
-      "kind": "farm",
-      "latitude": 26.1,
-      "longitude": 119.9,
-      "farming_depth_m": 20,
-      "location_note": "福建沿海 · 深远海网箱养殖场景",
-      "_说明": "2026-10-16 会上定：两个养殖网箱已迁至真实海区台站（cage_01 → site_04 嵊山，cage_02 → site_03 小麦岛），本站点**保留**，用作仿真数据与造故障演示（大风大浪 / 水温骤升 / 设备离线）。",
-      "cages": [],
-      "devices": []
-    },
-    {
-      "site_id": "site_02",
-      "site_name": "中国近海观测站点 · 芝罘岛（渤海海峡）",
-      "kind": "obs",
-      "latitude": 37.6,
-      "longitude": 121.4,
-      "station_id": "ZFD",
-      "sea": "渤海海峡",
-      "sea_note": "渤海与黄海的分界是【蓬莱角—老铁山角】连线，NMDC 的 14 个台站没有一个在渤海内部。本平台以渤海海峡的芝罘岛代表渤海这一格，页面如实标注；水质另取渤海内部监测点（东营片区）。",
-      "data_source": "NMDC 中国台站观测数据 dataSetId=4"
-    },
-    {
-      "site_id": "site_03",
-      "site_name": "中国近海观测站点 · 小麦岛（黄海）",
-      "kind": "obs",
-      "latitude": 36.0,
-      "longitude": 120.4,
-      "station_id": "XMD",
-      "sea": "黄海",
-      "data_source": "NMDC 中国台站观测数据 dataSetId=4",
-      "cages": [
-        {
-          "cage_id": "cage_02",
-          "cage_name": "2 号网箱",
-          "species": "黑鲷",
-          "spec": {
-            "shape": "桁架式",
-            "depth_m": 6,
-            "net_mesh_mm": 35,
-            "net_material": "超高分子量聚乙烯（UHMWPE）",
-            "effective_volume_m3": 1944,
-            "commissioned": "2025-09-15",
-            "length_m": 18,
-            "width_m": 18,
-            "_体积口径": "有效养殖水体 = 长 × 宽 × 养殖水深（桁架式网箱按外廓长方体算）。旧值 285/198 实为**底面积**，2026-10-16 会上定改为真体积。"
-          },
-          "stocking": {
-            "date": "2026-05-06",
-            "init_count": 900,
-            "init_size_g": 180,
-            "fingerling_source": "山东荣成育苗场",
-            "plan_harvest": "2027-05-01",
-            "target_size_g": 400
-          },
-          "status": "in_use",
-          "note": "🔴 2026-10-20 队长改（队-1 告警合理性）：原养**许氏平鲉**（最适 8~25℃，红色高温线 26.0℃），但黄海小麦岛 8 月实测水温到 28.8℃ —— **2025-08 有 98% 的时间在红色告警**，等于天天报。把所有候选拿真实水温跑了一遍（高温低温两头都算），**黑鲷最优**：高温红 0.00%（实测最高 28.8 < 告警线 30.0）、低温红 3.92%。黑鲷适应 4.3~34℃、最适 17~25℃，本来就是黄海/渤海的主力养殖种。⚠️ 注意：高温红色线 30.0℃ 在小麦岛**永远不会触发**（实测最高 28.8），这是生理上正确的（黑鲷耐 34℃），不是阈值定错；要看高温红色告警请切 1 号箱。"
-        }
-      ],
-      "devices": [
-        {
-          "device_id": "sensor_temp_02",
-          "device_name_cn": "2 号箱水温传感器",
-          "cage_id": "cage_02",
-          "device_type": "sensor",
-          "metric": "water_temp",
-          "location": "cage_02 · 水下 3 m",
-          "installed": null,
-          "vendor": null,
-          "calibration": null,
-          "provenance": "pending_confirmation",
-          "source_note": "同型配置；厂商、安装与校准记录待李志成或厂家确认（平台不编造）"
-        },
-        {
-          "device_id": "sensor_do_02",
-          "device_name_cn": "2 号箱溶解氧传感器",
-          "cage_id": "cage_02",
-          "device_type": "sensor",
-          "metric": "dissolved_oxygen",
-          "location": "cage_02 · 水下 3 m",
-          "installed": null,
-          "vendor": null,
-          "calibration": null,
-          "provenance": "pending_confirmation",
-          "source_note": "同型配置；厂商、安装与校准记录待李志成或厂家确认（平台不编造）"
-        },
-        {
-          "device_id": "sensor_tilt_02",
-          "device_name_cn": "2 号箱倾角传感器",
-          "cage_id": "cage_02",
-          "device_type": "sensor",
-          "metric": "tilt",
-          "location": "cage_02 · 浮架",
-          "installed": null,
-          "vendor": null,
-          "calibration": null,
-          "provenance": "pending_confirmation",
-          "source_note": "同型配置；厂商、安装与校准记录待李志成或厂家确认（平台不编造）"
-        },
-        {
-          "device_id": "sensor_tension_02",
-          "device_name_cn": "2 号箱锚链张力传感器",
-          "cage_id": "cage_02",
-          "device_type": "sensor",
-          "metric": "anchor_tension",
-          "location": "cage_02 · 锚链",
-          "installed": null,
-          "vendor": null,
-          "calibration": null,
-          "provenance": "pending_confirmation",
-          "source_note": "同型配置；厂商、安装与校准记录待李志成或厂家确认（平台不编造）"
-        },
-        {
-          "device_id": "feeder_02",
-          "device_name_cn": "2 号箱自动投饵机",
-          "cage_id": "cage_02",
-          "device_type": "feeder",
-          "metric": "feed_rate",
-          "location": "cage_02 · 投饵机",
-          "installed": null,
-          "vendor": null,
-          "calibration": null,
-          "provenance": "pending_confirmation",
-          "source_note": "同型配置；厂商、安装与校准记录待李志成或厂家确认（平台不编造）"
-        },
-        {
-          "device_id": "light_02",
-          "device_name_cn": "2 号箱补光灯具",
-          "cage_id": "cage_02",
-          "device_type": "light",
-          "metric": "light_dimming",
-          "location": "cage_02 · 灯具",
-          "installed": null,
-          "vendor": null,
-          "calibration": null,
-          "provenance": "pending_confirmation",
-          "source_note": "同型配置；厂商、安装与校准记录待李志成或厂家确认（平台不编造）"
-        },
-        {
-          "device_id": "crane_02",
-          "device_name_cn": "2 号箱网衣绞车",
-          "cage_id": "cage_02",
-          "device_type": "crane",
-          "metric": "crane_action",
-          "location": "cage_02 · 网衣绞车",
-          "installed": null,
-          "vendor": null,
-          "calibration": null,
-          "provenance": "pending_confirmation",
-          "source_note": "配置依据：中集来福士官网深远海渔业产品页（网衣绞车）；型号、厂商与校准待确认"
-        }
-      ]
-    },
-    {
+  "sites": [    {
       "site_id": "site_04",
       "site_name": "中国近海观测站点 · 嵊山（东海）",
       "kind": "obs",
@@ -331,6 +176,160 @@
           "source_note": "配置依据：中集来福士官网深远海渔业产品页（网衣绞车）；型号、厂商与校准待确认"
         }
       ]
+    },
+    {
+      "site_id": "site_03",
+      "site_name": "中国近海观测站点 · 小麦岛（黄海）",
+      "kind": "obs",
+      "latitude": 36.0,
+      "longitude": 120.4,
+      "station_id": "XMD",
+      "sea": "黄海",
+      "data_source": "NMDC 中国台站观测数据 dataSetId=4",
+      "cages": [
+        {
+          "cage_id": "cage_02",
+          "cage_name": "2 号网箱",
+          "species": "黑鲷",
+          "spec": {
+            "shape": "桁架式",
+            "depth_m": 6,
+            "net_mesh_mm": 35,
+            "net_material": "超高分子量聚乙烯（UHMWPE）",
+            "effective_volume_m3": 1944,
+            "commissioned": "2025-09-15",
+            "length_m": 18,
+            "width_m": 18,
+            "_体积口径": "有效养殖水体 = 长 × 宽 × 养殖水深（桁架式网箱按外廓长方体算）。旧值 285/198 实为**底面积**，2026-10-16 会上定改为真体积。"
+          },
+          "stocking": {
+            "date": "2026-05-06",
+            "init_count": 900,
+            "init_size_g": 180,
+            "fingerling_source": "山东荣成育苗场",
+            "plan_harvest": "2027-05-01",
+            "target_size_g": 400
+          },
+          "status": "in_use",
+          "note": "🔴 2026-10-20 队长改（队-1 告警合理性）：原养**许氏平鲉**（最适 8~25℃，红色高温线 26.0℃），但黄海小麦岛 8 月实测水温到 28.8℃ —— **2025-08 有 98% 的时间在红色告警**，等于天天报。把所有候选拿真实水温跑了一遍（高温低温两头都算），**黑鲷最优**：高温红 0.00%（实测最高 28.8 < 告警线 30.0）、低温红 3.92%。黑鲷适应 4.3~34℃、最适 17~25℃，本来就是黄海/渤海的主力养殖种。⚠️ 注意：高温红色线 30.0℃ 在小麦岛**永远不会触发**（实测最高 28.8），这是生理上正确的（黑鲷耐 34℃），不是阈值定错；要看高温红色告警请切 1 号箱。"
+        }
+      ],
+      "devices": [
+        {
+          "device_id": "sensor_temp_02",
+          "device_name_cn": "2 号箱水温传感器",
+          "cage_id": "cage_02",
+          "device_type": "sensor",
+          "metric": "water_temp",
+          "location": "cage_02 · 水下 3 m",
+          "installed": null,
+          "vendor": null,
+          "calibration": null,
+          "provenance": "pending_confirmation",
+          "source_note": "同型配置；厂商、安装与校准记录待李志成或厂家确认（平台不编造）"
+        },
+        {
+          "device_id": "sensor_do_02",
+          "device_name_cn": "2 号箱溶解氧传感器",
+          "cage_id": "cage_02",
+          "device_type": "sensor",
+          "metric": "dissolved_oxygen",
+          "location": "cage_02 · 水下 3 m",
+          "installed": null,
+          "vendor": null,
+          "calibration": null,
+          "provenance": "pending_confirmation",
+          "source_note": "同型配置；厂商、安装与校准记录待李志成或厂家确认（平台不编造）"
+        },
+        {
+          "device_id": "sensor_tilt_02",
+          "device_name_cn": "2 号箱倾角传感器",
+          "cage_id": "cage_02",
+          "device_type": "sensor",
+          "metric": "tilt",
+          "location": "cage_02 · 浮架",
+          "installed": null,
+          "vendor": null,
+          "calibration": null,
+          "provenance": "pending_confirmation",
+          "source_note": "同型配置；厂商、安装与校准记录待李志成或厂家确认（平台不编造）"
+        },
+        {
+          "device_id": "sensor_tension_02",
+          "device_name_cn": "2 号箱锚链张力传感器",
+          "cage_id": "cage_02",
+          "device_type": "sensor",
+          "metric": "anchor_tension",
+          "location": "cage_02 · 锚链",
+          "installed": null,
+          "vendor": null,
+          "calibration": null,
+          "provenance": "pending_confirmation",
+          "source_note": "同型配置；厂商、安装与校准记录待李志成或厂家确认（平台不编造）"
+        },
+        {
+          "device_id": "feeder_02",
+          "device_name_cn": "2 号箱自动投饵机",
+          "cage_id": "cage_02",
+          "device_type": "feeder",
+          "metric": "feed_rate",
+          "location": "cage_02 · 投饵机",
+          "installed": null,
+          "vendor": null,
+          "calibration": null,
+          "provenance": "pending_confirmation",
+          "source_note": "同型配置；厂商、安装与校准记录待李志成或厂家确认（平台不编造）"
+        },
+        {
+          "device_id": "light_02",
+          "device_name_cn": "2 号箱补光灯具",
+          "cage_id": "cage_02",
+          "device_type": "light",
+          "metric": "light_dimming",
+          "location": "cage_02 · 灯具",
+          "installed": null,
+          "vendor": null,
+          "calibration": null,
+          "provenance": "pending_confirmation",
+          "source_note": "同型配置；厂商、安装与校准记录待李志成或厂家确认（平台不编造）"
+        },
+        {
+          "device_id": "crane_02",
+          "device_name_cn": "2 号箱网衣绞车",
+          "cage_id": "cage_02",
+          "device_type": "crane",
+          "metric": "crane_action",
+          "location": "cage_02 · 网衣绞车",
+          "installed": null,
+          "vendor": null,
+          "calibration": null,
+          "provenance": "pending_confirmation",
+          "source_note": "配置依据：中集来福士官网深远海渔业产品页（网衣绞车）；型号、厂商与校准待确认"
+        }
+      ]
+    },
+    {
+      "site_id": "site_01",
+      "site_name": "仿真演示站点",
+      "kind": "farm",
+      "latitude": 26.1,
+      "longitude": 119.9,
+      "farming_depth_m": 20,
+      "location_note": "福建沿海 · 深远海网箱养殖场景",
+      "_说明": "2026-10-16 会上定：两个养殖网箱已迁至真实海区台站（cage_01 → site_04 嵊山，cage_02 → site_03 小麦岛），本站点**保留**，用作仿真数据与造故障演示（大风大浪 / 水温骤升 / 设备离线）。",
+      "cages": [],
+      "devices": []
+    },
+    {
+      "site_id": "site_02",
+      "site_name": "中国近海观测站点 · 芝罘岛（渤海海峡）",
+      "kind": "obs",
+      "latitude": 37.6,
+      "longitude": 121.4,
+      "station_id": "ZFD",
+      "sea": "渤海海峡",
+      "sea_note": "渤海与黄海的分界是【蓬莱角—老铁山角】连线，NMDC 的 14 个台站没有一个在渤海内部。本平台以渤海海峡的芝罘岛代表渤海这一格，页面如实标注；水质另取渤海内部监测点（东营片区）。",
+      "data_source": "NMDC 中国台站观测数据 dataSetId=4"
     },
     {
       "site_id": "site_05",

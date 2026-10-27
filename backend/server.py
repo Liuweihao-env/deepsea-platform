@@ -1264,6 +1264,13 @@ class Handler(BaseHTTPRequestHandler):
                         y["temp_source"] = t.get("source")
                         y["temp_note"] = t.get("note")
                 out.append(y)
+            # 2026-10-27 队长分派（刘伟豪 / 环境）：站点显示顺序统一为
+            # 嵊山(site_04) → 小麦岛(site_03) → 仿真演示站点(site_01) → 芝罘岛(site_02) → 遮浪(site_05)。
+            # 内部 SITES 数组顺序不动（SITES[0] 兜底语义依赖 site_01），只在 /api/sites 输出层排序，
+            # 与 farm.json 的 sites 顺序同源一致（海况页 / 水质页按钮 + 生产管理站点目录表三处一致）。
+            _SITE_DISPLAY_ORDER = ["site_04", "site_03", "site_01", "site_02", "site_05"]
+            out.sort(key=lambda s: _SITE_DISPLAY_ORDER.index(s["site_id"])
+                     if s["site_id"] in _SITE_DISPLAY_ORDER else len(_SITE_DISPLAY_ORDER))
             return self._json(out)
 
         # 鱼种体长体重参数库 —— 页面上要能看到「这个 a、b 是哪来的」
